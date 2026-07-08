@@ -510,6 +510,17 @@ patches, and untracked files, while always excluding `.tagteam/`.
 `role_losses`, `budgets`, and `exit_code`. Text output prints degraded/blocking
 state when present so summaries do not silently disagree with artifacts.
 
+`blocking_reason` (and the per-role `reason_code` in `role_statuses` /
+`role_losses`) draws from a fixed vocabulary: `blocking_findings` (reviewer
+found blocker/major findings), `rounds_exhausted` (round limit reached with
+unresolved findings), `test_failed`, `worker_timeout`, `worker_unavailable`
+(coder/worker adapter unavailable or failed for a non-timeout reason),
+`reviewer_unavailable`, `supervisor_unavailable`, `reviewer_json_invalid`,
+`scout_unavailable`, `scout_context_too_small`, `budget_exceeded`,
+`artifact_missing`, and `fallback_used`. When a run is blocked by the
+invocation budget,
+`budgets.exhausted` is `true` and `budgets.reason_code` is `budget_exceeded`.
+
 Diagnostic output, delivery records, copied prompts, and raw/validation-error
 artifacts redact values from sensitive shell environment keys and the scoped
 `.env` overlay. Prompts, diffs, and model outputs are still persisted for
