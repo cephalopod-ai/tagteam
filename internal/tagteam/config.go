@@ -1,6 +1,7 @@
 package tagteam
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"os"
@@ -15,21 +16,23 @@ import (
 func DefaultConfig() Config {
 	supervisorSlicing := true
 	autoNextPackage := false
+	respectRepoInstructions := true
 	return Config{
 		Defaults: DefaultsConfig{
-			Mode:              "supervisor",
-			Coder:             "codex",
-			Adversary:         "claude",
-			Worker:            "agy:Gemini 3.5 Flash (High)",
-			Scout:             "agy:gemini-3.5-flash-low",
-			Supervisor:        "claude:opus",
-			ScoutMode:         "recon",
-			PostScoutMode:     "polish",
-			SupervisorSlicing: &supervisorSlicing,
-			MaxPackages:       5,
-			AutoNextPackage:   &autoNextPackage,
-			Rounds:            2,
-			GitSafety:         "clean",
+			Mode:                    "supervisor",
+			Coder:                   "codex",
+			Adversary:               "claude",
+			Worker:                  "agy:Gemini 3.5 Flash (High)",
+			Scout:                   "agy:gemini-3.5-flash-low",
+			Supervisor:              "claude:opus",
+			ScoutMode:               "recon",
+			PostScoutMode:           "polish",
+			SupervisorSlicing:       &supervisorSlicing,
+			MaxPackages:             5,
+			AutoNextPackage:         &autoNextPackage,
+			RespectRepoInstructions: &respectRepoInstructions,
+			Rounds:                  2,
+			GitSafety:               "clean",
 		},
 		Profiles: map[string]ProfileConfig{
 			"fast": {
@@ -84,6 +87,14 @@ func LoadConfig(workdir string) (Config, []string, error) {
 	cfg := DefaultConfig()
 	sources := []string{"built-in defaults"}
 
+	loadedDotEnv, err := loadDotEnv(workdir)
+	if err != nil {
+		return Config{}, nil, err
+	}
+	if loadedDotEnv {
+		sources = append(sources, filepath.Join(workdir, ".env"))
+	}
+
 	userPath, err := userConfigPath()
 	if err != nil {
 		return Config{}, nil, err
@@ -109,6 +120,55 @@ func LoadConfig(workdir string) (Config, []string, error) {
 	}
 
 	return cfg, sources, nil
+}
+
+func loadDotEnv(workdir string) (bool, error) {
+	path := filepath.Join(workdir, ".env")
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineNo := 0
+	loaded := false
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return false, fmt.Errorf("parse %s:%d: expected KEY=VALUE", path, lineNo)
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return false, fmt.Errorf("parse %s:%d: empty environment variable name", path, lineNo)
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			value = unquoted
+		}
+		if err := os.Setenv(key, value); err != nil {
+			return false, fmt.Errorf("set %s from %s:%d: %w", key, path, lineNo, err)
+		}
+		loaded = true
+	}
+	if err := scanner.Err(); err != nil {
+		return false, fmt.Errorf("read %s: %w", path, err)
+	}
+	return loaded, nil
 }
 
 func userConfigPath() (string, error) {
@@ -175,6 +235,9 @@ func mergeConfig(dst *Config, src Config) {
 	if src.Defaults.AutoNextPackage != nil {
 		dst.Defaults.AutoNextPackage = src.Defaults.AutoNextPackage
 	}
+	if src.Defaults.RespectRepoInstructions != nil {
+		dst.Defaults.RespectRepoInstructions = src.Defaults.RespectRepoInstructions
+	}
 	if src.Defaults.Rounds != 0 {
 		dst.Defaults.Rounds = src.Defaults.Rounds
 	}
@@ -225,6 +288,9 @@ func mergeConfig(dst *Config, src Config) {
 			}
 			if profile.AutoNextPackage != nil {
 				current.AutoNextPackage = profile.AutoNextPackage
+			}
+			if profile.RespectRepoInstructions != nil {
+				current.RespectRepoInstructions = profile.RespectRepoInstructions
 			}
 			if profile.Rounds != 0 {
 				current.Rounds = profile.Rounds
@@ -302,6 +368,7 @@ func hasTagteamEnv() bool {
 		"TAGTEAM_MAX_PACKAGES",
 		"TAGTEAM_PACKAGE",
 		"TAGTEAM_AUTO_NEXT_PACKAGE",
+		"TAGTEAM_RESPECT_REPO_INSTRUCTIONS",
 		"TAGTEAM_ROUNDS",
 		"TAGTEAM_TEST",
 		"TAGTEAM_GIT_SAFETY",
@@ -363,6 +430,11 @@ func mergeEnvConfig(cfg *Config) {
 	if value := os.Getenv("TAGTEAM_AUTO_NEXT_PACKAGE"); value != "" {
 		if parsed, err := strconv.ParseBool(value); err == nil {
 			cfg.Defaults.AutoNextPackage = &parsed
+		}
+	}
+	if value := os.Getenv("TAGTEAM_RESPECT_REPO_INSTRUCTIONS"); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Defaults.RespectRepoInstructions = &parsed
 		}
 	}
 	if value := os.Getenv("TAGTEAM_MODE"); value != "" {
@@ -441,6 +513,10 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	if cfg.Defaults.AutoNextPackage != nil {
 		autoNextPackage = *cfg.Defaults.AutoNextPackage
 	}
+	respectRepoInstructions := true
+	if cfg.Defaults.RespectRepoInstructions != nil {
+		respectRepoInstructions = *cfg.Defaults.RespectRepoInstructions
+	}
 
 	var profile ProfileConfig
 	hasProfile := false
@@ -492,6 +568,9 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		}
 		if profile.AutoNextPackage != nil {
 			autoNextPackage = *profile.AutoNextPackage
+		}
+		if profile.RespectRepoInstructions != nil {
+			respectRepoInstructions = *profile.RespectRepoInstructions
 		}
 	}
 	if changed["mode"] {
@@ -703,6 +782,12 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	if changed["auto-next-package"] {
 		autoNextPackage = flags.AutoNextPackage
 	}
+	if changed["respect-repo-instructions"] {
+		respectRepoInstructions = flags.RespectRepoInstructions
+	}
+	if changed["no-repo-instructions"] {
+		respectRepoInstructions = false
+	}
 
 	if changed["rounds"] {
 		rounds = flags.Rounds
@@ -816,6 +901,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		MaxPackages:               maxPackages,
 		Package:                   strings.TrimSpace(packageID),
 		AutoNextPackage:           autoNextPackage,
+		RespectRepoInstructions:   respectRepoInstructions,
 		Rounds:                    rounds,
 		TestCmd:                   testCmd,
 		NoTest:                    flags.NoTest,

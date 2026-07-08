@@ -46,12 +46,40 @@ func TestDefaultConfig_SupervisorDefaults(t *testing.T) {
 	if cfg.Defaults.SupervisorSlicing == nil || !*cfg.Defaults.SupervisorSlicing {
 		t.Fatal("expected supervisor slicing to default to true")
 	}
+	if cfg.Defaults.RespectRepoInstructions == nil || !*cfg.Defaults.RespectRepoInstructions {
+		t.Fatal("expected repo instructions to default to respected")
+	}
 	if cfg.Defaults.MaxPackages != 5 {
 		t.Fatalf("max packages = %d", cfg.Defaults.MaxPackages)
 	}
 	// Legacy adversarial-mode defaults must still be present.
 	if cfg.Defaults.Coder != "codex" || cfg.Defaults.Adversary != "claude" {
 		t.Fatalf("legacy defaults = coder=%q adversary=%q", cfg.Defaults.Coder, cfg.Defaults.Adversary)
+	}
+}
+
+func TestResolveOptions_NoRepoInstructionsDisablesLoading(t *testing.T) {
+	cfg := DefaultConfig()
+	opts, err := ResolveOptions(cfg, nil, FlagInputs{
+		NoRepoInstructions: true,
+		Timeout:            15 * time.Minute,
+	}, map[string]bool{"no-repo-instructions": true}, "ship it")
+	if err != nil {
+		t.Fatalf("ResolveOptions() error = %v", err)
+	}
+	if opts.RespectRepoInstructions {
+		t.Fatal("expected --no-repo-instructions to disable loading")
+	}
+
+	opts, err = ResolveOptions(cfg, nil, FlagInputs{
+		RespectRepoInstructions: true,
+		Timeout:                 15 * time.Minute,
+	}, map[string]bool{"respect-repo-instructions": true}, "ship it")
+	if err != nil {
+		t.Fatalf("ResolveOptions() second error = %v", err)
+	}
+	if !opts.RespectRepoInstructions {
+		t.Fatal("expected --respect-repo-instructions to enable loading")
 	}
 }
 
@@ -892,6 +920,59 @@ extra_args = ["--future"]
 	}
 	if len(got.ExtraArgs) != 1 || got.ExtraArgs[0] != "--future" {
 		t.Fatalf("extra_args = %#v", got.ExtraArgs)
+	}
+}
+
+func TestLoadConfig_LoadsDotEnvIntoProcessAndConfig(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	t.Setenv("XDG_CONFIG_HOME", home)
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dotEnv := []byte("FEATHERLESS_API_KEY=\"dotenv-key\"\nTAGTEAM_OPENAI_COMPATIBLE_BASE_URL=https://api.featherless.ai/v1\n")
+	if err := os.WriteFile(filepath.Join(repo, ".env"), dotEnv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Unsetenv("FEATHERLESS_API_KEY")
+		_ = os.Unsetenv("TAGTEAM_OPENAI_COMPATIBLE_BASE_URL")
+	})
+
+	cfg, sources, err := LoadConfig(repo)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if got := os.Getenv("FEATHERLESS_API_KEY"); got != "dotenv-key" {
+		t.Fatalf("FEATHERLESS_API_KEY = %q", got)
+	}
+	if got := cfg.Adapters.OpenAICompatible.BaseURL; got != "https://api.featherless.ai/v1" {
+		t.Fatalf("base_url = %q", got)
+	}
+	if len(sources) < 2 || sources[1] != filepath.Join(repo, ".env") {
+		t.Fatalf("sources = %#v", sources)
+	}
+}
+
+func TestLoadConfig_DotEnvDoesNotOverrideExistingEnv(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	t.Setenv("XDG_CONFIG_HOME", home)
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("FEATHERLESS_API_KEY=dotenv-key\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FEATHERLESS_API_KEY", "shell-key")
+
+	if _, _, err := LoadConfig(repo); err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if got := os.Getenv("FEATHERLESS_API_KEY"); got != "shell-key" {
+		t.Fatalf("FEATHERLESS_API_KEY = %q", got)
 	}
 }
 

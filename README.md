@@ -45,6 +45,7 @@ Recent additions in this repo:
 - saved run artifacts include briefs, diffs, reviews, tests, and final summaries
 - command surface now includes `review`, `fix`, `status`, `transcript`, `doctor`, and `init`
 - config layering supports repo config, user config, env overrides, flags, and named profiles
+- explicit repo instruction files are loaded by default and appended to role prompts
 - machine-readable output and dry-run support make the CLI easier to script and debug
 
 Current commands:
@@ -77,6 +78,8 @@ Supported adapters in this repo today:
 Each vendor CLI adapter (`codex`, `claude`, `agy`, `gosling`, etc.) must already be logged in on your machine before you run `tagteam`. `tagteam` does not run vendor login flows, store credentials, or proxy/inject API keys for those CLIs. If an adapter is not authenticated, the run will fail with that CLI's own auth error.
 
 This note applies to the vendor CLI adapters; the separate `openai-compatible` adapter uses its documented `api_key_env` setting.
+
+`tagteam` also reads a repo-local `.env` file from the selected workdir at startup. It only fills variables that are not already set in your shell, so exported environment variables still take precedence. A starter template is included as [`.env_template`](/Users/eric/Documents/team-cli/.env_template:1).
 
 ## Compatibility Risks
 
@@ -229,14 +232,26 @@ Featherless.ai:
 [adapters.openai_compatible]
 base_url = "https://api.featherless.ai/v1"
 api_key_env = "FEATHERLESS_API_KEY"
-default_model = "gpt-oss-120b"
+default_model = "openai/gpt-oss-120b"
+```
+
+Create a local `.env` first:
+
+```bash
+cp .env_template .env
+```
+
+Then set:
+
+```bash
+FEATHERLESS_API_KEY=your-key-here
 ```
 
 ```bash
-FEATHERLESS_API_KEY=... tagteam \
+tagteam \
   --mode adversarial \
   -mc claude:sonnet \
-  -ma openai-compatible:gpt-oss-120b \
+  -ma openai-compatible:openai/gpt-oss-120b \
   --show-review \
   "make a tiny README wording cleanup"
 ```
@@ -271,6 +286,8 @@ Configuration precedence is:
 
 `flags > TAGTEAM_* env > repo .tagteam.toml > user config > built-in defaults`
 
+If a `.env` file exists in the selected workdir, `tagteam` loads it before reading `TAGTEAM_*` or adapter-specific environment variables. `.env` is a convenience source for local development; explicit shell exports still win.
+
 User config path:
 
 - macOS/Linux: `~/.config/tagteam/config.toml`
@@ -293,6 +310,7 @@ Relevant `defaults` keys:
 - `max_packages` — maximum package count for supervisor slicing
 - `package` — selected package ID to execute from the work plan
 - `auto_next_package` — continue into additional packages while the normal round cap allows it
+- `respect_repo_instructions` — load explicit repo instruction files and append them to role prompts
 - `rounds` — hard cap on implementation/review cycles; exhausted runs stop and collect final reports from both agents
 - `test`, `git_safety`
 
@@ -313,6 +331,13 @@ adversary = "claude:haiku"
 rounds = 1
 ```
 
+Repo instructions are loaded from the selected workdir, then from the Git root
+when different, in this exact file order: `AGENTS.md`, `agent.md`,
+`.tagteam/AGENTS.md`, `.codex/AGENTS.md`, `.claude/AGENTS.md`,
+`.agy/AGENTS.md`. Only those exact files are read; vendor skill/plugin
+directories are not recursively ingested. Disable this layer with
+`--no-repo-instructions`.
+
 ## Run Artifacts
 
 Each run writes artifacts under:
@@ -325,6 +350,8 @@ Typical contents include:
 
 - `meta.json`
 - `input.md`
+- `repo-instructions.md`
+- `repo-instructions.json`
 - `solo-round-1.md` (solo mode)
 - `supervisor-work-plan.json` (supervisor mode with slicing)
 - `supervisor-brief.md` (supervisor or relay mode, round 1)

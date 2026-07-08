@@ -1,0 +1,4 @@
+[adapters.openai_compatible]
+base_url = "https://api.featherless.ai/v1"
+api_key_env = "FEATHERLESS_API_KEY"
+default_model = "openai/gpt-oss-120b"

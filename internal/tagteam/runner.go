@@ -21,6 +21,16 @@ type App struct {
 
 const maxReviewInputBytes = 10 * 1024 * 1024
 const maxInlineReviewPromptBytes = 128 * 1024
+const maxRepoInstructionBytes = 64 * 1024
+
+var repoInstructionCandidates = []string{
+	"AGENTS.md",
+	"agent.md",
+	filepath.Join(".tagteam", "AGENTS.md"),
+	filepath.Join(".codex", "AGENTS.md"),
+	filepath.Join(".claude", "AGENTS.md"),
+	filepath.Join(".agy", "AGENTS.md"),
+}
 
 type reviewInput struct {
 	PromptRef string
@@ -46,8 +56,177 @@ type RelayContext struct {
 	WorkPackage  *WorkPackage
 }
 
+type RepoInstructionSource struct {
+	Path          string `json:"path"`
+	DisplayPath   string `json:"display_path"`
+	SizeBytes     int64  `json:"size_bytes"`
+	SHA256        string `json:"sha256"`
+	IncludedBytes int    `json:"included_bytes"`
+	Truncated     bool   `json:"truncated"`
+}
+
+type RepoInstructionsMetadata struct {
+	Enabled          bool                    `json:"enabled"`
+	MaxBytes         int                     `json:"max_bytes"`
+	GeneratedAt      time.Time               `json:"generated_at"`
+	SourceCount      int                     `json:"source_count"`
+	TotalSourceBytes int64                   `json:"total_source_bytes"`
+	BundleBytes      int                     `json:"bundle_bytes"`
+	Truncated        bool                    `json:"truncated"`
+	Sources          []RepoInstructionSource `json:"sources"`
+}
+
+type repoInstructionsBundle struct {
+	Text     string
+	Metadata RepoInstructionsMetadata
+}
+
 func NewApp(cfg Config) *App {
 	return &App{Config: cfg}
+}
+
+func loadAndPersistRepoInstructions(ctx context.Context, opts RunOptions, runDir string) (string, error) {
+	if !opts.RespectRepoInstructions {
+		return "", nil
+	}
+	bundle, err := loadRepoInstructions(ctx, opts.Workdir, maxRepoInstructionBytes)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "repo-instructions.md"), []byte(bundle.Text), 0o644); err != nil {
+		return "", err
+	}
+	if err := writeJSON(filepath.Join(runDir, "repo-instructions.json"), bundle.Metadata); err != nil {
+		return "", err
+	}
+	return bundle.Text, nil
+}
+
+func loadRepoInstructions(ctx context.Context, workdir string, maxBytes int) (repoInstructionsBundle, error) {
+	if maxBytes <= 0 {
+		maxBytes = maxRepoInstructionBytes
+	}
+	generatedAt := time.Now().UTC()
+	absWorkdir, err := filepath.Abs(workdir)
+	if err != nil {
+		return repoInstructionsBundle{}, err
+	}
+	bases := repoInstructionBases(ctx, absWorkdir)
+	seen := map[string]bool{}
+	type discovered struct {
+		source RepoInstructionSource
+		data   []byte
+	}
+	var files []discovered
+	for _, base := range bases {
+		for _, rel := range repoInstructionCandidates {
+			path := filepath.Join(base, rel)
+			absPath, err := filepath.Abs(path)
+			if err != nil {
+				return repoInstructionsBundle{}, err
+			}
+			if seen[absPath] {
+				continue
+			}
+			seen[absPath] = true
+			info, err := os.Stat(absPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return repoInstructionsBundle{}, err
+			}
+			if !info.Mode().IsRegular() {
+				continue
+			}
+			data, err := os.ReadFile(absPath)
+			if err != nil {
+				return repoInstructionsBundle{}, err
+			}
+			displayPath := rel
+			if base != absWorkdir {
+				if rootRel, relErr := filepath.Rel(absWorkdir, absPath); relErr == nil && !strings.HasPrefix(rootRel, ".."+string(filepath.Separator)) && rootRel != ".." {
+					displayPath = filepath.ToSlash(rootRel)
+				} else {
+					displayPath = filepath.ToSlash(absPath)
+				}
+			}
+			sum := sha256.Sum256(data)
+			files = append(files, discovered{
+				source: RepoInstructionSource{
+					Path:        absPath,
+					DisplayPath: filepath.ToSlash(displayPath),
+					SizeBytes:   int64(len(data)),
+					SHA256:      hex.EncodeToString(sum[:]),
+				},
+				data: data,
+			})
+		}
+	}
+
+	var buf strings.Builder
+	sources := make([]RepoInstructionSource, len(files))
+	totalSourceBytes := int64(0)
+	truncated := false
+	for i, file := range files {
+		source := file.source
+		totalSourceBytes += source.SizeBytes
+		normalized := normalizeInstructionText(file.data)
+		entry := fmt.Sprintf("----- BEGIN %s -----\n%s\n----- END %s -----\n\n", source.DisplayPath, normalized, source.DisplayPath)
+		remaining := maxBytes - buf.Len()
+		if remaining <= 0 {
+			source.Truncated = true
+			truncated = true
+			sources[i] = source
+			continue
+		}
+		if len(entry) > remaining {
+			buf.WriteString(entry[:remaining])
+			source.IncludedBytes = remaining
+			source.Truncated = true
+			truncated = true
+			sources[i] = source
+			continue
+		}
+		buf.WriteString(entry)
+		source.IncludedBytes = len(entry)
+		sources[i] = source
+	}
+
+	text := strings.TrimSpace(buf.String())
+	metadata := RepoInstructionsMetadata{
+		Enabled:          true,
+		MaxBytes:         maxBytes,
+		GeneratedAt:      generatedAt,
+		SourceCount:      len(sources),
+		TotalSourceBytes: totalSourceBytes,
+		BundleBytes:      len([]byte(text)),
+		Truncated:        truncated,
+		Sources:          sources,
+	}
+	return repoInstructionsBundle{Text: text, Metadata: metadata}, nil
+}
+
+func repoInstructionBases(ctx context.Context, workdir string) []string {
+	bases := []string{workdir}
+	if out, err := runCommand(ctx, workdir, "git", "rev-parse", "--show-toplevel"); err == nil {
+		root := strings.TrimSpace(out)
+		if root != "" {
+			if absRoot, absErr := filepath.Abs(root); absErr == nil {
+				root = absRoot
+			}
+			if root != workdir {
+				bases = append(bases, root)
+			}
+		}
+	}
+	return bases
+}
+
+func normalizeInstructionText(data []byte) string {
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return strings.TrimSpace(text)
 }
 
 func (a *App) Run(ctx context.Context, opts RunOptions) (FinalRun, error) {
@@ -100,6 +279,10 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (Final
 	if err := os.WriteFile(filepath.Join(runDir, "input.md"), []byte(prompt), 0o644); err != nil {
 		return FinalRun{}, err
 	}
+	repoInstructions, err := loadAndPersistRepoInstructions(ctx, opts, runDir)
+	if err != nil {
+		return FinalRun{}, err
+	}
 	meta := Meta{
 		RunID:         runID,
 		Workdir:       opts.Workdir,
@@ -122,7 +305,7 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (Final
 	if err != nil {
 		return FinalRun{}, err
 	}
-	review, cost, outputPath, err := a.runAdversary(ctx, opts, 1, runDir, schemaPath, prompt, baseline, diffArtifact.Patch, diffArtifact.PatchPath, "", RelayContext{})
+	review, cost, outputPath, err := a.runAdversary(ctx, opts, 1, runDir, schemaPath, prompt, baseline, diffArtifact.Patch, diffArtifact.PatchPath, "", RelayContext{}, repoInstructions)
 	if err != nil {
 		return FinalRun{}, err
 	}
@@ -441,6 +624,10 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	if err := os.WriteFile(filepath.Join(runDir, "input.md"), []byte(opts.Prompt), 0o644); err != nil {
 		return FinalRun{}, err
 	}
+	repoInstructions, err := loadAndPersistRepoInstructions(ctx, opts, runDir)
+	if err != nil {
+		return FinalRun{}, err
+	}
 	meta := Meta{
 		RunID:         runID,
 		Workdir:       opts.Workdir,
@@ -485,7 +672,7 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	outputPath := filepath.Join(runDir, "solo-round-1.md")
 	editorResult, err := a.runAdapter(ctx, editor, RoleCoder, Request{
 		Context:      ctx,
-		Prompt:       BuildSoloPrompt(opts.Workdir, opts.Prompt),
+		Prompt:       withRepoInstructions(BuildSoloPrompt(opts.Workdir, opts.Prompt), repoInstructions),
 		SystemPrompt: "",
 		Model:        opts.Coder.Model,
 		Workdir:      opts.Workdir,
@@ -564,6 +751,10 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		return FinalRun{}, &ExitError{Code: ExitAdapterFailure, Err: err}
 	}
 	if err := os.WriteFile(filepath.Join(runDir, "input.md"), []byte(opts.Prompt), 0o644); err != nil {
+		return FinalRun{}, err
+	}
+	repoInstructions, err := loadAndPersistRepoInstructions(ctx, opts, runDir)
+	if err != nil {
 		return FinalRun{}, err
 	}
 	schemaPath := filepath.Join(runDir, "review-schema.json")
@@ -645,7 +836,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			} else {
 				planResult, err := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
 					Context:    ctx,
-					Prompt:     BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package),
+					Prompt:     withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package), repoInstructions),
 					Model:      opts.Adversary.Model,
 					Workdir:    opts.Workdir,
 					RunDir:     runDir,
@@ -691,7 +882,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
 			briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
 				Context:    ctx,
-				Prompt:     BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit),
+				Prompt:     withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), repoInstructions),
 				Model:      opts.Adversary.Model,
 				Workdir:    opts.Workdir,
 				RunDir:     runDir,
@@ -714,7 +905,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		logProgress(opts, "scout %s started adapter=%s", opts.ScoutMode, scout.ID())
 		scoutResult, err := a.runAdapter(ctx, scout, RoleScout, Request{
 			Context:    ctx,
-			Prompt:     BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", ""),
+			Prompt:     withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", ""), repoInstructions),
 			Model:      opts.Scout.Model,
 			Workdir:    opts.Workdir,
 			RunDir:     runDir,
@@ -737,7 +928,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
 		briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
 			Context:    ctx,
-			Prompt:     BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit),
+			Prompt:     withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), repoInstructions),
 			Model:      opts.Adversary.Model,
 			Workdir:    opts.Workdir,
 			RunDir:     runDir,
@@ -759,7 +950,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		logProgress(opts, "supervisor relay instructions started adapter=%s", reviewer.ID())
 		instructionsResult, err := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
 			Context:    ctx,
-			Prompt:     BuildRelaySupervisorInstructionsPrompt(opts.Prompt, brief, relay.Scout),
+			Prompt:     withRepoInstructions(BuildRelaySupervisorInstructionsPrompt(opts.Prompt, brief, relay.Scout), repoInstructions),
 			Model:      opts.Adversary.Model,
 			Workdir:    opts.Workdir,
 			RunDir:     runDir,
@@ -819,6 +1010,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				editorPrompt = BuildFixPrompt(round, opts.Prompt, diff, review)
 			}
 		}
+		editorPrompt = withRepoInstructions(editorPrompt, repoInstructions)
 		implementSelectedPackage = false
 		editorOutputPath := filepath.Join(runDir, fmt.Sprintf("%s-round-%d.md", editorLabel, round))
 		editorResult, err := a.runAdapter(ctx, editor, RoleCoder, Request{
@@ -880,7 +1072,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			logProgress(opts, "round %d post-scout %s started adapter=%s", round, opts.PostScoutMode, scout.ID())
 			postScoutResult, err := a.runAdapter(ctx, scout, RoleScout, Request{
 				Context:    ctx,
-				Prompt:     BuildScoutPrompt(opts.Workdir, opts.Prompt, relay.Brief, opts.PostScoutMode, "post", diff, safeTestOutput(testOutput)),
+				Prompt:     withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, relay.Brief, opts.PostScoutMode, "post", diff, safeTestOutput(testOutput)), repoInstructions),
 				Model:      opts.Scout.Model,
 				Workdir:    opts.Workdir,
 				RunDir:     runDir,
@@ -901,7 +1093,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		}
 
 		logProgress(opts, "round %d %s started adapter=%s", round, reviewerLabel, reviewer.ID())
-		review, cost, reviewPath, err := a.runAdversary(ctx, opts, round, runDir, schemaPath, opts.Prompt, baseline, diff, diffArtifact.PatchPath, testOutput, relay)
+		review, cost, reviewPath, err := a.runAdversary(ctx, opts, round, runDir, schemaPath, opts.Prompt, baseline, diff, diffArtifact.PatchPath, testOutput, relay, repoInstructions)
 		if err != nil {
 			return final, err
 		}
@@ -949,7 +1141,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			final.Summary = review.Summary
 			final.RoundLimitReached = true
 			logProgress(opts, "round limit reached after %d rounds; collecting final reports", opts.Rounds)
-			reports, reportCosts := a.collectRoundLimitReports(ctx, opts, runDir, baseline, diff, *review, final.Tests)
+			reports, reportCosts := a.collectRoundLimitReports(ctx, opts, runDir, baseline, diff, *review, final.Tests, repoInstructions)
 			final.RoundLimitReports = reports
 			for role, cost := range reportCosts {
 				final.Costs[role] += cost
@@ -971,7 +1163,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	return final, nil
 }
 
-func (a *App) collectRoundLimitReports(ctx context.Context, opts RunOptions, runDir, baseline, diff string, review Review, tests []TestRun) ([]RoundLimitReport, map[string]float64) {
+func (a *App) collectRoundLimitReports(ctx context.Context, opts RunOptions, runDir, baseline, diff string, review Review, tests []TestRun, repoInstructions string) ([]RoundLimitReport, map[string]float64) {
 	editorLabel, reviewerLabel := roleLabels(opts.Mode)
 	registry := Registry(a.Config, opts)
 	costs := map[string]float64{}
@@ -1007,7 +1199,7 @@ func (a *App) collectRoundLimitReports(ctx context.Context, opts RunOptions, run
 			reports = append(reports, report)
 			continue
 		}
-		prompt := BuildRoundLimitReportPrompt(target.label, target.counterpart, opts.Mode, opts.Prompt, diffWithBaselineHeader(baseline, diff), review, tests)
+		prompt := withRepoInstructions(BuildRoundLimitReportPrompt(target.label, target.counterpart, opts.Mode, opts.Prompt, diffWithBaselineHeader(baseline, diff), review, tests), repoInstructions)
 		result, err := a.runAdapter(ctx, adapter, RoleReporter, Request{
 			Context:    ctx,
 			Prompt:     prompt,
@@ -1163,7 +1355,7 @@ func appendRemainingPackagesSummary(summary string, remaining []string) string {
 	return strings.TrimSpace(summary) + "\n\nRemaining packages not run: " + strings.Join(remaining, "; ")
 }
 
-func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runDir, schemaPath, prompt, baseline, diff, diffPath, testOutput string, relay RelayContext) (*Review, float64, string, error) {
+func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runDir, schemaPath, prompt, baseline, diff, diffPath, testOutput string, relay RelayContext, repoInstructions string) (*Review, float64, string, error) {
 	_, reviewerLabel := roleLabels(opts.Mode)
 	outputLabel := reviewerLabel
 	if opts.Mode == ModeRelay {
@@ -1189,6 +1381,7 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 	} else {
 		reviewPrompt = BuildAdversaryPrompt(prompt, baseline, input.PromptRef, safeTestOutput(testOutput), input.ViaStdin)
 	}
+	reviewPrompt = withRepoInstructions(reviewPrompt, repoInstructions)
 	if !adversary.Capabilities().SupportsSchema {
 		reviewPrompt += "\n\nJSON schema:\n" + ReviewSchema
 	}
@@ -1234,7 +1427,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		}
 		if dryRun {
 			payload, _ := json.MarshalIndent(spec, "", "  ")
-			result := Result{Text: string(payload), Command: spec.Argv}
+			result := Result{Text: redactSecrets(string(payload)), Command: spec.Argv}
 			if role == RoleAdversary {
 				result.Review = &Review{
 					Verdict:         "pass",
@@ -1266,7 +1459,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	}
 	if dryRun {
 		payload, _ := json.MarshalIndent(spec, "", "  ")
-		result := Result{Text: string(payload), Command: spec.Argv}
+		result := Result{Text: redactSecrets(string(payload)), Command: spec.Argv}
 		if role == RoleAdversary {
 			result.Review = &Review{
 				Verdict:         "pass",
@@ -1331,9 +1524,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	}
 	if err := cmd.Run(); err != nil {
 		close(done)
-		msg := strings.TrimSpace(stderr.String())
+		msg := redactSecrets(strings.TrimSpace(stderr.String()))
 		if msg == "" {
-			msg = err.Error()
+			msg = redactSecrets(err.Error())
 		}
 		logRequestProgress(req, "%s failed elapsed=%s", phase, shortDuration(time.Since(started)))
 		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("%s failed: %s", adapter.ID(), msg)}

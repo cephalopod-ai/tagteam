@@ -329,38 +329,40 @@ type Config struct {
 }
 
 type DefaultsConfig struct {
-	Mode              string `toml:"mode"`
-	Coder             string `toml:"coder"`
-	Adversary         string `toml:"adversary"`
-	Worker            string `toml:"worker"`
-	Scout             string `toml:"scout"`
-	Supervisor        string `toml:"supervisor"`
-	ScoutMode         string `toml:"scout_mode"`
-	PostScoutMode     string `toml:"post_scout_mode"`
-	SupervisorSlicing *bool  `toml:"supervisor_slicing"`
-	MaxPackages       int    `toml:"max_packages"`
-	Package           string `toml:"package"`
-	AutoNextPackage   *bool  `toml:"auto_next_package"`
-	Rounds            int    `toml:"rounds"`
-	Test              string `toml:"test"`
-	GitSafety         string `toml:"git_safety"`
+	Mode                    string `toml:"mode"`
+	Coder                   string `toml:"coder"`
+	Adversary               string `toml:"adversary"`
+	Worker                  string `toml:"worker"`
+	Scout                   string `toml:"scout"`
+	Supervisor              string `toml:"supervisor"`
+	ScoutMode               string `toml:"scout_mode"`
+	PostScoutMode           string `toml:"post_scout_mode"`
+	SupervisorSlicing       *bool  `toml:"supervisor_slicing"`
+	MaxPackages             int    `toml:"max_packages"`
+	Package                 string `toml:"package"`
+	AutoNextPackage         *bool  `toml:"auto_next_package"`
+	RespectRepoInstructions *bool  `toml:"respect_repo_instructions"`
+	Rounds                  int    `toml:"rounds"`
+	Test                    string `toml:"test"`
+	GitSafety               string `toml:"git_safety"`
 }
 
 type ProfileConfig struct {
-	Mode              string `toml:"mode"`
-	Coder             string `toml:"coder"`
-	Adversary         string `toml:"adversary"`
-	Worker            string `toml:"worker"`
-	Scout             string `toml:"scout"`
-	Supervisor        string `toml:"supervisor"`
-	ScoutMode         string `toml:"scout_mode"`
-	PostScoutMode     string `toml:"post_scout_mode"`
-	SupervisorSlicing *bool  `toml:"supervisor_slicing"`
-	MaxPackages       int    `toml:"max_packages"`
-	Package           string `toml:"package"`
-	AutoNextPackage   *bool  `toml:"auto_next_package"`
-	Rounds            int    `toml:"rounds"`
-	Test              string `toml:"test"`
+	Mode                    string `toml:"mode"`
+	Coder                   string `toml:"coder"`
+	Adversary               string `toml:"adversary"`
+	Worker                  string `toml:"worker"`
+	Scout                   string `toml:"scout"`
+	Supervisor              string `toml:"supervisor"`
+	ScoutMode               string `toml:"scout_mode"`
+	PostScoutMode           string `toml:"post_scout_mode"`
+	SupervisorSlicing       *bool  `toml:"supervisor_slicing"`
+	MaxPackages             int    `toml:"max_packages"`
+	Package                 string `toml:"package"`
+	AutoNextPackage         *bool  `toml:"auto_next_package"`
+	RespectRepoInstructions *bool  `toml:"respect_repo_instructions"`
+	Rounds                  int    `toml:"rounds"`
+	Test                    string `toml:"test"`
 }
 
 type AdapterConfigSet struct {
@@ -421,6 +423,8 @@ type FlagInputs struct {
 	MaxPackages             int
 	Package                 string
 	AutoNextPackage         bool
+	RespectRepoInstructions bool
+	NoRepoInstructions      bool
 	Profile                 string
 	Workdir                 string
 	Rounds                  int
@@ -477,6 +481,7 @@ type RunOptions struct {
 	MaxPackages               int
 	Package                   string
 	AutoNextPackage           bool
+	RespectRepoInstructions   bool
 	Rounds                    int
 	TestCmd                   string
 	NoTest                    bool

@@ -84,6 +84,157 @@ func TestPrepareReviewInput_UsesFileReferenceForLargeInlinePrompt(t *testing.T) 
 	}
 }
 
+func TestLoadRepoInstructions_DeterministicOrder(t *testing.T) {
+	repo := t.TempDir()
+	for _, item := range []struct {
+		path string
+		text string
+	}{
+		{"AGENTS.md", "root agents"},
+		{"agent.md", "lower agent"},
+		{filepath.Join(".tagteam", "AGENTS.md"), "tagteam agents"},
+		{filepath.Join(".codex", "AGENTS.md"), "codex agents"},
+		{filepath.Join(".claude", "AGENTS.md"), "claude agents"},
+		{filepath.Join(".agy", "AGENTS.md"), "agy agents"},
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, item.path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, item.path), []byte(item.text+"\r\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	bundle, err := loadRepoInstructions(context.Background(), repo, maxRepoInstructionBytes)
+	if err != nil {
+		t.Fatalf("loadRepoInstructions() error = %v", err)
+	}
+	wantOrder := []string{"AGENTS.md", "agent.md", ".tagteam/AGENTS.md", ".codex/AGENTS.md", ".claude/AGENTS.md", ".agy/AGENTS.md"}
+	last := -1
+	for _, want := range wantOrder {
+		idx := strings.Index(bundle.Text, "BEGIN "+want)
+		if idx < 0 {
+			t.Fatalf("bundle missing %s:\n%s", want, bundle.Text)
+		}
+		if idx <= last {
+			t.Fatalf("%s appeared out of order in bundle:\n%s", want, bundle.Text)
+		}
+		last = idx
+	}
+	if strings.Contains(bundle.Text, "\r") {
+		t.Fatalf("bundle should normalize CRLF to LF: %q", bundle.Text)
+	}
+}
+
+func TestLoadRepoInstructions_MissingFilesEmpty(t *testing.T) {
+	bundle, err := loadRepoInstructions(context.Background(), t.TempDir(), maxRepoInstructionBytes)
+	if err != nil {
+		t.Fatalf("loadRepoInstructions() error = %v", err)
+	}
+	if bundle.Text != "" {
+		t.Fatalf("bundle text = %q", bundle.Text)
+	}
+	if bundle.Metadata.SourceCount != 0 || len(bundle.Metadata.Sources) != 0 {
+		t.Fatalf("metadata = %#v", bundle.Metadata)
+	}
+}
+
+func TestLoadRepoInstructions_OnlyExactAllowedFiles(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".codex", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".codex", "AGENTS.md"), []byte("allowed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".codex", "skills", "SKILL.md"), []byte("recursive secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".claude", "settings.json"), []byte(`{"ignored":true}`), 0o644); err == nil {
+		t.Fatal("expected write to fail before directory exists")
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".claude", "settings.json"), []byte(`{"ignored":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle, err := loadRepoInstructions(context.Background(), repo, maxRepoInstructionBytes)
+	if err != nil {
+		t.Fatalf("loadRepoInstructions() error = %v", err)
+	}
+	if !strings.Contains(bundle.Text, "allowed") {
+		t.Fatalf("bundle missing allowed file:\n%s", bundle.Text)
+	}
+	if strings.Contains(bundle.Text, "recursive secret") || strings.Contains(bundle.Text, "ignored") {
+		t.Fatalf("bundle loaded disallowed content:\n%s", bundle.Text)
+	}
+	if bundle.Metadata.SourceCount != 1 {
+		t.Fatalf("source count = %d", bundle.Metadata.SourceCount)
+	}
+}
+
+func TestLoadRepoInstructions_TruncatesDeterministically(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte(strings.Repeat("a", 200)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first, err := loadRepoInstructions(context.Background(), repo, 64)
+	if err != nil {
+		t.Fatalf("loadRepoInstructions() error = %v", err)
+	}
+	second, err := loadRepoInstructions(context.Background(), repo, 64)
+	if err != nil {
+		t.Fatalf("loadRepoInstructions() second error = %v", err)
+	}
+	if first.Text != second.Text {
+		t.Fatalf("truncation not deterministic:\nfirst=%q\nsecond=%q", first.Text, second.Text)
+	}
+	if len(first.Text) > 64 {
+		t.Fatalf("bundle length = %d, want <= 64", len(first.Text))
+	}
+	if !first.Metadata.Truncated || !first.Metadata.Sources[0].Truncated {
+		t.Fatalf("expected truncation metadata: %#v", first.Metadata)
+	}
+}
+
+func TestLoadAndPersistRepoInstructions_WritesArtifacts(t *testing.T) {
+	repo := t.TempDir()
+	runDir := filepath.Join(repo, ".tagteam", "runs", "test")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte("follow repo rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text, err := loadAndPersistRepoInstructions(context.Background(), RunOptions{
+		Workdir:                 repo,
+		RespectRepoInstructions: true,
+	}, runDir)
+	if err != nil {
+		t.Fatalf("loadAndPersistRepoInstructions() error = %v", err)
+	}
+	if !strings.Contains(text, "follow repo rules") {
+		t.Fatalf("instruction text = %q", text)
+	}
+	for _, path := range []string{"repo-instructions.md", "repo-instructions.json"} {
+		if !fileExists(filepath.Join(runDir, path)) {
+			t.Fatalf("expected %s artifact", path)
+		}
+	}
+}
+
+func TestWithRepoInstructions_AppendsBundle(t *testing.T) {
+	prompt := withRepoInstructions("base prompt", "rules")
+	if !strings.Contains(prompt, "base prompt") || !strings.Contains(prompt, repoInstructionsPromptHeader) || !strings.Contains(prompt, "rules") {
+		t.Fatalf("prompt = %q", prompt)
+	}
+	if got := withRepoInstructions("base prompt", " "); got != "base prompt" {
+		t.Fatalf("empty repo instructions changed prompt: %q", got)
+	}
+}
+
 func TestPreflightBranchModeCreatesBranch(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
@@ -171,7 +322,7 @@ func TestRunAdversaryDoesNotRetryInvocationFailures(t *testing.T) {
 		Adversary: RoleTarget{Adapter: "missing"},
 		Timeout:   time.Second,
 	}
-	_, _, _, err := app.runAdversary(context.Background(), opts, 1, opts.Workdir, filepath.Join(opts.Workdir, "schema.json"), "prompt", "HEAD", "diff", filepath.Join(opts.Workdir, "diff.patch"), "", RelayContext{})
+	_, _, _, err := app.runAdversary(context.Background(), opts, 1, opts.Workdir, filepath.Join(opts.Workdir, "schema.json"), "prompt", "HEAD", "diff", filepath.Join(opts.Workdir, "diff.patch"), "", RelayContext{}, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}

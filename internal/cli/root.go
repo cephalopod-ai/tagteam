@@ -68,6 +68,8 @@ func bindSharedFlags(cmd *cobra.Command, flags *flagState) {
 	flagSet.IntVar(&flags.MaxPackages, "max-packages", 0, "Maximum supervisor work packages when slicing (default 5)")
 	flagSet.StringVar(&flags.Package, "package", "", "Work package ID to execute from the supervisor plan")
 	flagSet.BoolVar(&flags.AutoNextPackage, "auto-next-package", false, "Continue through remaining work packages instead of stopping after the selected package")
+	flagSet.BoolVar(&flags.RespectRepoInstructions, "respect-repo-instructions", true, "Load explicit repository instruction files and append them to role prompts")
+	flagSet.BoolVar(&flags.NoRepoInstructions, "no-repo-instructions", false, "Disable repository instruction loading for this run")
 	flagSet.StringVarP(&flags.Profile, "profile", "P", "", "Named profile")
 	flagSet.StringVarP(&flags.Workdir, "workdir", "C", ".", "Working directory")
 	flagSet.IntVarP(&flags.Rounds, "rounds", "r", 0, "Hard cap on implementation/review rounds before final no-edit reports")

@@ -39,6 +39,16 @@ Rules:
 
 Finish with a concise summary: files changed, behavior changed, checks run, known remaining risk.`
 
+const repoInstructionsPromptHeader = `Repository Instructions (follow unless they conflict with the user's explicit request or role safety constraints):`
+
+func withRepoInstructions(prompt, repoInstructions string) string {
+	repoInstructions = strings.TrimSpace(repoInstructions)
+	if repoInstructions == "" {
+		return prompt
+	}
+	return strings.TrimSpace(prompt) + "\n\n" + repoInstructionsPromptHeader + "\n\n" + repoInstructions
+}
+
 func BuildSoloPrompt(workdir, userPrompt string) string {
 	return fmt.Sprintf(`%s
 
