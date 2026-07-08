@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -138,11 +137,11 @@ func runDefault(cmd *cobra.Command, flags *flagState, prompt string) error {
 	opts, cfg, err := resolve(cmd, flags, prompt)
 	if err != nil {
 		return err
-			}
-			app := tagteam.NewApp(cfg)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-			final, err := app.Run(ctx, opts)
+	}
+	app := tagteam.NewApp(cfg)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	final, err := app.Run(ctx, opts)
 	final = withErrorExitCode(final, err)
 	renderFinal(cmd, final, opts)
 	return err
@@ -166,7 +165,7 @@ func newReviewCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			app := tagteam.NewApp(cfg)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer stop()
 			final, err := app.Review(ctx, opts, "")
 			final = withErrorExitCode(final, err)
@@ -188,7 +187,7 @@ func newFixCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			app := tagteam.NewApp(cfg)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer stop()
 			final, err := app.Fix(ctx, opts)
 			final = withErrorExitCode(final, err)
@@ -291,7 +290,9 @@ func newDoctorCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			app := tagteam.NewApp(cfg)
-			status, err := app.Doctor(context.Background(), opts)
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			defer stop()
+			status, err := app.Doctor(ctx, opts)
 			for _, key := range []string{"codex", "codex-oss", "claude", "agy", "gosling", "openai-compatible"} {
 				item := status[key]
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\tfound=%t\tversion=%s\tauth=%s\thint=%s\n", key, item.Found, item.Version, item.Auth, item.Hint)

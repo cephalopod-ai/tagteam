@@ -4,8 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRedactSecrets_ReplacesSensitiveEnvValues(t *testing.T) {
@@ -30,6 +33,86 @@ func TestRedactSecretsWithOverlay_ReplacesSensitiveOverlayValues(t *testing.T) {
 	}
 	if !strings.Contains(got, redactedSecret) {
 		t.Fatalf("redacted text missing marker: %q", got)
+	}
+}
+
+func TestRunAdapterRedactsPersistedPromptArgvAndRawArtifacts(t *testing.T) {
+	app := NewApp(DefaultConfig())
+	runDir := t.TempDir()
+	outputPath := filepath.Join(runDir, "review.json")
+	secret := "overlay-secret-token"
+	adapter := fakeAdapter{
+		build: func(role Role, req Request) (*CommandSpec, error) {
+			return &CommandSpec{
+				Argv: []string{"/bin/sh", "-c", "printf '%s' " + secret},
+				Dir:  runDir,
+			}, nil
+		},
+		parse: func(role Role, raw []byte) (Result, error) {
+			return Result{Text: string(raw)}, nil
+		},
+	}
+	_, err := app.runAdapter(context.Background(), adapter, RoleReporter, Request{
+		Context:    context.Background(),
+		Prompt:     "prompt contains " + secret,
+		EnvOverlay: map[string]string{"PURDUE_API_KEY": secret},
+		RunDir:     runDir,
+		OutputPath: outputPath,
+		Timeout:    5 * time.Second,
+	}, false)
+	if err != nil {
+		t.Fatalf("runAdapter() error = %v", err)
+	}
+	for _, path := range []string{outputPath, outputPath + ".raw"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if strings.Contains(string(data), secret) {
+			t.Fatalf("%s leaked secret: %q", path, string(data))
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(runDir, "deliveries"))
+	if err != nil {
+		t.Fatalf("read deliveries: %v", err)
+	}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(runDir, "deliveries", entry.Name()))
+		if err != nil {
+			t.Fatalf("read delivery %s: %v", entry.Name(), err)
+		}
+		if strings.Contains(string(data), secret) {
+			t.Fatalf("delivery artifact %s leaked secret: %q", entry.Name(), string(data))
+		}
+	}
+}
+
+func TestRunAdapterFailsWhenOutputExceedsLimit(t *testing.T) {
+	app := NewApp(DefaultConfig())
+	runDir := t.TempDir()
+	adapter := fakeAdapter{
+		build: func(role Role, req Request) (*CommandSpec, error) {
+			return &CommandSpec{
+				Argv: []string{"/bin/sh", "-c", "printf '1234567890'"},
+				Dir:  runDir,
+			}, nil
+		},
+		parse: func(role Role, raw []byte) (Result, error) {
+			return Result{Text: string(raw)}, nil
+		},
+	}
+	_, err := app.runAdapter(context.Background(), adapter, RoleReporter, Request{
+		Context:        context.Background(),
+		RunDir:         runDir,
+		OutputPath:     filepath.Join(runDir, "out.txt"),
+		Timeout:        5 * time.Second,
+		MaxOutputBytes: 5,
+	}, false)
+	if err == nil {
+		t.Fatal("expected output limit error")
+	}
+	if !strings.Contains(err.Error(), "max_output_bytes=5") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

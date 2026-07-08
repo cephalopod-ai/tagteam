@@ -92,7 +92,8 @@ Current caveats:
 - Authentication is adapter-specific. CLI-backed adapters usually rely on the vendor's own login/session flow; `openai-compatible` / `oai` relies on explicit environment/config values.
 - Supervisor slicing is more format-sensitive than the final review pass. The final review path is schema-validated, but some supervisor planning/instruction steps still depend on adapter output being reasonably well-formed.
 - Different adapters do not expose identical capabilities. Some support schema-constrained output, stdin, or session resume; others do not. `tagteam` degrades where possible, but behavior is not perfectly uniform.
-- Local `.env` loading is a convenience feature, not a secret-management system. It helps with local runs, but shell-exported environment variables still take precedence, and repository-local config can affect adapter behavior.
+- Local `.env` loading is a convenience feature, not a secret-management system. It helps with local runs, but shell-exported environment variables still take precedence.
+- Repo-local `.tagteam.toml` is partially trusted by default: low-authority defaults such as roles/models can be read, but shell tests, adapter passthrough args, Claude permission/tool widening, and `openai-compatible` endpoints/headers are ignored unless you pass `--trust-repo-config`.
 - Published binaries are broader than real-world manual validation. Releases may include targets that pass Go-level CI but have not been exercised end-to-end with every supported vendor CLI.
 
 Practical guidance:
@@ -167,6 +168,13 @@ status, and `plan-events.jsonl` records status transitions and review-added
 items. `tagteam status` shows the latest checklist when present; use
 `tagteam plan [RUN_ID]` to print a run's checklist directly.
 
+Supervisor and relay runs may perform one bounded orchestration adjustment
+before implementation starts. Agents can emit compact advisory signals, but
+`tagteam` owns the decision: relay may simplify to supervisor mode for small
+tasks, and supervisor mode may escalate to relay only when the worker reports
+insufficient context and the supervisor agrees. There is no back-and-forth
+replanning loop.
+
 ### Solo mode
 
 Solo mode runs exactly one implementation agent and no reviewer. It is useful as a quick baseline for comparing cost, speed, and quality against supervisor, relay, or adversarial runs.
@@ -185,6 +193,11 @@ Relay mode runs a cost-aware three-agent pipeline: read-only scout reconnaissanc
 ```bash
 tagteam --relay "add OAuth login"
 ```
+
+For small tasks, relay can simplify to supervisor mode before scout runs when
+the supervisor advises that the direct worker/review path is enough. The host
+records the decision and skips scout-heavy relay setup; the supervisor review
+remains the authoritative gate.
 
 Relay mode is a full-run workflow. It does not currently have a review-only
 variant: `tagteam review` remains adversary-only and does not run scout or
@@ -355,6 +368,8 @@ Configuration precedence is:
 
 If a `.env` file exists in the selected workdir, `tagteam` parses it as a small, line-oriented dotenv subset: `KEY=VALUE`, optional `export`, inline comments outside quotes, single-quoted raw values, and double-quoted escape sequences such as `\n`. `.env` is a convenience source for local development; it is not a full shell parser, and explicit shell exports still win.
 
+Repo-local `.tagteam.toml` is loaded in untrusted mode by default. It can set ordinary role/model defaults, but high-authority settings such as `defaults.test`, `git_safety`, adapter `extra_args`, Claude `coder_allowed_tools` / `bare`, and `openai-compatible` `base_url`, `api_key_env`, `extra_headers`, or `extra_args` require `--trust-repo-config`.
+
 User config path:
 
 - macOS/Linux: `~/.config/tagteam/config.toml`
@@ -438,6 +453,7 @@ Typical contents include:
 - `input.md`
 - `repo-instructions.md`
 - `repo-instructions.json`
+- `orchestration-decision.json` (supervisor/relay host-owned advisory decision)
 - `plan.json` / `plan-events.jsonl` (supervisor mode with slicing)
 - `solo-round-1.md` (solo mode)
 - `supervisor-work-plan.json` (supervisor mode with slicing)
@@ -463,10 +479,10 @@ Diff artifacts are captured through a temporary Git index, not the real staging
 area. The canonical patch includes tracked changes, deletions, renames, binary
 patches, and untracked files, while always excluding `.tagteam/`.
 
-Diagnostic output and validation-error artifacts redact values from sensitive
-shell environment keys and the scoped `.env` overlay. Prompts, diffs, and model
-outputs are still persisted for inspectability, so do not paste secrets into
-task prompts or source files.
+Diagnostic output, delivery records, copied prompts, and raw/validation-error
+artifacts redact values from sensitive shell environment keys and the scoped
+`.env` overlay. Prompts, diffs, and model outputs are still persisted for
+inspectability, so do not paste secrets into task prompts or source files.
 
 ## Development
 

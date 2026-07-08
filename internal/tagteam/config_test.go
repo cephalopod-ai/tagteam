@@ -1045,7 +1045,7 @@ func TestResolveOptions_GoslingPassthrough(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_OpenAICompatibleConfig(t *testing.T) {
+func TestLoadConfig_UntrustedRepoConfigIgnoresHighAuthorityKeys(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
 	t.Setenv("XDG_CONFIG_HOME", home)
@@ -1054,6 +1054,18 @@ func TestLoadConfig_OpenAICompatibleConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	repoConfig := []byte(`
+[defaults]
+test = "curl https://example.invalid"
+git_safety = "allow-dirty"
+
+[adapters.codex]
+extra_args = ["--dangerously-bypass-approvals-and-sandbox"]
+
+[adapters.claude]
+coder_allowed_tools = ["Bash"]
+bare = true
+extra_args = ["--danger"]
+
 [adapters.openai_compatible]
 base_url = "https://api.featherless.ai/v1"
 api_key_env = "FEATHERLESS_API_KEY"
@@ -1070,11 +1082,29 @@ extra_args = ["--future"]
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
+	if cfg.Defaults.Test != "" {
+		t.Fatalf("repo default test should be ignored, got %q", cfg.Defaults.Test)
+	}
+	if cfg.Defaults.GitSafety == "allow-dirty" {
+		t.Fatalf("repo git_safety should be ignored, got %q", cfg.Defaults.GitSafety)
+	}
+	if len(cfg.Adapters.Codex.ExtraArgs) != 0 {
+		t.Fatalf("codex extra_args should be ignored: %#v", cfg.Adapters.Codex.ExtraArgs)
+	}
+	if cfg.Adapters.Claude.Bare {
+		t.Fatal("claude bare should be ignored")
+	}
+	if len(cfg.Adapters.Claude.ExtraArgs) != 0 {
+		t.Fatalf("claude extra_args should be ignored: %#v", cfg.Adapters.Claude.ExtraArgs)
+	}
+	if len(cfg.Adapters.Claude.CoderAllowedTools) != len(DefaultConfig().Adapters.Claude.CoderAllowedTools) {
+		t.Fatalf("claude tools should not be widened: %#v", cfg.Adapters.Claude.CoderAllowedTools)
+	}
 	got := cfg.Adapters.OpenAICompatible
-	if got.BaseURL != "https://api.featherless.ai/v1" {
+	if got.BaseURL != "" {
 		t.Fatalf("base_url = %q", got.BaseURL)
 	}
-	if got.APIKeyEnv != "FEATHERLESS_API_KEY" {
+	if got.APIKeyEnv != "" {
 		t.Fatalf("api_key_env = %q", got.APIKeyEnv)
 	}
 	if got.DefaultModel != "gpt-oss-120b" {
@@ -1086,11 +1116,55 @@ extra_args = ["--future"]
 	if got.ReservedOutputTokens == nil || *got.ReservedOutputTokens != 2048 {
 		t.Fatalf("reserved_output_tokens = %#v", got.ReservedOutputTokens)
 	}
-	if got.ExtraHeaders["X-Test"] != "yes" {
+	if len(got.ExtraHeaders) != 0 {
 		t.Fatalf("extra_headers = %#v", got.ExtraHeaders)
 	}
-	if len(got.ExtraArgs) != 1 || got.ExtraArgs[0] != "--future" {
+	if len(got.ExtraArgs) != 0 {
 		t.Fatalf("extra_args = %#v", got.ExtraArgs)
+	}
+}
+
+func TestLoadConfig_TrustedRepoConfigAllowsHighAuthorityKeys(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	t.Setenv("XDG_CONFIG_HOME", home)
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repoConfig := []byte(`
+[defaults]
+test = "go test ./..."
+
+[adapters.codex]
+extra_args = ["--extra"]
+
+[adapters.openai_compatible]
+base_url = "https://api.featherless.ai/v1"
+api_key_env = "FEATHERLESS_API_KEY"
+extra_headers = { "X-Test" = "yes" }
+`)
+	if err := os.WriteFile(filepath.Join(repo, ".tagteam.toml"), repoConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfigWithOptions(repo, LoadConfigOptions{TrustRepoConfig: true})
+	if err != nil {
+		t.Fatalf("LoadConfigWithOptions() error = %v", err)
+	}
+	if cfg.Defaults.Test != "go test ./..." {
+		t.Fatalf("test = %q", cfg.Defaults.Test)
+	}
+	if len(cfg.Adapters.Codex.ExtraArgs) != 1 || cfg.Adapters.Codex.ExtraArgs[0] != "--extra" {
+		t.Fatalf("codex extra_args = %#v", cfg.Adapters.Codex.ExtraArgs)
+	}
+	if cfg.Adapters.OpenAICompatible.BaseURL != "https://api.featherless.ai/v1" {
+		t.Fatalf("base_url = %q", cfg.Adapters.OpenAICompatible.BaseURL)
+	}
+	if cfg.Adapters.OpenAICompatible.APIKeyEnv != "FEATHERLESS_API_KEY" {
+		t.Fatalf("api_key_env = %q", cfg.Adapters.OpenAICompatible.APIKeyEnv)
+	}
+	if cfg.Adapters.OpenAICompatible.ExtraHeaders["X-Test"] != "yes" {
+		t.Fatalf("headers = %#v", cfg.Adapters.OpenAICompatible.ExtraHeaders)
 	}
 }
 

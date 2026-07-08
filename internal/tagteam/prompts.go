@@ -147,6 +147,59 @@ areas likely involved, edge cases to handle, and how to verify the change.
 Do not write the diff yourself. Keep it short and actionable.`, editNote, workdir, userPrompt)
 }
 
+func BuildSupervisorOrchestrationAdvisoryPrompt(workdir, userPrompt string, currentMode Mode) string {
+	return fmt.Sprintf(`You are the supervisor in a bounded host-controlled orchestration workflow.
+You do not choose the workflow. You may only emit one compact advisory signal.
+
+Repository: %s
+Current mode: %s
+
+Request:
+%s
+
+Allowed advisory semantics:
+- keep: current mode is appropriate.
+- simplify: only valid from relay to supervisor when scout-heavy relay is unnecessary.
+- escalate: only valid from supervisor to relay when more discovery/context is needed.
+
+Return JSON only:
+{
+  "schema_version": 1,
+  "recommendation": "keep | simplify | escalate",
+  "target_mode": "supervisor | relay",
+  "reason": "short operational reason, no hidden chain-of-thought",
+  "confidence": "low | medium | high"
+}`, workdir, currentMode, userPrompt)
+}
+
+func BuildWorkerOrchestrationAdvisoryPrompt(workdir, userPrompt string, currentMode Mode, brief string) string {
+	return fmt.Sprintf(`You are the implementation worker/coder in a bounded host-controlled orchestration workflow.
+Do not edit files for this advisory step. You may only emit one compact advisory signal.
+
+Repository: %s
+Current mode: %s
+
+Request:
+%s
+
+Current supervisor brief or plan context:
+%s
+
+Allowed advisory semantics:
+- keep: current mode is appropriate.
+- simplify: task is overscaffolded or plan is unnecessary.
+- escalate: you are blocked by insufficient context/discovery and need relay/scout.
+
+Return JSON only:
+{
+  "schema_version": 1,
+  "recommendation": "keep | simplify | escalate",
+  "target_mode": "supervisor | relay",
+  "reason": "short operational reason, no hidden chain-of-thought",
+  "confidence": "low | medium | high"
+}`, workdir, currentMode, userPrompt, brief)
+}
+
 func BuildSupervisorWorkPlanPrompt(workdir, userPrompt string, maxPackages int, requestedPackage string) string {
 	if maxPackages <= 0 {
 		maxPackages = 5

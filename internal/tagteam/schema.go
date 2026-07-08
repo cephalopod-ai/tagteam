@@ -116,3 +116,32 @@ const WorkPlanSchema = `{
   },
   "additionalProperties": false
 }`
+
+const OrchestrationAdvisorySchema = `{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "recommendation", "target_mode", "reason", "confidence"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": ["keep", "simplify", "escalate"]
+    },
+    "target_mode": {
+      "type": "string",
+      "enum": ["supervisor", "relay"]
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    }
+  },
+  "additionalProperties": false
+}`

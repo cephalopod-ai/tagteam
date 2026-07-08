@@ -192,6 +192,35 @@ type WorkPackage struct {
 	Validation   []string `json:"validation"`
 }
 
+type OrchestrationAdvisory struct {
+	SchemaVersion  int    `json:"schema_version,omitempty"`
+	Source         string `json:"source,omitempty"`
+	Recommendation string `json:"recommendation"`
+	TargetMode     Mode   `json:"target_mode,omitempty"`
+	Reason         string `json:"reason"`
+	Confidence     string `json:"confidence"`
+}
+
+type OrchestrationTransition struct {
+	From   Mode   `json:"from"`
+	To     Mode   `json:"to"`
+	Reason string `json:"reason"`
+}
+
+type OrchestrationDecision struct {
+	SchemaVersion           int                      `json:"schema_version"`
+	RunID                   string                   `json:"run_id"`
+	InitialMode             Mode                     `json:"initial_mode"`
+	FinalMode               Mode                     `json:"final_mode"`
+	Status                  string                   `json:"status"`
+	Advisories              []OrchestrationAdvisory  `json:"advisories"`
+	AppliedTransition       *OrchestrationTransition `json:"applied_transition,omitempty"`
+	TransitionLimitConsumed bool                     `json:"transition_limit_consumed"`
+	Degraded                bool                     `json:"degraded,omitempty"`
+	DegradedReason          string                   `json:"degraded_reason,omitempty"`
+	HostReason              string                   `json:"host_reason"`
+}
+
 type PlanStatus string
 
 const (

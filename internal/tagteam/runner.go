@@ -1027,7 +1027,96 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	return final, nil
 }
 
-func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Review) (FinalRun, error) {
+func (a *App) resolveOrchestrationDecision(ctx context.Context, opts RunOptions, runDir string, editor, reviewer Adapter) (OrchestrationDecision, Mode) {
+	decision := newOrchestrationDecision(filepath.Base(runDir), opts.Mode)
+	if opts.DryRun {
+		decision.HostReason = "dry-run keeps initial mode"
+		return decision, opts.Mode
+	}
+	switch opts.Mode {
+	case ModeRelay:
+		advisory, err := a.collectOrchestrationAdvisory(ctx, opts, reviewer, "supervisor", opts.Mode, "", runDir)
+		if err != nil {
+			markOrchestrationDecisionDegraded(&decision, err.Error())
+			return decision, opts.Mode
+		}
+		return decision, applyRelaySimplificationPolicy(&decision, advisory)
+	case ModeSupervisor:
+		worker, err := a.collectOrchestrationAdvisory(ctx, opts, editor, "worker", opts.Mode, "", runDir)
+		if err != nil {
+			markOrchestrationDecisionDegraded(&decision, err.Error())
+			return decision, opts.Mode
+		}
+		if worker.Recommendation != "escalate" || worker.TargetMode != ModeRelay {
+			decision.Advisories = append(decision.Advisories, worker)
+			decision.FinalMode = ModeSupervisor
+			decision.Status = "kept"
+			decision.HostReason = "worker did not request relay escalation"
+			return decision, ModeSupervisor
+		}
+		supervisor, err := a.collectOrchestrationAdvisory(ctx, opts, reviewer, "supervisor", opts.Mode, worker.Reason, runDir)
+		if err != nil {
+			decision.Advisories = append(decision.Advisories, worker)
+			markOrchestrationDecisionDegraded(&decision, err.Error())
+			return decision, opts.Mode
+		}
+		return decision, applySupervisorEscalationPolicy(&decision, worker, supervisor)
+	default:
+		decision.HostReason = "mode does not support advisory transition"
+		return decision, opts.Mode
+	}
+}
+
+func (a *App) collectOrchestrationAdvisory(ctx context.Context, opts RunOptions, adapter Adapter, source string, current Mode, brief string, runDir string) (OrchestrationAdvisory, error) {
+	schemaPath := filepath.Join(runDir, "orchestration-advisory-schema.json")
+	if err := os.WriteFile(schemaPath, []byte(OrchestrationAdvisorySchema), 0o644); err != nil {
+		return OrchestrationAdvisory{}, err
+	}
+	outputPath := filepath.Join(runDir, fmt.Sprintf("orchestration-%s-advisory.json", sanitizeArtifactName(source)))
+	var prompt string
+	if source == "worker" {
+		prompt = BuildWorkerOrchestrationAdvisoryPrompt(opts.Workdir, opts.Prompt, current, brief)
+	} else {
+		prompt = BuildSupervisorOrchestrationAdvisoryPrompt(opts.Workdir, opts.Prompt, current)
+	}
+	if !adapter.Capabilities().SupportsSchema {
+		prompt += "\n\nJSON schema:\n" + OrchestrationAdvisorySchema
+	}
+	result, err := a.runAdapter(ctx, adapter, RoleSupervisor, Request{
+		Context:    ctx,
+		Prompt:     prompt,
+		EnvOverlay: opts.EnvOverlay,
+		Model:      advisoryModel(opts, source),
+		Workdir:    opts.Workdir,
+		RunDir:     runDir,
+		OutputPath: outputPath,
+		SchemaPath: schemaPath,
+		Timeout:    opts.Timeout,
+		Phase:      fmt.Sprintf("orchestration advisory %s %s", source, adapter.ID()),
+		Quiet:      opts.Quiet,
+		Verbose:    opts.Verbose,
+	}, false)
+	if err != nil {
+		return OrchestrationAdvisory{}, err
+	}
+	advisory, err := parseOrchestrationAdvisory([]byte(result.Text), source)
+	if err != nil {
+		return OrchestrationAdvisory{}, err
+	}
+	if err := writeJSONWithNewline(outputPath, advisory); err != nil {
+		return OrchestrationAdvisory{}, err
+	}
+	return advisory, nil
+}
+
+func advisoryModel(opts RunOptions, source string) string {
+	if source == "worker" {
+		return opts.Coder.Model
+	}
+	return opts.Adversary.Model
+}
+
+func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Review) (final FinalRun, err error) {
 	if opts.MaxWallTime > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, opts.MaxWallTime)
@@ -1077,33 +1166,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	if err := writeJSON(filepath.Join(runDir, "meta.json"), meta); err != nil {
 		return FinalRun{}, err
 	}
-	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: "preflight"})
-	logProgress(opts, "run %s started mode=%s baseline=%s run-dir=%s", runID, opts.Mode, baseline, runDir)
-
-	registry := Registry(a.Config, opts)
-	editor, ok := registry[opts.Coder.Adapter]
-	if !ok {
-		return FinalRun{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown %s adapter %q", editorLabel, opts.Coder.Adapter)}
-	}
-	reviewer, ok := registry[opts.Adversary.Adapter]
-	if !ok {
-		return FinalRun{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown %s adapter %q", reviewerLabel, opts.Adversary.Adapter)}
-	}
-	adaptersToCheck := []Adapter{editor, reviewer}
-	var scout Adapter
-	if opts.Mode == ModeRelay {
-		var scoutOK bool
-		scout, scoutOK = registry[opts.Scout.Adapter]
-		if !scoutOK {
-			return FinalRun{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown scout adapter %q", opts.Scout.Adapter)}
-		}
-		adaptersToCheck = append(adaptersToCheck, scout)
-	}
-	if err := checkAdapters(ctx, adaptersToCheck...); err != nil {
-		return FinalRun{}, err
-	}
-
-	final := FinalRun{
+	final = FinalRun{
 		SchemaVersion:     ArtifactSchemaVersion,
 		RunID:             runID,
 		RunDir:            runDir,
@@ -1121,12 +1184,96 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		Models:            meta.Models,
 		StartedAt:         meta.StartedAt,
 	}
+	defer func() {
+		if err == nil || final.RunID == "" {
+			return
+		}
+		if !final.FinishedAt.IsZero() {
+			return
+		}
+		if final.ExitCode == ExitSuccess {
+			final.ExitCode = ExitCode(err)
+		}
+		if final.Verdict == "" {
+			final.Verdict = "error"
+		}
+		if final.Summary == "" {
+			final.Summary = redactSecretsWithOverlay(err.Error(), opts.EnvOverlay)
+		}
+		if final.FinishedAt.IsZero() {
+			final.FinishedAt = time.Now().UTC()
+		}
+		_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "failed", Phase: "error", CurrentRound: final.RoundsCompleted, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode})
+		_ = a.persistFinal(opts.Workdir, final)
+	}()
+	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: "preflight"})
+	logProgress(opts, "run %s started mode=%s baseline=%s run-dir=%s", runID, opts.Mode, baseline, runDir)
+
+	registry := Registry(a.Config, opts)
+	editor, ok := registry[opts.Coder.Adapter]
+	if !ok {
+		return final, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown %s adapter %q", editorLabel, opts.Coder.Adapter)}
+	}
+	reviewer, ok := registry[opts.Adversary.Adapter]
+	if !ok {
+		return final, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown %s adapter %q", reviewerLabel, opts.Adversary.Adapter)}
+	}
+	adaptersToCheck := []Adapter{editor, reviewer}
+	var scout Adapter
+	if opts.Mode == ModeRelay {
+		var scoutOK bool
+		scout, scoutOK = registry[opts.Scout.Adapter]
+		if !scoutOK {
+			return final, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown scout adapter %q", opts.Scout.Adapter)}
+		}
+	}
+	if err := checkAdapters(ctx, adaptersToCheck...); err != nil {
+		return final, err
+	}
 
 	var brief string
 	var relay RelayContext
 	var workPlan *WorkPlan
 	var selectedPackage *WorkPackage
 	var executionPlan *ExecutionPlan
+	if initialReview == nil && (opts.Mode == ModeSupervisor || opts.Mode == ModeRelay) {
+		decision, effectiveMode := a.resolveOrchestrationDecision(ctx, opts, runDir, editor, reviewer)
+		normalizeOrchestrationDecision(&decision)
+		if err := writeJSONWithNewline(filepath.Join(runDir, orchestrationDecisionArtifact), decision); err != nil {
+			return final, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("write orchestration decision artifact: %w", err)}
+		}
+		if effectiveMode != opts.Mode {
+			logProgress(opts, "orchestration transition applied %s -> %s reason=%q", opts.Mode, effectiveMode, decision.HostReason)
+			opts.Mode = effectiveMode
+			editorLabel, reviewerLabel = roleLabels(opts.Mode)
+			meta.Adapters = map[string]string{editorLabel: opts.Coder.Adapter, reviewerLabel: opts.Adversary.Adapter}
+			meta.Models = map[string]string{editorLabel: opts.Coder.Model, reviewerLabel: opts.Adversary.Model}
+			if opts.Mode == ModeRelay {
+				meta.Adapters["scout"] = opts.Scout.Adapter
+				meta.Models["scout"] = opts.Scout.Model
+			}
+			if err := writeJSON(filepath.Join(runDir, "meta.json"), meta); err != nil {
+				return final, err
+			}
+			final.Mode = opts.Mode
+			final.Adapters = meta.Adapters
+			final.Models = meta.Models
+		}
+		if opts.Mode == ModeRelay {
+			var scoutOK bool
+			scout, scoutOK = registry[opts.Scout.Adapter]
+			if !scoutOK {
+				return final, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown scout adapter %q", opts.Scout.Adapter)}
+			}
+			if err := checkAdapters(ctx, scout); err != nil {
+				return final, err
+			}
+		}
+	} else if opts.Mode == ModeRelay {
+		if err := checkAdapters(ctx, scout); err != nil {
+			return final, err
+		}
+	}
 	if opts.Mode == ModeSupervisor && initialReview == nil {
 		if opts.SupervisorSlicing {
 			logProgress(opts, "supervisor slicing started adapter=%s max-packages=%d", reviewer.ID(), opts.MaxPackages)
@@ -2286,6 +2433,11 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	logRequestProgress(req, "%s process completed elapsed=%s", phase, shortDuration(time.Since(started)))
 	raw := stdout.Bytes()
 	if req.OutputPath != "" && fileExists(req.OutputPath) {
+		if info, statErr := os.Stat(req.OutputPath); statErr == nil && info.Size() > maxOutputBytes(req) {
+			err := &ExitError{Code: ExitAdapterFailure, Err: outputLimitError(adapter.ID(), maxOutputBytes(req))}
+			finishDeliveryRecord(recordPath, record, "failed", err)
+			return Result{}, err
+		}
 		var readErr error
 		raw, readErr = os.ReadFile(req.OutputPath)
 		if readErr != nil {

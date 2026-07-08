@@ -126,6 +126,51 @@ func TestWorkPlanSchemaRequiresCoreFields(t *testing.T) {
 	}
 }
 
+func TestOrchestrationPolicy_RelaySimplifiesOnce(t *testing.T) {
+	decision := newOrchestrationDecision("run", ModeRelay)
+	mode := applyRelaySimplificationPolicy(&decision, OrchestrationAdvisory{
+		SchemaVersion:  ArtifactSchemaVersion,
+		Source:         "supervisor",
+		Recommendation: "simplify",
+		TargetMode:     ModeSupervisor,
+		Reason:         "direct path is enough",
+		Confidence:     "high",
+	})
+	if mode != ModeSupervisor {
+		t.Fatalf("mode = %q", mode)
+	}
+	if decision.AppliedTransition == nil || decision.AppliedTransition.From != ModeRelay || decision.AppliedTransition.To != ModeSupervisor {
+		t.Fatalf("transition = %#v", decision.AppliedTransition)
+	}
+	if !decision.TransitionLimitConsumed {
+		t.Fatal("expected transition limit consumed")
+	}
+}
+
+func TestOrchestrationPolicy_SupervisorEscalatesOnlyOnAgreement(t *testing.T) {
+	worker := OrchestrationAdvisory{SchemaVersion: ArtifactSchemaVersion, Source: "worker", Recommendation: "escalate", TargetMode: ModeRelay, Reason: "need context", Confidence: "high"}
+	supervisor := OrchestrationAdvisory{SchemaVersion: ArtifactSchemaVersion, Source: "supervisor", Recommendation: "escalate", TargetMode: ModeRelay, Reason: "agree", Confidence: "high"}
+	decision := newOrchestrationDecision("run", ModeSupervisor)
+	if mode := applySupervisorEscalationPolicy(&decision, worker, supervisor); mode != ModeRelay {
+		t.Fatalf("mode = %q", mode)
+	}
+	if decision.AppliedTransition == nil || decision.AppliedTransition.To != ModeRelay {
+		t.Fatalf("transition = %#v", decision.AppliedTransition)
+	}
+}
+
+func TestOrchestrationPolicy_ConflictingSignalsPreferSimplerMode(t *testing.T) {
+	worker := OrchestrationAdvisory{SchemaVersion: ArtifactSchemaVersion, Source: "worker", Recommendation: "escalate", TargetMode: ModeRelay, Reason: "need context", Confidence: "high"}
+	supervisor := OrchestrationAdvisory{SchemaVersion: ArtifactSchemaVersion, Source: "supervisor", Recommendation: "keep", TargetMode: ModeSupervisor, Reason: "simple enough", Confidence: "high"}
+	decision := newOrchestrationDecision("run", ModeSupervisor)
+	if mode := applySupervisorEscalationPolicy(&decision, worker, supervisor); mode != ModeSupervisor {
+		t.Fatalf("mode = %q", mode)
+	}
+	if decision.AppliedTransition != nil || decision.TransitionLimitConsumed {
+		t.Fatalf("unexpected transition: %#v", decision)
+	}
+}
+
 func TestRolePromptsDoNotLeakConflictingAuthority(t *testing.T) {
 	workerPrompts := []string{
 		BuildWorkerImplementPrompt("/repo", "ship it", "brief"),
@@ -966,6 +1011,46 @@ func TestIntegration_GoslingAdversaryRejected(t *testing.T) {
 	}
 }
 
+func TestRunLoop_PersistsFinalOnMidRunFailure(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	app := NewApp(DefaultConfig())
+	final, err := app.Run(context.Background(), RunOptions{
+		Prompt:    "ship it",
+		Workdir:   repo,
+		Mode:      ModeAdversarial,
+		Coder:     RoleTarget{Adapter: "missing-adapter"},
+		Adversary: RoleTarget{Adapter: "claude"},
+		Rounds:    1,
+		Timeout:   10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected unknown adapter error")
+	}
+	if final.RunDir == "" {
+		t.Fatal("expected run dir in failed final")
+	}
+	var persisted FinalRun
+	readJSONFile(t, filepath.Join(final.RunDir, "final.json"), &persisted)
+	if persisted.ExitCode != ExitInvalidArguments {
+		t.Fatalf("persisted exit = %d, want %d", persisted.ExitCode, ExitInvalidArguments)
+	}
+	if persisted.Verdict != "error" {
+		t.Fatalf("persisted verdict = %q", persisted.Verdict)
+	}
+	var latest LatestRun
+	readJSONFile(t, filepath.Join(repo, ".tagteam", "latest.json"), &latest)
+	if latest.RunID != final.RunID || latest.FinalPath != filepath.Join(final.RunDir, "final.json") {
+		t.Fatalf("latest = %#v final=%#v", latest, final)
+	}
+}
+
 func TestReview_PreflightsReviewerRunnable(t *testing.T) {
 	oldLookPath := execLookPath
 	oldCommandContext := execCommandContext
@@ -1450,11 +1535,25 @@ func TestRunLoop_SupervisorSlicingWritesWorkPlanAndScopesWorker(t *testing.T) {
 	if len(sections) < 2 {
 		t.Fatalf("expected at least slicing and worker invocations, log:\n%s", string(data))
 	}
-	slicingInvocation := sections[0]
+	slicingInvocation := ""
+	workerInvocation := ""
+	for _, section := range sections {
+		if strings.Contains(section, "implementation work packages") {
+			slicingInvocation = section
+		}
+		if strings.Contains(section, "You are the worker") && strings.Contains(section, "Selected work package") {
+			workerInvocation = section
+		}
+	}
+	if slicingInvocation == "" {
+		t.Fatalf("missing slicing invocation, log:\n%s", string(data))
+	}
 	if !strings.Contains(slicingInvocation, "--json-schema") || !strings.Contains(slicingInvocation, `"packages"`) {
 		t.Fatalf("slicing invocation did not use work-plan schema:\n%s", slicingInvocation)
 	}
-	workerInvocation := sections[1]
+	if workerInvocation == "" {
+		t.Fatalf("missing worker invocation, log:\n%s", string(data))
+	}
 	if !strings.Contains(workerInvocation, "Selected work package") || !strings.Contains(workerInvocation, "P1") {
 		t.Fatalf("worker invocation was not package-scoped:\n%s", workerInvocation)
 	}
@@ -1477,6 +1576,38 @@ if [ -n "$CLAUDE_ARGS_LOG" ]; then
   printf '%s\n---\n' "$*" >> "$CLAUDE_ARGS_LOG"
 fi
 case "$*" in
+  *"bounded host-controlled orchestration workflow"*)
+    mode="supervisor"
+    case "$*" in *"Current mode: relay"*) mode="relay" ;; esac
+    source="supervisor"
+    case "$*" in *"implementation worker/coder"*) source="worker" ;; esac
+    rec="keep"
+    target="$mode"
+    reason="current mode is appropriate"
+    case "$TAGTEAM_TEST_ORCH_ADVISORY:$mode:$source" in
+      simplify:relay:supervisor)
+        rec="simplify"; target="supervisor"; reason="direct supervisor workflow is enough"
+        ;;
+      escalate:supervisor:worker)
+        rec="escalate"; target="relay"; reason="worker needs scout context"
+        ;;
+      escalate:supervisor:supervisor)
+        rec="escalate"; target="relay"; reason="supervisor agrees scout is needed"
+        ;;
+      conflict:supervisor:worker)
+        rec="escalate"; target="relay"; reason="worker wants more context"
+        ;;
+      conflict:supervisor:supervisor)
+        rec="keep"; target="supervisor"; reason="supervisor prefers simpler mode"
+        ;;
+      invalid:*)
+        printf '%s' '{"result":"not-json","session_id":"","total_cost_usd":0}'
+        exit 0
+        ;;
+    esac
+    printf '{"result":"{\\"schema_version\\":1,\\"recommendation\\":\\"%s\\",\\"target_mode\\":\\"%s\\",\\"reason\\":\\"%s\\",\\"confidence\\":\\"high\\"}","session_id":"","total_cost_usd":0}' "$rec" "$target" "$reason"
+    exit 0
+    ;;
   *"implementation work packages"*)
     printf '%s' '{"result":"{\"schema_version\":1,\"summary\":\"Implement package one\",\"packages\":[{\"id\":\"P1\",\"title\":\"Package one\",\"goal\":\"Do the first slice\",\"allowed_scope\":[\"README.md\"],\"acceptance\":[\"README updated\"],\"validation\":[\"go test ./...\"]},{\"id\":\"P2\",\"title\":\"Package two\",\"goal\":\"Deferred follow-up\",\"allowed_scope\":[\"README.md\"],\"acceptance\":[\"follow-up done\"],\"validation\":[\"go test ./...\"]}],\"selected_package\":\"P1\",\"defer\":[\"P2\"]}","session_id":"","total_cost_usd":0}'
     exit 0
@@ -1585,6 +1716,7 @@ func TestRunLoop_RelayModeWritesExpectedArtifacts(t *testing.T) {
 	}
 	for _, name := range []string{
 		"supervisor-brief.md",
+		"orchestration-decision.json",
 		"retrieval-round-1.json",
 		"scout-context-round-1.json",
 		"scout-execution-round-1.json",
@@ -1610,6 +1742,147 @@ func TestRunLoop_RelayModeWritesExpectedArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(string(agyLog), "Host retrieval evidence") {
 		t.Fatalf("scout prompt did not include retrieval context:\n%s", string(agyLog))
+	}
+}
+
+func TestRunLoop_RelaySimplifiesToSupervisorBeforeScout(t *testing.T) {
+	t.Setenv("TAGTEAM_TEST_ORCH_ADVISORY", "simplify")
+	installFakeClaudeBinary(t)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	app := NewApp(DefaultConfig())
+	final, err := app.Run(context.Background(), RunOptions{
+		Prompt:             "fix typo",
+		Workdir:            repo,
+		Mode:               ModeRelay,
+		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Coder:              RoleTarget{Adapter: "claude"},
+		Adversary:          RoleTarget{Adapter: "claude"},
+		ScoutMode:          "recon",
+		PostScoutMode:      "polish",
+		ScoutRetrieval:     true,
+		ScoutFailurePolicy: "continue",
+		Rounds:             1,
+		Timeout:            10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected blocking review error from fake supervisor")
+	}
+	if final.Mode != ModeSupervisor {
+		t.Fatalf("mode = %q", final.Mode)
+	}
+	if fileExists(filepath.Join(final.RunDir, "scout-round-1.json")) {
+		t.Fatal("scout should be skipped after relay simplification")
+	}
+	var decision OrchestrationDecision
+	readJSONFile(t, filepath.Join(final.RunDir, orchestrationDecisionArtifact), &decision)
+	if decision.AppliedTransition == nil || decision.AppliedTransition.From != ModeRelay || decision.AppliedTransition.To != ModeSupervisor {
+		t.Fatalf("decision = %#v", decision)
+	}
+	if !decision.TransitionLimitConsumed {
+		t.Fatal("expected transition limit consumed")
+	}
+}
+
+func TestRunLoop_SupervisorEscalatesToRelayWhenBothAgentsAgree(t *testing.T) {
+	t.Setenv("TAGTEAM_TEST_ORCH_ADVISORY", "escalate")
+	installFakeBinaries(t, map[string]string{
+		"agy":    fakeAgyScript,
+		"claude": fakeClaudeScript,
+	})
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	app := NewApp(DefaultConfig())
+	final, err := app.Run(context.Background(), RunOptions{
+		Prompt:             "map this unfamiliar repo and fix the bug",
+		Workdir:            repo,
+		Mode:               ModeSupervisor,
+		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Coder:              RoleTarget{Adapter: "claude"},
+		Adversary:          RoleTarget{Adapter: "claude"},
+		ScoutMode:          "recon",
+		PostScoutMode:      "polish",
+		ScoutRetrieval:     false,
+		ScoutFailurePolicy: "continue",
+		Rounds:             1,
+		Timeout:            10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected blocking review error from fake supervisor")
+	}
+	if final.Mode != ModeRelay {
+		t.Fatalf("mode = %q", final.Mode)
+	}
+	if !fileExists(filepath.Join(final.RunDir, "scout-round-1.json")) {
+		t.Fatal("expected scout to run after escalation")
+	}
+	var decision OrchestrationDecision
+	readJSONFile(t, filepath.Join(final.RunDir, orchestrationDecisionArtifact), &decision)
+	if decision.AppliedTransition == nil || decision.AppliedTransition.From != ModeSupervisor || decision.AppliedTransition.To != ModeRelay {
+		t.Fatalf("decision = %#v", decision)
+	}
+	if len(decision.Advisories) != 2 {
+		t.Fatalf("advisories = %#v", decision.Advisories)
+	}
+}
+
+func TestRunLoop_AdvisoryFailureFallsBackToOriginalMode(t *testing.T) {
+	t.Setenv("TAGTEAM_TEST_ORCH_ADVISORY", "invalid")
+	installFakeBinaries(t, map[string]string{
+		"agy":    fakeAgyScript,
+		"claude": fakeClaudeScript,
+	})
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	app := NewApp(DefaultConfig())
+	final, err := app.Run(context.Background(), RunOptions{
+		Prompt:             "add a feature",
+		Workdir:            repo,
+		Mode:               ModeRelay,
+		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Coder:              RoleTarget{Adapter: "claude"},
+		Adversary:          RoleTarget{Adapter: "claude"},
+		ScoutMode:          "recon",
+		PostScoutMode:      "polish",
+		ScoutRetrieval:     false,
+		ScoutFailurePolicy: "continue",
+		Rounds:             1,
+		Timeout:            10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected blocking review error from fake supervisor")
+	}
+	if final.Mode != ModeRelay {
+		t.Fatalf("mode = %q", final.Mode)
+	}
+	if !fileExists(filepath.Join(final.RunDir, "scout-round-1.json")) {
+		t.Fatal("expected original relay mode to continue after advisory failure")
+	}
+	var decision OrchestrationDecision
+	readJSONFile(t, filepath.Join(final.RunDir, orchestrationDecisionArtifact), &decision)
+	if !decision.Degraded || decision.FinalMode != ModeRelay {
+		t.Fatalf("decision = %#v", decision)
 	}
 }
 
