@@ -1236,6 +1236,11 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	initFinalState(&final, opts)
 	budget := &InvocationBudget{Max: opts.MaxRoleInvocations}
 	opts.InvocationBudget = budget
+	// currentRole tracks the role whose work is in flight so the deferred
+	// failure handler can classify the blocking reason correctly. final.Phase is
+	// a human-facing serialized field and stays "preflight" until the round loop
+	// sets it, so it is not a reliable classifier key for early failures.
+	currentRole := editorLabel
 	defer func() {
 		if err == nil || final.RunID == "" {
 			return
@@ -1255,7 +1260,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		if final.FinishedAt.IsZero() {
 			final.FinishedAt = time.Now().UTC()
 		}
-		setFinalBlocking(&final, classifyRoleFailure(final.Phase, err), err.Error())
+		setFinalBlocking(&final, classifyRoleFailure(currentRole, err), err.Error())
 		applyInvocationBudget(&final, budget)
 		finalizeRunState(&final)
 		_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: string(final.Status), Phase: "error", Degraded: final.Degraded, DegradedReason: final.DegradedReason, BlockingReason: final.BlockingReason, RoleStatuses: final.RoleStatuses, CurrentRound: final.RoundsCompleted, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode})
@@ -1288,6 +1293,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	}
 	setRoleStatus(&final, editorLabel, opts.Coder, "ready", "", "")
 	reviewerRoleForPolicy := reviewerLabel
+	currentRole = reviewerRoleForPolicy
 	opts.Adversary, reviewer, err = selectRunnableRoleAdapter(ctx, registry, reviewerRoleForPolicy, opts.Adversary, fallbackTargetsForRole(opts, reviewerRoleForPolicy), lossPolicyForRole(opts, reviewerRoleForPolicy), &final)
 	if err != nil {
 		setFinalBlocking(&final, classifyRoleFailure(reviewerRoleForPolicy, err), err.Error())
@@ -1660,6 +1666,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	for round := 1; round <= opts.Rounds; round++ {
 		logProgress(opts, "round %d/%d %s started adapter=%s", round, opts.Rounds, editorLabel, editor.ID())
 		final.Phase = editorLabel
+		currentRole = editorLabel
 		setRoleStatus(&final, editorLabel, opts.Coder, "running", "", "")
 		_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: editorLabel, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath})
 		var editorPrompt string
@@ -1810,6 +1817,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 
 		logProgress(opts, "round %d %s started adapter=%s", round, reviewerLabel, reviewer.ID())
 		final.Phase = reviewerLabel
+		currentRole = reviewerLabel
 		setRoleStatus(&final, reviewerLabel, opts.Adversary, "running", "", "")
 		_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: reviewerLabel, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath})
 		var priorReview *Review
@@ -2896,7 +2904,7 @@ func mergeRestrictedCommandEnv(overlay map[string]string, extra []string) []stri
 	values := map[string]string{}
 	for _, item := range os.Environ() {
 		key, value, ok := strings.Cut(item, "=")
-		if !ok || (!allowed[key] && !strings.HasSuffix(key, "_ARGS_LOG")) {
+		if !ok || (!allowed[key] && !isForwardableAuthEnvKey(key)) {
 			continue
 		}
 		values[key] = value
@@ -2924,6 +2932,21 @@ func mergeRestrictedCommandEnv(overlay map[string]string, extra []string) []stri
 		env = append(env, key+"="+values[key])
 	}
 	return env
+}
+
+// isForwardableAuthEnvKey reports whether an ambient env var is a provider auth
+// credential that non-coder adapter subprocesses need to authenticate. It is
+// deliberately narrower than isSensitiveEnvKey (the redaction set): we redact
+// broadly but forward narrowly, so only well-known auth key shapes cross the
+// restricted-env boundary. Forwarded keys are still scrubbed from artifacts by
+// secretValuesFromEnv, which also matches API_KEY/AUTH_TOKEN.
+func isForwardableAuthEnvKey(key string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(key))
+	switch upper {
+	case "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_AUTH_TOKEN":
+		return true
+	}
+	return strings.HasSuffix(upper, "_API_KEY") || strings.HasSuffix(upper, "_AUTH_TOKEN")
 }
 
 func createRunDir(workdir, runID string) (string, error) {

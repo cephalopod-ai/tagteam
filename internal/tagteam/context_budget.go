@@ -1,6 +1,7 @@
 package tagteam
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -105,6 +106,11 @@ func estimatePromptTokens(prompt string) int {
 	return (bytes + 2) / 3
 }
 
+// errScoutContextTooSmall is the sentinel wrapped by invalidScoutContextBudgetError.
+// classifyRoleFailure and classifyScoutFailure both detect the scout-context case
+// via errors.Is on this sentinel rather than substring-matching the message.
+var errScoutContextTooSmall = errors.New("scout context exceeds configured limit")
+
 func invalidScoutContextBudgetError(artifact ScoutContextBudgetArtifact) error {
-	return fmt.Errorf("scout context exceeds configured limit even without retrieval: estimated_input_tokens=%d usable_context_tokens=%d; configure a larger-context scout or reduce prompt size", artifact.EstimatedInputTokens, artifact.UsableContextTokens)
+	return fmt.Errorf("%w even without retrieval: estimated_input_tokens=%d usable_context_tokens=%d; configure a larger-context scout or reduce prompt size", errScoutContextTooSmall, artifact.EstimatedInputTokens, artifact.UsableContextTokens)
 }

@@ -51,6 +51,9 @@ func classifyScoutFailure(err error) string {
 	if err == nil {
 		return ""
 	}
+	if errors.Is(err, errScoutContextTooSmall) {
+		return scoutFailureClassContextBudget
+	}
 	if IsOutputContractError(err) {
 		return scoutFailureClassOutput
 	}

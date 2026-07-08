@@ -13,6 +13,7 @@ import (
 func initFinalState(final *FinalRun, opts RunOptions) {
 	final.Status = RunStatusRunning
 	final.Phase = "preflight"
+	final.envOverlay = opts.EnvOverlay
 	final.RoleStatuses = map[string]RoleStatus{}
 	final.RoleLosses = []RoleLossRecord{}
 	final.Budgets = BudgetState{
@@ -40,6 +41,10 @@ func finalizeRunState(final *FinalRun) {
 	if final.BlockingReason == "" {
 		final.BlockingReason = string(reasonForExit(final.ExitCode))
 	}
+	if final.BlockingReason == string(ReasonBudgetExceeded) {
+		final.Budgets.Exhausted = true
+		final.Budgets.ReasonCode = ReasonBudgetExceeded
+	}
 }
 
 func reasonForExit(code int) ReasonCode {
@@ -47,7 +52,7 @@ func reasonForExit(code int) ReasonCode {
 	case ExitTestsFailed:
 		return ReasonTestFailed
 	case ExitBlockingFindings:
-		return ReasonRoundsExhausted
+		return ReasonBlockingFindings
 	case ExitAdapterFailure:
 		return ReasonReviewerUnavailable
 	case ExitPreflightFailed:
@@ -88,7 +93,7 @@ func setRoleStatus(final *FinalRun, role string, target RoleTarget, status strin
 	current.Model = target.Model
 	current.Status = status
 	current.ReasonCode = reason
-	current.Message = redactSecrets(message)
+	current.Message = redactSecretsWithOverlay(message, final.envOverlay)
 	current.LastUpdatedAt = time.Now().UTC()
 	final.RoleStatuses[role] = current
 }
@@ -100,7 +105,7 @@ func appendRoleLoss(final *FinalRun, role string, policy LossPolicy, action, out
 		AttemptedAction: action,
 		Outcome:         outcome,
 		ReasonCode:      reason,
-		Message:         redactSecrets(message),
+		Message:         redactSecretsWithOverlay(message, final.envOverlay),
 	})
 }
 
@@ -126,7 +131,7 @@ func classifyRoleFailure(role string, err error) ReasonCode {
 	if errors.Is(err, errInvocationBudgetExceeded) {
 		return ReasonBudgetExceeded
 	}
-	if strings.Contains(strings.ToLower(err.Error()), "context") && strings.Contains(strings.ToLower(err.Error()), "scout") {
+	if errors.Is(err, errScoutContextTooSmall) {
 		return ReasonScoutContextTooSmall
 	}
 	switch role {
@@ -136,7 +141,7 @@ func classifyRoleFailure(role string, err error) ReasonCode {
 		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(err.Error()), "deadline") {
 			return ReasonWorkerTimeout
 		}
-		return ReasonWorkerTimeout
+		return ReasonWorkerUnavailable
 	case "supervisor":
 		return ReasonSupervisorUnavailable
 	default:

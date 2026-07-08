@@ -48,6 +48,8 @@ const (
 	ReasonReviewerUnavailable   ReasonCode = "reviewer_unavailable"
 	ReasonSupervisorUnavailable ReasonCode = "supervisor_unavailable"
 	ReasonWorkerTimeout         ReasonCode = "worker_timeout"
+	ReasonWorkerUnavailable     ReasonCode = "worker_unavailable"
+	ReasonBlockingFindings      ReasonCode = "blocking_findings"
 	ReasonTestFailed            ReasonCode = "test_failed"
 	ReasonRoundsExhausted       ReasonCode = "rounds_exhausted"
 	ReasonArtifactMissing       ReasonCode = "artifact_missing"
@@ -844,6 +846,12 @@ type FinalRun struct {
 	Models            map[string]string     `json:"models,omitempty"`
 	StartedAt         time.Time             `json:"started_at"`
 	FinishedAt        time.Time             `json:"finished_at"`
+
+	// envOverlay is the resolved env overlay for the run. It is unexported so it
+	// is never serialized (FinalRun.MarshalJSON copies via a struct alias, which
+	// drops unexported fields), and serves as the single source of truth for
+	// overlay-aware secret redaction in setRoleStatus/appendRoleLoss.
+	envOverlay map[string]string
 }
 
 type RoundLimitReport struct {

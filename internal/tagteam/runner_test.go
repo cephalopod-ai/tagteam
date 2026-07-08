@@ -426,6 +426,26 @@ func TestMergeCommandEnvForRoleRestrictsReadOnlySecrets(t *testing.T) {
 	}
 }
 
+func TestMergeCommandEnvForRoleForwardsProviderAuth(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "ant-key")
+	t.Setenv("CUSTOM_AUTH_TOKEN", "tok")
+	t.Setenv("TAGTEAM_SECRET_TOKEN", "secret")
+
+	for _, role := range []Role{RoleAdversary, RoleSupervisor, RoleScout, RoleReporter} {
+		restricted := envMap(mergeCommandEnvForRole(role, nil, nil))
+		if restricted["ANTHROPIC_API_KEY"] != "ant-key" {
+			t.Fatalf("role %q did not receive ANTHROPIC_API_KEY: %#v", role, restricted)
+		}
+		if restricted["CUSTOM_AUTH_TOKEN"] != "tok" {
+			t.Fatalf("role %q did not receive *_AUTH_TOKEN key: %#v", role, restricted)
+		}
+		// A non-auth secret must still be stripped — forward narrowly.
+		if _, ok := restricted["TAGTEAM_SECRET_TOKEN"]; ok {
+			t.Fatalf("role %q leaked non-auth secret TAGTEAM_SECRET_TOKEN", role)
+		}
+	}
+}
+
 func envMap(env []string) map[string]string {
 	values := map[string]string{}
 	for _, item := range env {
@@ -1597,7 +1617,6 @@ func TestRunLoop_SupervisorCanEditUsesCoderRoleForBrief(t *testing.T) {
 
 func TestRunLoop_SupervisorSlicingWritesWorkPlanAndScopesWorker(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "claude-args.log")
-	t.Setenv("CLAUDE_ARGS_LOG", logPath)
 	installFakeClaudeBinary(t)
 
 	repo := t.TempDir()
@@ -1621,6 +1640,10 @@ func TestRunLoop_SupervisorSlicingWritesWorkPlanAndScopesWorker(t *testing.T) {
 		MaxPackages:       5,
 		Rounds:            1,
 		Timeout:           10 * time.Second,
+		// The slicing invocation runs the claude adapter under RoleSupervisor
+		// (restricted env), so the args-log path must travel via the overlay,
+		// which the restricted env forwards, rather than the ambient shell env.
+		EnvOverlay: map[string]string{"CLAUDE_ARGS_LOG": logPath},
 	})
 	if err == nil {
 		t.Fatal("expected blocking-findings error from fake supervisor review")
@@ -1834,7 +1857,6 @@ func TestRunLoop_RelayModeWritesExpectedArtifacts(t *testing.T) {
 		"claude": fakeClaudeScript,
 	})
 	agyLogPath := filepath.Join(t.TempDir(), "agy.log")
-	t.Setenv("AGY_ARGS_LOG", agyLogPath)
 
 	repo := t.TempDir()
 	runGit(t, repo, "init")
@@ -1859,6 +1881,7 @@ func TestRunLoop_RelayModeWritesExpectedArtifacts(t *testing.T) {
 		ScoutRetrieval: true,
 		Rounds:         1,
 		Timeout:        10 * time.Second,
+		EnvOverlay:     map[string]string{"AGY_ARGS_LOG": agyLogPath},
 	})
 	if err == nil {
 		t.Fatal("expected blocking-findings error from fake supervisor review")
@@ -2287,7 +2310,6 @@ func TestRunLoop_RelayModeScoutContextUnknownKeepsRetrieval(t *testing.T) {
 		"claude": fakeClaudeScript,
 	})
 	agyLogPath := filepath.Join(t.TempDir(), "agy.log")
-	t.Setenv("AGY_ARGS_LOG", agyLogPath)
 
 	repo := t.TempDir()
 	runGit(t, repo, "init")
@@ -2310,6 +2332,7 @@ func TestRunLoop_RelayModeScoutContextUnknownKeepsRetrieval(t *testing.T) {
 		ScoutRetrieval: true,
 		Rounds:         1,
 		Timeout:        10 * time.Second,
+		EnvOverlay:     map[string]string{"AGY_ARGS_LOG": agyLogPath},
 	})
 	if err == nil {
 		t.Fatal("expected blocking-findings error from fake supervisor review")
@@ -2334,7 +2357,6 @@ func TestRunLoop_RelayModeScoutContextNearLimitCompactsRetrieval(t *testing.T) {
 		"claude": fakeClaudeScript,
 	})
 	agyLogPath := filepath.Join(t.TempDir(), "agy.log")
-	t.Setenv("AGY_ARGS_LOG", agyLogPath)
 
 	repo := t.TempDir()
 	runGit(t, repo, "init")
@@ -2362,6 +2384,7 @@ func TestRunLoop_RelayModeScoutContextNearLimitCompactsRetrieval(t *testing.T) {
 		ScoutRetrieval: true,
 		Rounds:         1,
 		Timeout:        10 * time.Second,
+		EnvOverlay:     map[string]string{"AGY_ARGS_LOG": agyLogPath},
 	})
 	if err == nil {
 		t.Fatal("expected blocking-findings error from fake supervisor review")
@@ -2382,7 +2405,6 @@ func TestRunLoop_RelayModeScoutContextExceedsDisablesRetrieval(t *testing.T) {
 		"claude": fakeClaudeScript,
 	})
 	agyLogPath := filepath.Join(t.TempDir(), "agy.log")
-	t.Setenv("AGY_ARGS_LOG", agyLogPath)
 
 	repo := t.TempDir()
 	runGit(t, repo, "init")
@@ -2410,6 +2432,7 @@ func TestRunLoop_RelayModeScoutContextExceedsDisablesRetrieval(t *testing.T) {
 		ScoutRetrieval: true,
 		Rounds:         1,
 		Timeout:        10 * time.Second,
+		EnvOverlay:     map[string]string{"AGY_ARGS_LOG": agyLogPath},
 	})
 	if err == nil {
 		t.Fatal("expected blocking-findings error from fake supervisor review")
