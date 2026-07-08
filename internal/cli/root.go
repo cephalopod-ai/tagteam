@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"tagteam/internal/tagteam"
+	"github.com/cephalopod-ai/tagteam/internal/tagteam"
 )
 
 type flagState struct {

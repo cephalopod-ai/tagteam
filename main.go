@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"tagteam/internal/cli"
-	"tagteam/internal/tagteam"
+	"github.com/cephalopod-ai/tagteam/internal/cli"
+	"github.com/cephalopod-ai/tagteam/internal/tagteam"
 )
 
 func main() {

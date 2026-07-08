@@ -133,7 +133,13 @@ Practical guidance:
 
 ## Install
 
-Download a prebuilt archive for your platform from GitHub Releases, then put
+With a Go toolchain (1.22+):
+
+```bash
+go install github.com/cephalopod-ai/tagteam@latest
+```
+
+Or download a prebuilt archive for your platform from GitHub Releases, then put
 the `tagteam` binary on your `PATH`.
 
 Binary releases are published for:

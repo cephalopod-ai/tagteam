@@ -1,4 +1,4 @@
-module tagteam
+module github.com/cephalopod-ai/tagteam
 
 go 1.22
 
