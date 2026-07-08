@@ -5,3 +5,12 @@ dist/
 /tagteam
 coverage.out
 .dory/
+
+# Design spec for a separate, unimplemented tool ("tribunal"); not part of the
+# tagteam CLI and not published with it.
+tribunal-spec.md
+
+# Local governance-polish audit reports (kept out of the public repo).
+docs/polish/
+docs/STRUCTURE_COMPLIANCE.md
+docs/DOCUMENTATION_INVENTORY.md

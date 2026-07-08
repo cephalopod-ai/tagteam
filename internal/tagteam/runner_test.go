@@ -2368,6 +2368,13 @@ func TestRunLoop_RelayModeScoutContextNearLimitCompactsRetrieval(t *testing.T) {
 	runGit(t, repo, "add", "src")
 	runGit(t, repo, "commit", "-m", "init")
 
+	// This test needs real host retrieval to inflate the scout prompt toward the
+	// configured context limit; without rg, retrieval is unavailable and the
+	// near-limit compaction branch never fires.
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed")
+	}
+
 	cfg := DefaultConfig()
 	cfg.Adapters.Agy.MaxContextTokens = testIntPtr(2100)
 	cfg.Adapters.Agy.ReservedOutputTokens = testIntPtr(0)
@@ -2415,6 +2422,13 @@ func TestRunLoop_RelayModeScoutContextExceedsDisablesRetrieval(t *testing.T) {
 	}
 	runGit(t, repo, "add", "src")
 	runGit(t, repo, "commit", "-m", "init")
+
+	// This test needs real host retrieval to push the scout prompt over the
+	// configured context limit; without rg, retrieval is unavailable and the
+	// retrieval-disable branch never fires.
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed")
+	}
 
 	cfg := DefaultConfig()
 	cfg.Adapters.Agy.MaxContextTokens = testIntPtr(1300)

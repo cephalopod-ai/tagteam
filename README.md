@@ -32,6 +32,31 @@ The goal is to make adversarial review and supervisor-worker coding transparent 
 
 Instead of hiding the interaction inside a vendor UI, `tagteam` makes the roles explicit, saves the brief/review/diff/test artifacts for each run, and keeps the handoff between "build" and "criticize" inspectable from the repository.
 
+## Architecture at a glance
+
+Reviewed modes run an implement → diff → test → review loop, feeding findings
+back to the editor until the change passes, tests fail, or the round limit is
+reached:
+
+```mermaid
+flowchart TD
+    start([tagteam run]) --> pre[Preflight: baseline, run dir, adapter checks]
+    pre --> impl[Editor / coder implements]
+    impl --> diff[Deterministic diff capture]
+    diff --> tests[Run tests]
+    tests --> review[Reviewer / supervisor review]
+    review --> pass{Pass?}
+    pass -- yes --> final[Finalize + write final.json/state.json]
+    pass -- no --> limit{Round limit reached?}
+    limit -- no --> impl
+    limit -- yes --> reports[Collect final reports from both agents]
+    reports --> final
+    final --> done([exit code + reason])
+```
+
+Full documentation — architecture, more diagrams, and the test ledger — is
+indexed in [docs/INDEX.md](docs/INDEX.md).
+
 ## Status
 
 This repository is an early implementation of the v2 design. The core run loop, adapter abstraction, persisted run artifacts, and main command surface are in place. Some hardening and release work is still pending.
