@@ -8,7 +8,7 @@ Keep changes small and coherent. `tagteam` is an orchestration CLI, not a vendor
 
 Requirements:
 
-- Go 1.22+
+- Go 1.23+
 - Git
 - Any adapter CLIs needed for local manual testing
 

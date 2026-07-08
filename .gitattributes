@@ -1,0 +1,18 @@
+# Normalize line endings so gofmt/format checks are consistent across platforms.
+* text=auto eol=lf
+
+# Explicitly keep source and text files LF, even on Windows checkouts.
+*.go   text eol=lf
+*.mod  text eol=lf
+*.sum  text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.sh   text eol=lf
+
+# Treat archives and binaries as binary (never touch line endings).
+*.png  binary
+*.jpg  binary
+*.gz   binary
+*.zip  binary

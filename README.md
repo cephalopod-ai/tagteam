@@ -89,7 +89,7 @@ Current commands:
 
 ## Requirements
 
-- Go 1.22+
+- Go 1.23+
 - Git
 - At least one supported agent CLI on `PATH`
 
@@ -133,7 +133,7 @@ Practical guidance:
 
 ## Install
 
-With a Go toolchain (1.22+):
+With a Go toolchain (1.23+):
 
 ```bash
 go install github.com/cephalopod-ai/tagteam@latest
