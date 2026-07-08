@@ -124,6 +124,9 @@ func LoadConfig(workdir string) (Config, []string, error) {
 	}
 
 	mergeEnvConfig(&cfg, cfg.EnvOverlay)
+	if err := validateConfig(cfg); err != nil {
+		return Config{}, nil, err
+	}
 	if loadedDotEnv {
 		sources = append(sources, filepath.Join(workdir, ".env"))
 	}
@@ -417,6 +420,7 @@ func mergeConfig(dst *Config, src Config) {
 	if len(src.Adapters.Codex.ExtraArgs) > 0 {
 		dst.Adapters.Codex.ExtraArgs = append([]string{}, src.Adapters.Codex.ExtraArgs...)
 	}
+	mergeContextBudget(&dst.Adapters.Codex.MaxContextTokens, &dst.Adapters.Codex.ReservedOutputTokens, src.Adapters.Codex.MaxContextTokens, src.Adapters.Codex.ReservedOutputTokens)
 	if src.Adapters.Claude.DefaultModel != "" {
 		dst.Adapters.Claude.DefaultModel = src.Adapters.Claude.DefaultModel
 	}
@@ -429,24 +433,28 @@ func mergeConfig(dst *Config, src Config) {
 	if src.Adapters.Claude.Bare {
 		dst.Adapters.Claude.Bare = true
 	}
+	mergeContextBudget(&dst.Adapters.Claude.MaxContextTokens, &dst.Adapters.Claude.ReservedOutputTokens, src.Adapters.Claude.MaxContextTokens, src.Adapters.Claude.ReservedOutputTokens)
 	if src.Adapters.CodexOSS.DefaultModel != "" {
 		dst.Adapters.CodexOSS.DefaultModel = src.Adapters.CodexOSS.DefaultModel
 	}
 	if len(src.Adapters.CodexOSS.ExtraArgs) > 0 {
 		dst.Adapters.CodexOSS.ExtraArgs = append([]string{}, src.Adapters.CodexOSS.ExtraArgs...)
 	}
+	mergeContextBudget(&dst.Adapters.CodexOSS.MaxContextTokens, &dst.Adapters.CodexOSS.ReservedOutputTokens, src.Adapters.CodexOSS.MaxContextTokens, src.Adapters.CodexOSS.ReservedOutputTokens)
 	if src.Adapters.Agy.DefaultModel != "" {
 		dst.Adapters.Agy.DefaultModel = src.Adapters.Agy.DefaultModel
 	}
 	if len(src.Adapters.Agy.ExtraArgs) > 0 {
 		dst.Adapters.Agy.ExtraArgs = append([]string{}, src.Adapters.Agy.ExtraArgs...)
 	}
+	mergeContextBudget(&dst.Adapters.Agy.MaxContextTokens, &dst.Adapters.Agy.ReservedOutputTokens, src.Adapters.Agy.MaxContextTokens, src.Adapters.Agy.ReservedOutputTokens)
 	if src.Adapters.Gosling.DefaultModel != "" {
 		dst.Adapters.Gosling.DefaultModel = src.Adapters.Gosling.DefaultModel
 	}
 	if len(src.Adapters.Gosling.ExtraArgs) > 0 {
 		dst.Adapters.Gosling.ExtraArgs = append([]string{}, src.Adapters.Gosling.ExtraArgs...)
 	}
+	mergeContextBudget(&dst.Adapters.Gosling.MaxContextTokens, &dst.Adapters.Gosling.ReservedOutputTokens, src.Adapters.Gosling.MaxContextTokens, src.Adapters.Gosling.ReservedOutputTokens)
 	if src.Adapters.OpenAICompatible.BaseURL != "" {
 		dst.Adapters.OpenAICompatible.BaseURL = src.Adapters.OpenAICompatible.BaseURL
 	}
@@ -456,12 +464,30 @@ func mergeConfig(dst *Config, src Config) {
 	if src.Adapters.OpenAICompatible.DefaultModel != "" {
 		dst.Adapters.OpenAICompatible.DefaultModel = src.Adapters.OpenAICompatible.DefaultModel
 	}
+	mergeContextBudget(&dst.Adapters.OpenAICompatible.MaxContextTokens, &dst.Adapters.OpenAICompatible.ReservedOutputTokens, src.Adapters.OpenAICompatible.MaxContextTokens, src.Adapters.OpenAICompatible.ReservedOutputTokens)
 	if len(src.Adapters.OpenAICompatible.ExtraHeaders) > 0 {
 		dst.Adapters.OpenAICompatible.ExtraHeaders = cloneStringMap(src.Adapters.OpenAICompatible.ExtraHeaders)
 	}
 	if len(src.Adapters.OpenAICompatible.ExtraArgs) > 0 {
 		dst.Adapters.OpenAICompatible.ExtraArgs = append([]string{}, src.Adapters.OpenAICompatible.ExtraArgs...)
 	}
+}
+
+func mergeContextBudget(dstMax, dstReserved **int, srcMax, srcReserved *int) {
+	if srcMax != nil {
+		*dstMax = cloneIntPtr(srcMax)
+	}
+	if srcReserved != nil {
+		*dstReserved = cloneIntPtr(srcReserved)
+	}
+}
+
+func cloneIntPtr(src *int) *int {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
 }
 
 func hasTagteamEnv(overlay map[string]string) bool {
@@ -494,6 +520,8 @@ func hasTagteamEnv(overlay map[string]string) bool {
 		"TAGTEAM_OPENAI_COMPATIBLE_BASE_URL",
 		"TAGTEAM_OPENAI_COMPATIBLE_API_KEY_ENV",
 		"TAGTEAM_OPENAI_COMPATIBLE_MODEL",
+		"TAGTEAM_OPENAI_COMPATIBLE_MAX_CONTEXT_TOKENS",
+		"TAGTEAM_OPENAI_COMPATIBLE_RESERVED_OUTPUT_TOKENS",
 		"TAGTEAM_OPENAI_COMPATIBLE_HEADERS",
 		"TAGTEAM_OPENAI_COMPATIBLE_ARGS",
 	} {
@@ -630,6 +658,16 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_OPENAI_COMPATIBLE_MODEL"); ok {
 		cfg.Adapters.OpenAICompatible.DefaultModel = value
 	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_OPENAI_COMPATIBLE_MAX_CONTEXT_TOKENS"); ok {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			cfg.Adapters.OpenAICompatible.MaxContextTokens = &parsed
+		}
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_OPENAI_COMPATIBLE_RESERVED_OUTPUT_TOKENS"); ok {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			cfg.Adapters.OpenAICompatible.ReservedOutputTokens = &parsed
+		}
+	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_OPENAI_COMPATIBLE_HEADERS"); ok {
 		cfg.Adapters.OpenAICompatible.ExtraHeaders = parseHeaderPairs(value)
 	}
@@ -638,6 +676,43 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 			cfg.Adapters.OpenAICompatible.ExtraArgs = parsed
 		}
 	}
+}
+
+func validateConfig(cfg Config) error {
+	check := func(name string, maxContextTokens, reservedOutputTokens *int) error {
+		maxSet := maxContextTokens != nil
+		reserved := 0
+		if reservedOutputTokens != nil {
+			reserved = *reservedOutputTokens
+		}
+		if maxSet && *maxContextTokens <= 0 {
+			return fmt.Errorf("%s.max_context_tokens must be > 0 when set", name)
+		}
+		if reserved < 0 {
+			return fmt.Errorf("%s.reserved_output_tokens must be >= 0", name)
+		}
+		if maxSet && *maxContextTokens-reserved <= 0 {
+			return fmt.Errorf("%s usable context must be > 0", name)
+		}
+		return nil
+	}
+	for _, item := range []struct {
+		name     string
+		max      *int
+		reserved *int
+	}{
+		{"adapters.codex", cfg.Adapters.Codex.MaxContextTokens, cfg.Adapters.Codex.ReservedOutputTokens},
+		{"adapters.claude", cfg.Adapters.Claude.MaxContextTokens, cfg.Adapters.Claude.ReservedOutputTokens},
+		{"adapters.codex-oss", cfg.Adapters.CodexOSS.MaxContextTokens, cfg.Adapters.CodexOSS.ReservedOutputTokens},
+		{"adapters.agy", cfg.Adapters.Agy.MaxContextTokens, cfg.Adapters.Agy.ReservedOutputTokens},
+		{"adapters.gosling", cfg.Adapters.Gosling.MaxContextTokens, cfg.Adapters.Gosling.ReservedOutputTokens},
+		{"adapters.openai_compatible", cfg.Adapters.OpenAICompatible.MaxContextTokens, cfg.Adapters.OpenAICompatible.ReservedOutputTokens},
+	} {
+		if err := check(item.name, item.max, item.reserved); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func envLookup(overlay map[string]string, key string) (string, bool) {
@@ -660,6 +735,9 @@ func envLookupNonEmpty(overlay map[string]string, key string) (string, bool) {
 }
 
 func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[string]bool, prompt string) (RunOptions, error) {
+	if err := validateConfig(cfg); err != nil {
+		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: err}
+	}
 	modeRaw := cfg.Defaults.Mode
 	rounds := cfg.Defaults.Rounds
 	testCmd := cfg.Defaults.Test

@@ -386,6 +386,17 @@ func sortRetrievalEvidence(items []RetrievalEvidence) {
 }
 
 func CompactRetrievalForPrompt(artifact RetrievalArtifact) string {
+	return compactRetrievalForPrompt(artifact, maxRetrievalPromptBytes)
+}
+
+func CompactRetrievalForPromptAggressive(artifact RetrievalArtifact) string {
+	return compactRetrievalForPrompt(artifact, maxRetrievalPromptBytes/8)
+}
+
+func compactRetrievalForPrompt(artifact RetrievalArtifact, maxBytes int) string {
+	if maxBytes <= 0 {
+		maxBytes = maxRetrievalPromptBytes
+	}
 	artifact.Evidence = capRetrievalEvidence(artifact.Evidence, maxRetrievalEvidenceItems, &artifact.Truncated)
 	if len(artifact.Queries) > maxRetrievalQueries {
 		artifact.Queries = append([]string{}, artifact.Queries[:maxRetrievalQueries]...)
@@ -395,7 +406,7 @@ func CompactRetrievalForPrompt(artifact RetrievalArtifact) string {
 	if err != nil {
 		return ""
 	}
-	if len(data) <= maxRetrievalPromptBytes {
+	if len(data) <= maxBytes {
 		return string(data)
 	}
 	compact := artifact
@@ -403,7 +414,7 @@ func CompactRetrievalForPrompt(artifact RetrievalArtifact) string {
 		compact.Truncated = true
 		compact.Evidence = compact.Evidence[:len(compact.Evidence)-1]
 		data, err = json.MarshalIndent(compact, "", "  ")
-		if err == nil && len(data) <= maxRetrievalPromptBytes {
+		if err == nil && len(data) <= maxBytes {
 			return string(data)
 		}
 	}
@@ -412,8 +423,8 @@ func CompactRetrievalForPrompt(artifact RetrievalArtifact) string {
 	if err != nil {
 		return ""
 	}
-	if len(data) > maxRetrievalPromptBytes {
-		return string(data[:maxRetrievalPromptBytes])
+	if len(data) > maxBytes {
+		return string(data[:maxBytes])
 	}
 	return string(data)
 }

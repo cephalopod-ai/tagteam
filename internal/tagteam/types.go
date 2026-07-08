@@ -472,33 +472,43 @@ type AdapterConfigSet struct {
 }
 
 type CodexConfig struct {
-	DefaultModel string   `toml:"default_model"`
-	ExtraArgs    []string `toml:"extra_args"`
+	DefaultModel         string   `toml:"default_model"`
+	MaxContextTokens     *int     `toml:"max_context_tokens"`
+	ReservedOutputTokens *int     `toml:"reserved_output_tokens"`
+	ExtraArgs            []string `toml:"extra_args"`
 }
 
 type ClaudeConfig struct {
-	DefaultModel      string   `toml:"default_model"`
-	CoderAllowedTools []string `toml:"coder_allowed_tools"`
-	ExtraArgs         []string `toml:"extra_args"`
-	Bare              bool     `toml:"bare"`
+	DefaultModel         string   `toml:"default_model"`
+	MaxContextTokens     *int     `toml:"max_context_tokens"`
+	ReservedOutputTokens *int     `toml:"reserved_output_tokens"`
+	CoderAllowedTools    []string `toml:"coder_allowed_tools"`
+	ExtraArgs            []string `toml:"extra_args"`
+	Bare                 bool     `toml:"bare"`
 }
 
 type AgyConfig struct {
-	DefaultModel string   `toml:"default_model"`
-	ExtraArgs    []string `toml:"extra_args"`
+	DefaultModel         string   `toml:"default_model"`
+	MaxContextTokens     *int     `toml:"max_context_tokens"`
+	ReservedOutputTokens *int     `toml:"reserved_output_tokens"`
+	ExtraArgs            []string `toml:"extra_args"`
 }
 
 type GoslingConfig struct {
-	DefaultModel string   `toml:"default_model"`
-	ExtraArgs    []string `toml:"extra_args"`
+	DefaultModel         string   `toml:"default_model"`
+	MaxContextTokens     *int     `toml:"max_context_tokens"`
+	ReservedOutputTokens *int     `toml:"reserved_output_tokens"`
+	ExtraArgs            []string `toml:"extra_args"`
 }
 
 type OpenAICompatibleConfig struct {
-	BaseURL      string            `toml:"base_url"`
-	APIKeyEnv    string            `toml:"api_key_env"`
-	DefaultModel string            `toml:"default_model"`
-	ExtraHeaders map[string]string `toml:"extra_headers"`
-	ExtraArgs    []string          `toml:"extra_args"`
+	BaseURL              string            `toml:"base_url"`
+	APIKeyEnv            string            `toml:"api_key_env"`
+	DefaultModel         string            `toml:"default_model"`
+	MaxContextTokens     *int              `toml:"max_context_tokens"`
+	ReservedOutputTokens *int              `toml:"reserved_output_tokens"`
+	ExtraHeaders         map[string]string `toml:"extra_headers"`
+	ExtraArgs            []string          `toml:"extra_args"`
 }
 
 type FlagInputs struct {

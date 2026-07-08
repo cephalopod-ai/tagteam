@@ -1569,6 +1569,7 @@ func TestRunLoop_RelayModeWritesExpectedArtifacts(t *testing.T) {
 	for _, name := range []string{
 		"supervisor-brief.md",
 		"retrieval-round-1.json",
+		"scout-context-round-1.json",
 		"scout-round-1.json",
 		"supervisor-instructions.md",
 		"coder-round-1.md",
@@ -1629,8 +1630,209 @@ func TestRunLoop_RelayModeDisabledScoutRetrievalSkipsArtifact(t *testing.T) {
 	if fileExists(filepath.Join(final.RunDir, "retrieval-round-1.json")) {
 		t.Fatal("did not expect retrieval artifact when retrieval is disabled")
 	}
+	if !fileExists(filepath.Join(final.RunDir, "scout-context-round-1.json")) {
+		t.Fatal("expected scout context artifact")
+	}
 	if !fileExists(filepath.Join(final.RunDir, "scout-round-1.json")) {
 		t.Fatal("expected normal scout artifact")
+	}
+}
+
+func TestRunLoop_RelayModeScoutContextUnknownKeepsRetrieval(t *testing.T) {
+	installFakeBinaries(t, map[string]string{
+		"agy":    fakeAgyScript,
+		"claude": fakeClaudeScript,
+	})
+	agyLogPath := filepath.Join(t.TempDir(), "agy.log")
+	t.Setenv("AGY_ARGS_LOG", agyLogPath)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "hello codex\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	app := NewApp(DefaultConfig())
+	final, err := app.Run(context.Background(), RunOptions{
+		Prompt:         "add codex feature",
+		Workdir:        repo,
+		Mode:           ModeRelay,
+		Scout:          RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Coder:          RoleTarget{Adapter: "claude"},
+		Adversary:      RoleTarget{Adapter: "claude"},
+		ScoutMode:      "recon",
+		PostScoutMode:  "polish",
+		ScoutRetrieval: true,
+		Rounds:         1,
+		Timeout:        10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected blocking-findings error from fake supervisor review")
+	}
+	var budget ScoutContextBudgetArtifact
+	readJSONFile(t, filepath.Join(final.RunDir, "scout-context-round-1.json"), &budget)
+	if budget.Status != scoutContextStatusUnknown || !budget.NoConfiguredLimit {
+		t.Fatalf("budget = %#v", budget)
+	}
+	agyLog, err := os.ReadFile(agyLogPath)
+	if err != nil {
+		t.Fatalf("read agy log: %v", err)
+	}
+	if !strings.Contains(string(agyLog), "Host retrieval evidence") {
+		t.Fatalf("retrieval should be unchanged for unknown budget:\n%s", string(agyLog))
+	}
+}
+
+func TestRunLoop_RelayModeScoutContextNearLimitCompactsRetrieval(t *testing.T) {
+	installFakeBinaries(t, map[string]string{
+		"agy":    fakeAgyScript,
+		"claude": fakeClaudeScript,
+	})
+	agyLogPath := filepath.Join(t.TempDir(), "agy.log")
+	t.Setenv("AGY_ARGS_LOG", agyLogPath)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	for i := 0; i < 40; i++ {
+		mustWriteFile(t, filepath.Join(repo, "src", fmt.Sprintf("file-%02d.go", i)), "package src\n// codex model registry evidence\n")
+	}
+	runGit(t, repo, "add", "src")
+	runGit(t, repo, "commit", "-m", "init")
+
+	cfg := DefaultConfig()
+	cfg.Adapters.Agy.MaxContextTokens = testIntPtr(2100)
+	cfg.Adapters.Agy.ReservedOutputTokens = testIntPtr(0)
+	app := NewApp(cfg)
+	final, err := app.Run(context.Background(), RunOptions{
+		Prompt:         "codex model registry",
+		Workdir:        repo,
+		Mode:           ModeRelay,
+		Scout:          RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Coder:          RoleTarget{Adapter: "claude"},
+		Adversary:      RoleTarget{Adapter: "claude"},
+		ScoutMode:      "recon",
+		PostScoutMode:  "polish",
+		ScoutRetrieval: true,
+		Rounds:         1,
+		Timeout:        10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected blocking-findings error from fake supervisor review")
+	}
+	var budget ScoutContextBudgetArtifact
+	readJSONFile(t, filepath.Join(final.RunDir, "scout-context-round-1.json"), &budget)
+	if !budget.RetrievalCompacted {
+		t.Fatalf("expected retrieval compaction, budget = %#v", budget)
+	}
+	if budget.Status == scoutContextStatusExceeds {
+		t.Fatalf("expected compacted prompt to continue, budget = %#v", budget)
+	}
+}
+
+func TestRunLoop_RelayModeScoutContextExceedsDisablesRetrieval(t *testing.T) {
+	installFakeBinaries(t, map[string]string{
+		"agy":    fakeAgyScript,
+		"claude": fakeClaudeScript,
+	})
+	agyLogPath := filepath.Join(t.TempDir(), "agy.log")
+	t.Setenv("AGY_ARGS_LOG", agyLogPath)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	for i := 0; i < 80; i++ {
+		mustWriteFile(t, filepath.Join(repo, "src", fmt.Sprintf("file-%02d.go", i)), "package src\n// codex model registry evidence\n")
+	}
+	runGit(t, repo, "add", "src")
+	runGit(t, repo, "commit", "-m", "init")
+
+	cfg := DefaultConfig()
+	cfg.Adapters.Agy.MaxContextTokens = testIntPtr(1300)
+	cfg.Adapters.Agy.ReservedOutputTokens = testIntPtr(0)
+	app := NewApp(cfg)
+	final, err := app.Run(context.Background(), RunOptions{
+		Prompt:         "codex model registry",
+		Workdir:        repo,
+		Mode:           ModeRelay,
+		Scout:          RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Coder:          RoleTarget{Adapter: "claude"},
+		Adversary:      RoleTarget{Adapter: "claude"},
+		ScoutMode:      "recon",
+		PostScoutMode:  "polish",
+		ScoutRetrieval: true,
+		Rounds:         1,
+		Timeout:        10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected blocking-findings error from fake supervisor review")
+	}
+	var budget ScoutContextBudgetArtifact
+	readJSONFile(t, filepath.Join(final.RunDir, "scout-context-round-1.json"), &budget)
+	if !budget.RetrievalDisabledDueBudget {
+		t.Fatalf("expected retrieval disabled due budget, budget = %#v", budget)
+	}
+	agyLog, err := os.ReadFile(agyLogPath)
+	if err != nil {
+		t.Fatalf("read agy log: %v", err)
+	}
+	preScoutInvocation := strings.Split(string(agyLog), "\n---\n")[0]
+	if !strings.Contains(preScoutInvocation, "Host retrieval evidence:\n(not provided for this scout phase)") {
+		t.Fatalf("retrieval context should have been disabled:\n%s", string(agyLog))
+	}
+}
+
+func TestRunLoop_RelayModeScoutContextExceedsWithoutRetrievalFailsEarly(t *testing.T) {
+	installFakeBinaries(t, map[string]string{
+		"agy":    fakeAgyScript,
+		"claude": fakeClaudeScript,
+	})
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	cfg := DefaultConfig()
+	cfg.Adapters.Agy.MaxContextTokens = testIntPtr(100)
+	cfg.Adapters.Agy.ReservedOutputTokens = testIntPtr(0)
+	app := NewApp(cfg)
+	final, err := app.Run(context.Background(), RunOptions{
+		Prompt:         strings.Repeat("large prompt ", 200),
+		Workdir:        repo,
+		Mode:           ModeRelay,
+		Scout:          RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Coder:          RoleTarget{Adapter: "claude"},
+		Adversary:      RoleTarget{Adapter: "claude"},
+		ScoutMode:      "recon",
+		PostScoutMode:  "polish",
+		ScoutRetrieval: false,
+		Rounds:         1,
+		Timeout:        10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected context budget error")
+	}
+	if ExitCode(err) != ExitPreflightFailed {
+		t.Fatalf("exit code = %d err=%v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "scout context exceeds configured limit") {
+		t.Fatalf("error = %v", err)
+	}
+	var budget ScoutContextBudgetArtifact
+	readJSONFile(t, filepath.Join(final.RunDir, "scout-context-round-1.json"), &budget)
+	if budget.Status != scoutContextStatusExceeds {
+		t.Fatalf("budget = %#v", budget)
+	}
+	if fileExists(filepath.Join(final.RunDir, "scout-round-1.json")) {
+		t.Fatal("scout should not have run after context failure")
 	}
 }
 
@@ -2382,5 +2584,16 @@ func TestDoctorRejectsGoslingAdversaryAfterStatusProbe(t *testing.T) {
 	}
 	if len(status) == 0 || !status["gosling"].Found {
 		t.Fatalf("expected populated status, got %#v", status)
+	}
+}
+
+func readJSONFile(t *testing.T, path string, out any) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
 	}
 }

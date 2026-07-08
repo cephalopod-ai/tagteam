@@ -977,6 +977,8 @@ func TestLoadConfig_OpenAICompatibleConfig(t *testing.T) {
 base_url = "https://api.featherless.ai/v1"
 api_key_env = "FEATHERLESS_API_KEY"
 default_model = "gpt-oss-120b"
+max_context_tokens = 32768
+reserved_output_tokens = 2048
 extra_headers = { "X-Test" = "yes" }
 extra_args = ["--future"]
 `)
@@ -996,6 +998,12 @@ extra_args = ["--future"]
 	}
 	if got.DefaultModel != "gpt-oss-120b" {
 		t.Fatalf("default_model = %q", got.DefaultModel)
+	}
+	if got.MaxContextTokens == nil || *got.MaxContextTokens != 32768 {
+		t.Fatalf("max_context_tokens = %#v", got.MaxContextTokens)
+	}
+	if got.ReservedOutputTokens == nil || *got.ReservedOutputTokens != 2048 {
+		t.Fatalf("reserved_output_tokens = %#v", got.ReservedOutputTokens)
 	}
 	if got.ExtraHeaders["X-Test"] != "yes" {
 		t.Fatalf("extra_headers = %#v", got.ExtraHeaders)
@@ -1032,6 +1040,29 @@ func TestLoadConfig_LoadsDotEnvIntoOverlayAndConfig(t *testing.T) {
 	}
 	if !containsString(sources, filepath.Join(repo, ".env")) {
 		t.Fatalf("sources = %#v", sources)
+	}
+}
+
+func TestResolveOptions_InvalidContextBudgetConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Adapters.OpenAICompatible.MaxContextTokens = testIntPtr(1024)
+	cfg.Adapters.OpenAICompatible.ReservedOutputTokens = testIntPtr(1024)
+	_, err := ResolveOptions(cfg, nil, FlagInputs{}, nil, "ship it")
+	if err == nil {
+		t.Fatal("expected invalid context budget error")
+	}
+	if !strings.Contains(err.Error(), "usable context must be > 0") {
+		t.Fatalf("error = %v", err)
+	}
+
+	cfg = DefaultConfig()
+	cfg.Adapters.Agy.ReservedOutputTokens = testIntPtr(-1)
+	_, err = ResolveOptions(cfg, nil, FlagInputs{}, nil, "ship it")
+	if err == nil {
+		t.Fatal("expected negative reserved output error")
+	}
+	if !strings.Contains(err.Error(), "reserved_output_tokens must be >= 0") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -1097,6 +1128,8 @@ func TestMergeEnvConfig_OpenAICompatibleOverrides(t *testing.T) {
 	t.Setenv("TAGTEAM_OPENAI_COMPATIBLE_BASE_URL", "https://openrouter.ai/api/v1")
 	t.Setenv("TAGTEAM_OPENAI_COMPATIBLE_API_KEY_ENV", "OPENROUTER_API_KEY")
 	t.Setenv("TAGTEAM_OPENAI_COMPATIBLE_MODEL", "openai/gpt-oss-120b")
+	t.Setenv("TAGTEAM_OPENAI_COMPATIBLE_MAX_CONTEXT_TOKENS", "32768")
+	t.Setenv("TAGTEAM_OPENAI_COMPATIBLE_RESERVED_OUTPUT_TOKENS", "2048")
 	t.Setenv("TAGTEAM_OPENAI_COMPATIBLE_HEADERS", "HTTP-Referer=https://github.com/example/repo, X-Title=tagteam")
 	t.Setenv("TAGTEAM_OPENAI_COMPATIBLE_ARGS", "--future value")
 
@@ -1112,6 +1145,12 @@ func TestMergeEnvConfig_OpenAICompatibleOverrides(t *testing.T) {
 	}
 	if got.DefaultModel != "openai/gpt-oss-120b" {
 		t.Fatalf("default_model = %q", got.DefaultModel)
+	}
+	if got.MaxContextTokens == nil || *got.MaxContextTokens != 32768 {
+		t.Fatalf("max_context_tokens = %#v", got.MaxContextTokens)
+	}
+	if got.ReservedOutputTokens == nil || *got.ReservedOutputTokens != 2048 {
+		t.Fatalf("reserved_output_tokens = %#v", got.ReservedOutputTokens)
 	}
 	if got.ExtraHeaders["HTTP-Referer"] != "https://github.com/example/repo" || got.ExtraHeaders["X-Title"] != "tagteam" {
 		t.Fatalf("headers = %#v", got.ExtraHeaders)

@@ -1218,19 +1218,59 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	if opts.Mode == ModeRelay && initialReview == nil {
 		scoutOutputPath := filepath.Join(runDir, "scout-round-1.json")
 		retrievalContext := ""
+		var retrieval RetrievalArtifact
 		if opts.ScoutRetrieval && opts.ScoutMode == "recon" {
 			logProgress(opts, "scout retrieval started")
-			retrieval, err := runScoutRetrieval(ctx, opts.Workdir, opts.Prompt, runDir, true)
+			var err error
+			retrieval, err = runScoutRetrieval(ctx, opts.Workdir, opts.Prompt, runDir, true)
 			if err != nil {
 				return final, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("write retrieval artifact: %w", err)}
 			}
 			retrievalContext = CompactRetrievalForPrompt(retrieval)
 			logProgress(opts, "scout retrieval completed status=%s evidence=%d", retrieval.Status, len(retrieval.Evidence))
 		}
+		scoutPrompt := withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext), repoInstructions)
+		if opts.ScoutMode == "recon" {
+			contextBudgetPath := filepath.Join(runDir, "scout-context-round-1.json")
+			limit := scoutContextLimitForAdapter(a.Config, opts.Scout.Adapter)
+			contextBudget := estimateScoutPromptBudget(scoutPrompt, limit)
+			contextBudget.Adapter = opts.Scout.Adapter
+			contextBudget.Model = opts.Scout.Model
+			if contextBudget.Status == scoutContextStatusNearLimit && retrievalContext != "" {
+				logProgress(opts, "scout context near configured limit; compacting retrieval estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
+				compacted := CompactRetrievalForPromptAggressive(retrieval)
+				if compacted != "" && len(compacted) < len(retrievalContext) {
+					retrievalContext = compacted
+					scoutPrompt = withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext), repoInstructions)
+					contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
+					contextBudget.Adapter = opts.Scout.Adapter
+					contextBudget.Model = opts.Scout.Model
+					contextBudget.RetrievalCompacted = true
+				}
+			}
+			if contextBudget.Status == scoutContextStatusExceeds && retrievalContext != "" {
+				logProgress(opts, "scout context exceeds configured limit; disabling retrieval estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
+				retrievalContext = ""
+				scoutPrompt = withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", ""), repoInstructions)
+				contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
+				contextBudget.Adapter = opts.Scout.Adapter
+				contextBudget.Model = opts.Scout.Model
+				contextBudget.RetrievalDisabledDueBudget = true
+			}
+			if contextBudget.Status == scoutContextStatusNearLimit {
+				logProgress(opts, "scout context near configured limit estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
+			}
+			if err := writeJSONWithNewline(contextBudgetPath, contextBudget); err != nil {
+				return final, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("write scout context artifact: %w", err)}
+			}
+			if contextBudget.Status == scoutContextStatusExceeds {
+				return final, &ExitError{Code: ExitPreflightFailed, Err: invalidScoutContextBudgetError(contextBudget)}
+			}
+		}
 		logProgress(opts, "scout %s started adapter=%s", opts.ScoutMode, scout.ID())
 		scoutResult, err := a.runAdapter(ctx, scout, RoleScout, Request{
 			Context:    ctx,
-			Prompt:     withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext), repoInstructions),
+			Prompt:     scoutPrompt,
 			EnvOverlay: opts.EnvOverlay,
 			Model:      opts.Scout.Model,
 			Workdir:    opts.Workdir,

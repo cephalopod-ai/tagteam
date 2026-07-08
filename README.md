@@ -244,6 +244,15 @@ that status and continues with normal scout reconnaissance. Configure it with
 `scout_retrieval = true|false` or `TAGTEAM_SCOUT_RETRIEVAL=false`; flags still
 have highest precedence.
 
+If an adapter has explicit context limits configured, relay pre-scout `recon`
+also writes `scout-context-round-1.json` before calling the scout. The check is
+deterministic and conservative (`ceil(prompt_bytes/3)`), not provider metadata.
+Statuses are `unknown`, `ok`, `near_limit`, or `exceeds_limit`. Near-limit runs
+compact retrieval more aggressively; retrieval is disabled if it alone would
+push the scout prompt over the configured usable context. If the prompt still
+exceeds the limit without retrieval, the run fails early with an actionable
+message.
+
 ### Adversarial mode (backward compatible)
 
 The original coder/adversary loop is still available via `--mode adversarial`. The legacy `-mc`/`-ma` flags keep working and map onto the active mode's roles: `-mc` selects the worker in supervisor mode and the coder in adversarial mode; `-ma` selects the supervisor in supervisor mode and the adversary in adversarial mode.
@@ -382,6 +391,22 @@ adversary = "claude:haiku"
 rounds = 1
 ```
 
+Adapter configs may optionally declare deterministic context budgets used by
+relay pre-scout `recon`:
+
+```toml
+[adapters.openai_compatible]
+base_url = "https://api.example.test/v1"
+api_key_env = "EXAMPLE_API_KEY"
+max_context_tokens = 32768
+reserved_output_tokens = 2048
+```
+
+For `openai-compatible`, environment overrides are
+`TAGTEAM_OPENAI_COMPATIBLE_MAX_CONTEXT_TOKENS` and
+`TAGTEAM_OPENAI_COMPATIBLE_RESERVED_OUTPUT_TOKENS`. Omitted limits mean
+`unknown` and preserve existing relay behavior.
+
 Repo instructions are loaded from the selected workdir, then from the Git root
 when different, in this exact file order: `AGENTS.md`, `agent.md`,
 `.tagteam/AGENTS.md`, `.codex/AGENTS.md`, `.claude/AGENTS.md`,
@@ -408,6 +433,7 @@ Typical contents include:
 - `supervisor-work-plan.json` (supervisor mode with slicing)
 - `supervisor-brief.md` (supervisor or relay mode, round 1)
 - `retrieval-round-1.json` (relay pre-scout `recon` when retrieval is enabled)
+- `scout-context-round-1.json` (relay pre-scout `recon` context-budget check)
 - `scout-round-1.json` (relay mode)
 - `supervisor-instructions.md` (relay mode)
 - `worker-round-N.md` (supervisor mode) / `coder-round-N.md` (adversarial or relay mode)
