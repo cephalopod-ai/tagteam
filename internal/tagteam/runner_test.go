@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -830,6 +831,45 @@ func TestRunAdapter_DirectAdapterRejectsOversizeBeforeWritingTranscript(t *testi
 	}
 	if fileExists(outputPath) {
 		t.Fatal("expected transcript file to remain unwritten")
+	}
+}
+
+func TestRunAdapter_RedactsOverlaySecretInValidationArtifact(t *testing.T) {
+	app := NewApp(DefaultConfig())
+	tmp := t.TempDir()
+	outputPath := filepath.Join(tmp, "adversary-round-1.json")
+	adapter := fakeAdapter{
+		build: func(role Role, req Request) (*CommandSpec, error) {
+			return &CommandSpec{
+				Argv: []string{"sh", "-c", "printf '{\"bad\":true}'"},
+				Dir:  tmp,
+			}, nil
+		},
+		parse: func(role Role, raw []byte) (Result, error) {
+			return Result{}, &OutputContractError{Err: fmt.Errorf("provider echoed overlay-secret-token")}
+		},
+	}
+	_, err := app.runAdapter(context.Background(), adapter, RoleAdversary, Request{
+		Context:    context.Background(),
+		Prompt:     "review prompt",
+		RunDir:     tmp,
+		OutputPath: outputPath,
+		EnvOverlay: map[string]string{"PURDUE_API_KEY": "overlay-secret-token"},
+		Timeout:    time.Second,
+		InputMode:  "inline",
+	}, false)
+	if err == nil {
+		t.Fatal("expected runAdapter() error")
+	}
+	data, readErr := os.ReadFile(outputPath + ".validation-error.txt")
+	if readErr != nil {
+		t.Fatalf("read validation artifact: %v", readErr)
+	}
+	if strings.Contains(string(data), "overlay-secret-token") {
+		t.Fatalf("validation artifact leaked overlay secret: %q", string(data))
+	}
+	if !strings.Contains(string(data), redactedSecret) {
+		t.Fatalf("validation artifact missing redaction marker: %q", string(data))
 	}
 }
 

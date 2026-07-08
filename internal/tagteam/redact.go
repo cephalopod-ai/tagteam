@@ -9,10 +9,14 @@ import (
 const redactedSecret = "[REDACTED]"
 
 func redactSecrets(text string) string {
+	return redactSecretsWithOverlay(text, nil)
+}
+
+func redactSecretsWithOverlay(text string, overlay map[string]string) string {
 	if text == "" {
 		return ""
 	}
-	replacements := secretValuesFromEnv()
+	replacements := secretValuesFromEnv(overlay)
 	if len(replacements) == 0 {
 		return text
 	}
@@ -23,20 +27,28 @@ func redactSecrets(text string) string {
 	return redacted
 }
 
-func secretValuesFromEnv() []string {
+func secretValuesFromEnv(overlay map[string]string) []string {
 	values := []string{}
 	seen := map[string]bool{}
-	for _, entry := range os.Environ() {
-		key, value, ok := strings.Cut(entry, "=")
-		if !ok {
-			continue
-		}
+	add := func(key, value string) {
 		value = strings.TrimSpace(value)
 		if value == "" || !isSensitiveEnvKey(key) || seen[value] {
-			continue
+			return
 		}
 		seen[value] = true
 		values = append(values, value)
+	}
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			add(key, value)
+		}
+	}
+	for key, value := range overlay {
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		add(key, value)
 	}
 	sort.Slice(values, func(i, j int) bool {
 		return len(values[i]) > len(values[j])

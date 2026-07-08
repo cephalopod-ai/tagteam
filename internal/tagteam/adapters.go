@@ -485,7 +485,7 @@ func (a *OpenAICompatibleAdapter) RunDirect(role Role, req Request) (Result, err
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("openai-compatible request failed: %s", redactSecrets(err.Error()))}
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("openai-compatible request failed: %s", redactSecretsWithOverlay(err.Error(), req.EnvOverlay))}
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
@@ -493,7 +493,7 @@ func (a *OpenAICompatibleAdapter) RunDirect(role Role, req Request) (Result, err
 		return Result{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("openai-compatible request failed: status %d: %s", resp.StatusCode, redactSecrets(strings.TrimSpace(string(raw))))}
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("openai-compatible request failed: status %d: %s", resp.StatusCode, redactSecretsWithOverlay(strings.TrimSpace(string(raw)), req.EnvOverlay))}
 	}
 	if req.OutputPath != "" {
 		_ = os.WriteFile(req.OutputPath+".raw", raw, 0o644)

@@ -2020,7 +2020,7 @@ func writeValidationErrorArtifact(req Request, err error) string {
 		return ""
 	}
 	path := req.OutputPath + ".validation-error.txt"
-	_ = os.WriteFile(path, []byte(err.Error()+"\n"), 0o644)
+	_ = os.WriteFile(path, []byte(redactSecretsWithOverlay(err.Error(), req.EnvOverlay)+"\n"), 0o644)
 	return path
 }
 
@@ -2036,7 +2036,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		}
 		if dryRun {
 			payload, _ := json.MarshalIndent(spec, "", "  ")
-			result := Result{Text: redactSecrets(string(payload)), Command: spec.Argv}
+			result := Result{Text: redactSecretsWithOverlay(string(payload), req.EnvOverlay), Command: spec.Argv}
 			if role == RoleAdversary {
 				result.Review = &Review{
 					SchemaVersion:   ArtifactSchemaVersion,
@@ -2107,7 +2107,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	}
 	if dryRun {
 		payload, _ := json.MarshalIndent(spec, "", "  ")
-		result := Result{Text: redactSecrets(string(payload)), Command: spec.Argv}
+		result := Result{Text: redactSecretsWithOverlay(string(payload), req.EnvOverlay), Command: spec.Argv}
 		if role == RoleAdversary {
 			result.Review = &Review{
 				SchemaVersion:   ArtifactSchemaVersion,
@@ -2176,9 +2176,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	}
 	if err := cmd.Run(); err != nil {
 		close(done)
-		msg := redactSecrets(strings.TrimSpace(stderr.String()))
+		msg := redactSecretsWithOverlay(strings.TrimSpace(stderr.String()), req.EnvOverlay)
 		if msg == "" {
-			msg = redactSecrets(err.Error())
+			msg = redactSecretsWithOverlay(err.Error(), req.EnvOverlay)
 		}
 		logRequestProgress(req, "%s failed elapsed=%s", phase, shortDuration(time.Since(started)))
 		runErr := &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("%s failed: %s", adapter.ID(), msg)}

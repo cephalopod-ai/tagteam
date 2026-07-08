@@ -425,6 +425,11 @@ Diff artifacts are captured through a temporary Git index, not the real staging
 area. The canonical patch includes tracked changes, deletions, renames, binary
 patches, and untracked files, while always excluding `.tagteam/`.
 
+Diagnostic output and validation-error artifacts redact values from sensitive
+shell environment keys and the scoped `.env` overlay. Prompts, diffs, and model
+outputs are still persisted for inspectability, so do not paste secrets into
+task prompts or source files.
+
 ## Development
 
 Format and test:
