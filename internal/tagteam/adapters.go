@@ -488,20 +488,24 @@ func (a *OpenAICompatibleAdapter) RunDirect(role Role, req Request) (Result, err
 		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("openai-compatible request failed: %s", redactSecretsWithOverlay(err.Error(), req.EnvOverlay))}
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	limit := maxOutputBytes(req)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return Result{}, err
+	}
+	if int64(len(raw)) > limit {
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: outputLimitError("openai-compatible", limit)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("openai-compatible request failed: status %d: %s", resp.StatusCode, redactSecretsWithOverlay(strings.TrimSpace(string(raw)), req.EnvOverlay))}
 	}
 	if req.OutputPath != "" {
-		_ = os.WriteFile(req.OutputPath+".raw", raw, 0o644)
+		_ = writeRedactedBytes(req.OutputPath+".raw", raw, req.EnvOverlay)
 	}
 	result, err := a.ParseResult(role, raw)
 	if err != nil {
 		if req.OutputPath != "" {
-			_ = os.WriteFile(req.OutputPath+".validation-error.txt", []byte(err.Error()+"\n"), 0o644)
+			_ = writeRedactedBytes(req.OutputPath+".validation-error.txt", []byte(err.Error()+"\n"), req.EnvOverlay)
 		}
 		return Result{}, err
 	}

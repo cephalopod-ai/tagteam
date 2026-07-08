@@ -94,7 +94,15 @@ func DefaultConfig() Config {
 	}
 }
 
+type LoadConfigOptions struct {
+	TrustRepoConfig bool
+}
+
 func LoadConfig(workdir string) (Config, []string, error) {
+	return LoadConfigWithOptions(workdir, LoadConfigOptions{})
+}
+
+func LoadConfigWithOptions(workdir string, opts LoadConfigOptions) (Config, []string, error) {
 	cfg := DefaultConfig()
 	sources := []string{"built-in defaults"}
 
@@ -118,11 +126,15 @@ func LoadConfig(workdir string) (Config, []string, error) {
 	}
 
 	repoPath := filepath.Join(workdir, ".tagteam.toml")
-	if err := mergeConfigFile(&cfg, repoPath); err != nil {
+	if err := mergeConfigFileWithOptions(&cfg, repoPath, mergeConfigFileOptions{RepoLocal: true, Trusted: opts.TrustRepoConfig}); err != nil {
 		return Config{}, nil, err
 	}
 	if fileExists(repoPath) {
-		sources = append(sources, repoPath)
+		source := repoPath
+		if !opts.TrustRepoConfig {
+			source += " (untrusted: high-authority keys ignored)"
+		}
+		sources = append(sources, source)
 	}
 
 	mergeEnvConfig(&cfg, cfg.EnvOverlay)
@@ -265,6 +277,15 @@ func userConfigPath() (string, error) {
 }
 
 func mergeConfigFile(dst *Config, path string) error {
+	return mergeConfigFileWithOptions(dst, path, mergeConfigFileOptions{Trusted: true})
+}
+
+type mergeConfigFileOptions struct {
+	RepoLocal bool
+	Trusted   bool
+}
+
+func mergeConfigFileWithOptions(dst *Config, path string, opts mergeConfigFileOptions) error {
 	if !fileExists(path) {
 		return nil
 	}
@@ -272,8 +293,36 @@ func mergeConfigFile(dst *Config, path string) error {
 	if _, err := toml.DecodeFile(path, &src); err != nil {
 		return fmt.Errorf("decode config %s: %w", path, err)
 	}
+	if opts.RepoLocal && !opts.Trusted {
+		src = sanitizeUntrustedRepoConfig(src)
+	}
 	mergeConfig(dst, src)
 	return nil
+}
+
+func sanitizeUntrustedRepoConfig(src Config) Config {
+	src.Defaults.Test = ""
+	src.Defaults.GitSafety = ""
+	src.Defaults.MaxOutputBytes = 0
+	src.Defaults.MaxWallTime = ""
+	for name, profile := range src.Profiles {
+		profile.Test = ""
+		profile.MaxOutputBytes = 0
+		profile.MaxWallTime = ""
+		src.Profiles[name] = profile
+	}
+	src.Adapters.Codex.ExtraArgs = nil
+	src.Adapters.Claude.CoderAllowedTools = nil
+	src.Adapters.Claude.ExtraArgs = nil
+	src.Adapters.Claude.Bare = false
+	src.Adapters.CodexOSS.ExtraArgs = nil
+	src.Adapters.Agy.ExtraArgs = nil
+	src.Adapters.Gosling.ExtraArgs = nil
+	src.Adapters.OpenAICompatible.BaseURL = ""
+	src.Adapters.OpenAICompatible.APIKeyEnv = ""
+	src.Adapters.OpenAICompatible.ExtraHeaders = nil
+	src.Adapters.OpenAICompatible.ExtraArgs = nil
+	return src
 }
 
 func mergeConfig(dst *Config, src Config) {
@@ -1224,6 +1273,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		PostScoutMode:             postScoutMode,
 		ScoutFailurePolicy:        scoutFailurePolicy,
 		ScoutRetrieval:            scoutRetrieval,
+		TrustRepoConfig:           flags.TrustRepoConfig && changed["trust-repo-config"],
 		SupervisorCanEdit:         flags.SupervisorCanEdit,
 		SupervisorCanEditExplicit: changed["supervisor-can-edit"],
 		SupervisorSlicing:         supervisorSlicing,

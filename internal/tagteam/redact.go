@@ -27,6 +27,21 @@ func redactSecretsWithOverlay(text string, overlay map[string]string) string {
 	return redacted
 }
 
+func redactStringSlice(values []string, overlay map[string]string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	redacted := make([]string, len(values))
+	for i, value := range values {
+		redacted[i] = redactSecretsWithOverlay(value, overlay)
+	}
+	return redacted
+}
+
+func writeRedactedBytes(path string, data []byte, overlay map[string]string) error {
+	return os.WriteFile(path, []byte(redactSecretsWithOverlay(string(data), overlay)), 0o644)
+}
+
 func secretValuesFromEnv(overlay map[string]string) []string {
 	values := []string{}
 	seen := map[string]bool{}

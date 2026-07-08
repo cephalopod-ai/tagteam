@@ -526,6 +526,7 @@ type FlagInputs struct {
 	PostScoutMode           string
 	StrictScout             bool
 	NoScoutRetrieval        bool
+	TrustRepoConfig         bool
 	Supervisor              string
 	Reviewer                string
 	SupervisorCanEdit       bool
@@ -591,6 +592,7 @@ type RunOptions struct {
 	PostScoutMode             string
 	ScoutFailurePolicy        string
 	ScoutRetrieval            bool
+	TrustRepoConfig           bool
 	SupervisorCanEdit         bool
 	SupervisorCanEditExplicit bool
 	SupervisorSlicing         bool

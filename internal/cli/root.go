@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -96,6 +98,7 @@ func bindSharedFlags(cmd *cobra.Command, flags *flagState) {
 	flagSet.StringVar(&flags.PostScoutMode, "post-scout-mode", "", "Post-scout task mode: recon, lint, polish, tests, or risk")
 	flagSet.BoolVar(&flags.StrictScout, "strict-scout", false, "Abort relay when the scout model fails instead of continuing without scout context")
 	flagSet.BoolVar(&flags.NoScoutRetrieval, "no-scout-retrieval", false, "Disable relay pre-scout recon retrieval (local rg-only, host-only, advisory)")
+	flagSet.BoolVar(&flags.TrustRepoConfig, "trust-repo-config", false, "Trust repo-local .tagteam.toml for tests, passthrough args, and adapter endpoints")
 	flagSet.StringVar(&flags.Supervisor, "supervisor", "", "Preferred review slot in supervisor/relay; alias for --ma")
 	flagSet.StringVar(&flags.Reviewer, "reviewer", "", "Adversarial-mode review slot; alias for --ma")
 	flagSet.BoolVar(&flags.SupervisorCanEdit, "supervisor-can-edit", false, "Allow the supervisor to edit files while writing its brief (default: read-only)")
@@ -135,9 +138,11 @@ func runDefault(cmd *cobra.Command, flags *flagState, prompt string) error {
 	opts, cfg, err := resolve(cmd, flags, prompt)
 	if err != nil {
 		return err
-	}
-	app := tagteam.NewApp(cfg)
-	final, err := app.Run(context.Background(), opts)
+			}
+			app := tagteam.NewApp(cfg)
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			final, err := app.Run(ctx, opts)
 	final = withErrorExitCode(final, err)
 	renderFinal(cmd, final, opts)
 	return err
@@ -161,7 +166,9 @@ func newReviewCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			app := tagteam.NewApp(cfg)
-			final, err := app.Review(context.Background(), opts, "")
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			final, err := app.Review(ctx, opts, "")
 			final = withErrorExitCode(final, err)
 			renderFinal(cmd, final, opts)
 			return err
@@ -181,7 +188,9 @@ func newFixCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			app := tagteam.NewApp(cfg)
-			final, err := app.Fix(context.Background(), opts)
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			final, err := app.Fix(ctx, opts)
 			final = withErrorExitCode(final, err)
 			renderFinal(cmd, final, opts)
 			return err
@@ -331,10 +340,6 @@ func resolve(cmd *cobra.Command, flags *flagState, prompt string) (tagteam.RunOp
 	if err != nil {
 		return tagteam.RunOptions{}, tagteam.Config{}, err
 	}
-	cfg, sources, err := tagteam.LoadConfig(workdir)
-	if err != nil {
-		return tagteam.RunOptions{}, tagteam.Config{}, err
-	}
 	changed := map[string]bool{}
 	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
 		if flag.Changed {
@@ -346,6 +351,12 @@ func resolve(cmd *cobra.Command, flags *flagState, prompt string) (tagteam.RunOp
 			changed[flag.Name] = true
 		}
 	})
+	cfg, sources, err := tagteam.LoadConfigWithOptions(workdir, tagteam.LoadConfigOptions{
+		TrustRepoConfig: flags.TrustRepoConfig && changed["trust-repo-config"],
+	})
+	if err != nil {
+		return tagteam.RunOptions{}, tagteam.Config{}, err
+	}
 	opts, err := tagteam.ResolveOptions(cfg, sources, flags.FlagInputs, changed, prompt)
 	if err != nil {
 		return tagteam.RunOptions{}, tagteam.Config{}, err

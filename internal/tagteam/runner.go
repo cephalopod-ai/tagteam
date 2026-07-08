@@ -549,7 +549,7 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (Final
 			prompt = "Review the current working tree diff."
 		}
 	}
-	if err := os.WriteFile(filepath.Join(runDir, "input.md"), []byte(prompt), 0o644); err != nil {
+	if err := writeRedactedBytes(filepath.Join(runDir, "input.md"), []byte(prompt), opts.EnvOverlay); err != nil {
 		return FinalRun{}, err
 	}
 	repoInstructions, err := loadAndPersistRepoInstructions(ctx, opts, runDir)
@@ -562,7 +562,7 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (Final
 		Workdir:       opts.Workdir,
 		Baseline:      baseline,
 		Command:       "review",
-		Prompt:        prompt,
+		Prompt:        redactSecretsWithOverlay(prompt, opts.EnvOverlay),
 		StartedAt:     time.Now().UTC(),
 		Adapters:      map[string]string{reviewerLabel: opts.Adversary.Adapter},
 		Models:        map[string]string{reviewerLabel: opts.Adversary.Model},
@@ -907,7 +907,7 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	if err != nil {
 		return FinalRun{}, &ExitError{Code: ExitAdapterFailure, Err: err}
 	}
-	if err := os.WriteFile(filepath.Join(runDir, "input.md"), []byte(opts.Prompt), 0o644); err != nil {
+	if err := writeRedactedBytes(filepath.Join(runDir, "input.md"), []byte(opts.Prompt), opts.EnvOverlay); err != nil {
 		return FinalRun{}, err
 	}
 	repoInstructions, err := loadAndPersistRepoInstructions(ctx, opts, runDir)
@@ -920,7 +920,7 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 		Workdir:       opts.Workdir,
 		Baseline:      baseline,
 		Command:       "run",
-		Prompt:        opts.Prompt,
+		Prompt:        redactSecretsWithOverlay(opts.Prompt, opts.EnvOverlay),
 		StartedAt:     time.Now().UTC(),
 		Adapters:      map[string]string{editorLabel: opts.Coder.Adapter},
 		Models:        map[string]string{editorLabel: opts.Coder.Model},
@@ -997,7 +997,7 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	if opts.TestCmd != "" && !opts.NoTest {
 		testPath := filepath.Join(runDir, "test-round-1.txt")
 		logProgress(opts, "solo tests started command=%q", opts.TestCmd)
-		testRun, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, testPath, opts.DryRun, opts.EnvOverlay)
+		testRun, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, testPath, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes)
 		if err != nil {
 			return final, err
 		}
@@ -1047,7 +1047,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	if err != nil {
 		return FinalRun{}, &ExitError{Code: ExitAdapterFailure, Err: err}
 	}
-	if err := os.WriteFile(filepath.Join(runDir, "input.md"), []byte(opts.Prompt), 0o644); err != nil {
+	if err := writeRedactedBytes(filepath.Join(runDir, "input.md"), []byte(opts.Prompt), opts.EnvOverlay); err != nil {
 		return FinalRun{}, err
 	}
 	repoInstructions, err := loadAndPersistRepoInstructions(ctx, opts, runDir)
@@ -1064,7 +1064,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		Workdir:       opts.Workdir,
 		Baseline:      baseline,
 		Command:       "run",
-		Prompt:        opts.Prompt,
+		Prompt:        redactSecretsWithOverlay(opts.Prompt, opts.EnvOverlay),
 		StartedAt:     time.Now().UTC(),
 		Adapters:      map[string]string{editorLabel: opts.Coder.Adapter, reviewerLabel: opts.Adversary.Adapter},
 		Models:        map[string]string{editorLabel: opts.Coder.Model, reviewerLabel: opts.Adversary.Model},
@@ -1477,7 +1477,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		if opts.TestCmd != "" && !opts.NoTest {
 			testPath := filepath.Join(runDir, fmt.Sprintf("test-round-%d.txt", round))
 			logProgress(opts, "round %d tests started command=%q", round, opts.TestCmd)
-			testRun, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, testPath, opts.DryRun, opts.EnvOverlay)
+			testRun, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, testPath, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes)
 			if err != nil {
 				return final, err
 			}
@@ -1905,7 +1905,7 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 		logProgress(opts, "round %d %s output invalid; retrying once error=%q", round, reviewerLabel, err.Error())
 		req.Prompt = req.Prompt + "\n\nValidation error from the previous response:\n" + err.Error() + "\n\nReturn JSON exactly matching the schema."
 		if req.OutputPath != "" {
-			_ = os.WriteFile(req.OutputPath+".retry-prompt.md", []byte(req.Prompt), 0o644)
+			_ = writeRedactedBytes(req.OutputPath+".retry-prompt.md", []byte(req.Prompt), req.EnvOverlay)
 		}
 		result, err = a.runAdapter(ctx, adversary, RoleAdversary, req, opts.DryRun)
 		if err != nil {
@@ -2027,7 +2027,7 @@ func startDeliveryRecord(adapter Adapter, role Role, req Request, dryRun bool, s
 		Status:        "started",
 	}
 	if spec != nil {
-		record.Argv = append([]string{}, spec.Argv...)
+		record.Argv = redactStringSlice(spec.Argv, req.EnvOverlay)
 	}
 	if len(req.Stdin) > 0 {
 		sum := sha256.Sum256(req.Stdin)
@@ -2043,7 +2043,7 @@ func startDeliveryRecord(adapter Adapter, role Role, req Request, dryRun bool, s
 	}
 	name := fmt.Sprintf("%s-%s-%s", started.Format("20060102T150405.000000000Z"), sanitizeArtifactName(string(role)), sanitizeArtifactName(adapter.ID()))
 	promptPath := filepath.Join(dir, name+".prompt.md")
-	if err := os.WriteFile(promptPath, []byte(req.Prompt), 0o644); err != nil {
+	if err := writeRedactedBytes(promptPath, []byte(req.Prompt), req.EnvOverlay); err != nil {
 		return record, "", err
 	}
 	record.PromptPath = promptPath
@@ -2057,7 +2057,7 @@ func finishDeliveryRecord(path string, record DeliveryRecord, status string, err
 	record.FinishedAt = time.Now().UTC()
 	record.Status = status
 	if err != nil {
-		record.Error = err.Error()
+		record.Error = redactSecrets(err.Error())
 	}
 	_ = writeJSONWithNewline(path, record)
 }
@@ -2084,7 +2084,7 @@ func writeOutputContractArtifacts(req Request, role Role, result Result, raw []b
 		return "", nil
 	}
 	rawPath := req.OutputPath + ".raw"
-	if err := os.WriteFile(rawPath, raw, 0o644); err != nil {
+	if err := writeRedactedBytes(rawPath, raw, req.EnvOverlay); err != nil {
 		return rawPath, err
 	}
 	switch role {
@@ -2169,7 +2169,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			return Result{}, err
 		}
 		if req.OutputPath != "" && !fileExists(req.OutputPath) {
-			if writeErr := os.WriteFile(req.OutputPath, raw, 0o644); writeErr != nil {
+			if writeErr := writeRedactedBytes(req.OutputPath, raw, req.EnvOverlay); writeErr != nil {
 				finishDeliveryRecord(recordPath, record, "failed", writeErr)
 				return Result{}, writeErr
 			}
@@ -2239,15 +2239,16 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	}
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, spec.Argv[0], spec.Argv[1:]...)
+	prepareProcessTree(cmd)
 	cmd.Dir = spec.Dir
 	cmd.Env = mergeCommandEnv(req.EnvOverlay, spec.Env)
 	if len(spec.Stdin) > 0 {
 		cmd.Stdin = bytes.NewReader(spec.Stdin)
 	}
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := newBoundedBuffer(maxOutputBytes(req))
+	stderr := newBoundedBuffer(maxOutputBytes(req))
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	started := time.Now()
 	logRequestProgress(req, "%s process starting output=%s", phase, spec.Output)
 	done := make(chan struct{})
@@ -2267,6 +2268,11 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	}
 	if err := cmd.Run(); err != nil {
 		close(done)
+		if stdout.Exceeded() || stderr.Exceeded() {
+			limitErr := &ExitError{Code: ExitAdapterFailure, Err: outputLimitError(adapter.ID(), maxOutputBytes(req))}
+			finishDeliveryRecord(recordPath, record, "failed", limitErr)
+			return Result{}, limitErr
+		}
 		msg := redactSecretsWithOverlay(strings.TrimSpace(stderr.String()), req.EnvOverlay)
 		if msg == "" {
 			msg = redactSecretsWithOverlay(err.Error(), req.EnvOverlay)
@@ -2295,7 +2301,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		return Result{}, err
 	}
 	if req.OutputPath != "" && !fileExists(req.OutputPath) {
-		if writeErr := os.WriteFile(req.OutputPath, raw, 0o644); writeErr != nil {
+		if writeErr := writeRedactedBytes(req.OutputPath, raw, req.EnvOverlay); writeErr != nil {
 			finishDeliveryRecord(recordPath, record, "failed", writeErr)
 			return Result{}, writeErr
 		}
@@ -2425,9 +2431,12 @@ func checkAdapters(ctx context.Context, adapters ...Adapter) error {
 	return nil
 }
 
-func runTestCommand(ctx context.Context, workdir, testCmd string, timeout time.Duration, outputPath string, dryRun bool, envOverlay map[string]string) (TestRun, error) {
+func runTestCommand(ctx context.Context, workdir, testCmd string, timeout time.Duration, outputPath string, dryRun bool, envOverlay map[string]string, maxBytes int64) (TestRun, error) {
 	if dryRun {
 		return TestRun{Command: testCmd, Passed: true, Output: "dry-run"}, nil
+	}
+	if maxBytes <= 0 {
+		maxBytes = 2 * 1024 * 1024
 	}
 	runCtx := ctx
 	cancel := func() {}
@@ -2436,15 +2445,24 @@ func runTestCommand(ctx context.Context, workdir, testCmd string, timeout time.D
 	}
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "/bin/sh", "-lc", testCmd)
+	prepareProcessTree(cmd)
 	cmd.Dir = workdir
 	cmd.Env = mergeCommandEnv(envOverlay, nil)
-	out, err := cmd.CombinedOutput()
+	var out boundedBuffer
+	out.limit = maxBytes
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	output := out.Bytes()
+	if out.Exceeded() {
+		err = outputLimitError("test command", maxBytes)
+	}
 	testRun := TestRun{
 		Command: testCmd,
-		Output:  string(out),
+		Output:  redactSecretsWithOverlay(string(output), envOverlay),
 		Passed:  err == nil,
 	}
-	_ = os.WriteFile(outputPath, out, 0o644)
+	_ = writeRedactedBytes(outputPath, output, envOverlay)
 	return testRun, nil
 }
 
