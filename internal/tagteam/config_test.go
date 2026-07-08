@@ -62,6 +62,7 @@ func TestParseMode(t *testing.T) {
 		wantErr bool
 	}{
 		{"", ModeSupervisor, false},
+		{"solo", ModeSolo, false},
 		{"supervisor", ModeSupervisor, false},
 		{"adversarial", ModeAdversarial, false},
 		{"relay", ModeRelay, false},
@@ -81,6 +82,71 @@ func TestParseMode(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("ParseMode(%q) = %q, want %q", tc.raw, got, tc.want)
 		}
+	}
+}
+
+func TestResolveOptions_SoloFlagSelectsSoloWorker(t *testing.T) {
+	cfg := DefaultConfig()
+	opts, err := ResolveOptions(cfg, nil, FlagInputs{
+		Solo:    "codex:gpt-5.5",
+		Timeout: 15 * time.Minute,
+	}, map[string]bool{"solo": true}, "ship it")
+	if err != nil {
+		t.Fatalf("ResolveOptions() error = %v", err)
+	}
+	if opts.Mode != ModeSolo || !opts.ModeExplicit {
+		t.Fatalf("mode = %q explicit=%t", opts.Mode, opts.ModeExplicit)
+	}
+	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "gpt-5.5" {
+		t.Fatalf("solo worker = %#v", opts.Coder)
+	}
+	if opts.Adversary.Adapter != "" {
+		t.Fatalf("solo should not resolve reviewer target: %#v", opts.Adversary)
+	}
+}
+
+func TestResolveOptions_SoloModeWorkerAndMc(t *testing.T) {
+	cfg := DefaultConfig()
+	opts, err := ResolveOptions(cfg, nil, FlagInputs{
+		Mode:    "solo",
+		Worker:  "claude:sonnet",
+		Timeout: 15 * time.Minute,
+	}, map[string]bool{"mode": true, "worker": true}, "ship it")
+	if err != nil {
+		t.Fatalf("ResolveOptions() error = %v", err)
+	}
+	if opts.Mode != ModeSolo {
+		t.Fatalf("mode = %q", opts.Mode)
+	}
+	if opts.Coder.Adapter != "claude" || opts.Coder.Model != "sonnet" {
+		t.Fatalf("--worker target = %#v", opts.Coder)
+	}
+
+	opts, err = ResolveOptions(cfg, nil, FlagInputs{
+		Mode:    "solo",
+		Coder:   "agy:gemini",
+		Timeout: 15 * time.Minute,
+	}, map[string]bool{"mode": true, "mc": true}, "ship it")
+	if err != nil {
+		t.Fatalf("ResolveOptions() error = %v", err)
+	}
+	if opts.Coder.Adapter != "agy" || opts.Coder.Model != "gemini" {
+		t.Fatalf("-mc target = %#v", opts.Coder)
+	}
+}
+
+func TestResolveOptions_SoloRejectsReviewerFlags(t *testing.T) {
+	cfg := DefaultConfig()
+	_, err := ResolveOptions(cfg, nil, FlagInputs{
+		Mode:      "solo",
+		Adversary: "claude:sonnet",
+		Timeout:   15 * time.Minute,
+	}, map[string]bool{"mode": true, "ma": true}, "ship it")
+	if err == nil {
+		t.Fatal("expected -ma to be rejected in solo mode")
+	}
+	if !strings.Contains(err.Error(), "not valid in solo mode") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -223,7 +289,7 @@ func TestResolveOptions_WorkerFlagRejectedInAdversarialMode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error using --worker in adversarial mode")
 	}
-	if !strings.Contains(err.Error(), "--worker is only valid in supervisor or relay mode") {
+	if !strings.Contains(err.Error(), "--worker is only valid in solo, supervisor, or relay mode") {
 		t.Fatalf("error = %v", err)
 	}
 }

@@ -497,6 +497,9 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	if changed["mode"] {
 		modeRaw = flags.Mode
 	}
+	if changed["solo"] {
+		modeRaw = string(ModeSolo)
+	}
 	// modeExplicit only reflects choices that actually pin the mode for
 	// this invocation (a --mode flag, or a profile that sets `mode` or the
 	// legacy coder/adversary keys). A profile that only overrides
@@ -521,6 +524,10 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		modeExplicit = true
 		mode = ModeRelay
 	}
+	if changed["solo"] {
+		modeExplicit = true
+		mode = ModeSolo
+	}
 
 	var editorRaw, reviewerRaw, scoutRaw string
 	editorExplicit := false
@@ -529,7 +536,14 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	editorExplicitMode := Mode("")
 	reviewerExplicitMode := Mode("")
 	scoutExplicitMode := Mode("")
-	if mode == ModeAdversarial {
+	if mode == ModeSolo {
+		editorRaw = cfg.Defaults.Worker
+		if hasProfile && profile.Worker != "" {
+			editorRaw = profile.Worker
+			editorExplicit = true
+			editorExplicitMode = ModeSolo
+		}
+	} else if mode == ModeAdversarial {
 		editorRaw = cfg.Defaults.Coder
 		reviewerRaw = cfg.Defaults.Adversary
 		if hasProfile {
@@ -606,9 +620,14 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		editorExplicit = true
 		editorExplicitMode = ""
 	}
+	if changed["solo"] {
+		editorRaw = flags.Solo
+		editorExplicit = true
+		editorExplicitMode = ModeSolo
+	}
 	if changed["worker"] {
-		if mode != ModeSupervisor && mode != ModeRelay {
-			return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("--worker is only valid in supervisor or relay mode (current mode %q); use -mc/--mc in adversarial mode", mode)}
+		if mode != ModeSolo && mode != ModeSupervisor && mode != ModeRelay {
+			return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("--worker is only valid in solo, supervisor, or relay mode (current mode %q); use -mc/--mc in adversarial mode", mode)}
 		}
 		editorRaw = flags.Worker
 		editorExplicit = true
@@ -623,11 +642,17 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		editorExplicitMode = mode
 	}
 	if changed["ma"] {
+		if mode == ModeSolo {
+			return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("-ma/--ma is not valid in solo mode")}
+		}
 		reviewerRaw = flags.Adversary
 		reviewerExplicit = true
 		reviewerExplicitMode = ""
 	}
 	if changed["reviewer"] {
+		if mode == ModeSolo {
+			return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("--reviewer is not valid in solo mode")}
+		}
 		if mode != ModeAdversarial {
 			return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("--reviewer is only valid in adversarial mode (current mode %q); use --supervisor in supervisor mode", mode)}
 		}
@@ -636,6 +661,9 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		reviewerExplicitMode = ModeAdversarial
 	}
 	if changed["supervisor"] {
+		if mode == ModeSolo {
+			return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("--supervisor is not valid in solo mode")}
+		}
 		if mode != ModeSupervisor && mode != ModeRelay {
 			return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("--supervisor is only valid in supervisor or relay mode (current mode %q); use --reviewer or -ma in adversarial mode", mode)}
 		}
@@ -644,6 +672,9 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		reviewerExplicitMode = mode
 	}
 	if changed["scout"] {
+		if mode == ModeSolo {
+			return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("--scout is not valid in solo mode")}
+		}
 		if mode != ModeRelay {
 			return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("--scout is only valid in relay mode (current mode %q)", mode)}
 		}
@@ -714,9 +745,12 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	if err != nil {
 		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("resolve %s target: %w", editorLabel, err)}
 	}
-	reviewerTarget, err := ParseRoleTarget(reviewerRaw)
-	if err != nil {
-		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("resolve %s target: %w", reviewerLabel, err)}
+	var reviewerTarget RoleTarget
+	if mode != ModeSolo {
+		reviewerTarget, err = ParseRoleTarget(reviewerRaw)
+		if err != nil {
+			return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("resolve %s target: %w", reviewerLabel, err)}
+		}
 	}
 	var scoutTarget RoleTarget
 	if mode == ModeRelay {

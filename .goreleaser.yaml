@@ -1,0 +1,56 @@
+version: 2
+
+project_name: tagteam
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: tagteam
+    main: .
+    binary: tagteam
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    builds:
+      - tagteam
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - AGENTS.md
+      - CONTRIBUTING.md
+      - SECURITY.md
+      - CODE_OF_CONDUCT.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

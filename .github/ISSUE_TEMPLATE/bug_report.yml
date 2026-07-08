@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a defect in tagteam behavior
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is broken?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Exact command, config, and steps to reproduce
+      placeholder: |
+        1. Run `tagteam ...`
+        2. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Go version, adapter CLIs, and relevant auth/config state
+      placeholder: |
+        OS:
+        Go:
+        tagteam:
+        codex:
+        claude:
+        agy:

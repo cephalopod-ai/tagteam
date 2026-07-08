@@ -22,6 +22,7 @@ const (
 type Mode string
 
 const (
+	ModeSolo        Mode = "solo"
 	ModeSupervisor  Mode = "supervisor"
 	ModeAdversarial Mode = "adversarial"
 	ModeRelay       Mode = "relay"
@@ -33,12 +34,14 @@ func ParseMode(raw string) (Mode, error) {
 	switch strings.TrimSpace(raw) {
 	case "", string(ModeSupervisor):
 		return ModeSupervisor, nil
+	case string(ModeSolo):
+		return ModeSolo, nil
 	case string(ModeAdversarial):
 		return ModeAdversarial, nil
 	case string(ModeRelay):
 		return ModeRelay, nil
 	default:
-		return "", fmt.Errorf("invalid mode %q (want %q, %q, or %q)", raw, ModeSupervisor, ModeAdversarial, ModeRelay)
+		return "", fmt.Errorf("invalid mode %q (want %q, %q, %q, or %q)", raw, ModeSolo, ModeSupervisor, ModeAdversarial, ModeRelay)
 	}
 }
 
@@ -401,6 +404,7 @@ type OpenAICompatibleConfig struct {
 
 type FlagInputs struct {
 	Mode                    string
+	Solo                    string
 	Relay                   bool
 	Coder                   string
 	CoderRole               string

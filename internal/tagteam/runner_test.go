@@ -108,6 +108,62 @@ func TestPreflightBranchModeCreatesBranch(t *testing.T) {
 	}
 }
 
+func TestDeterministicDiffIgnoresTagteamRunDirButIncludesUntrackedFiles(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".tagteam/\ntagteam\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "internal", "tagteam"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "internal", "tagteam", "tracked.go"), []byte("package tagteam\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "-f", ".gitignore", "README.md", "internal/tagteam/tracked.go")
+	runGit(t, repo, "commit", "-m", "init")
+	baseline := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	if err := os.MkdirAll(filepath.Join(repo, ".tagteam", "runs", "test"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".tagteam", "runs", "test", "ignored.txt"), []byte("ignore me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "internal", "tagteam", "tracked.go"), []byte("package tagteam\n\nconst changed = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "notes.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	patch, _, _, _, err := deterministicDiffOutputs(context.Background(), repo, baseline, filepath.Join(repo, ".tagteam", "tmp.index"))
+	if err != nil {
+		t.Fatalf("deterministicDiffOutputs() error = %v", err)
+	}
+	text := string(patch)
+	if !strings.Contains(text, "diff --git a/README.md b/README.md") {
+		t.Fatalf("patch missing README change:\n%s", text)
+	}
+	if !strings.Contains(text, "diff --git a/notes.txt b/notes.txt") {
+		t.Fatalf("patch missing untracked file:\n%s", text)
+	}
+	if !strings.Contains(text, "diff --git a/internal/tagteam/tracked.go b/internal/tagteam/tracked.go") {
+		t.Fatalf("patch missing tracked ignored-path change:\n%s", text)
+	}
+	if strings.Contains(text, ".tagteam") {
+		t.Fatalf("patch should not include .tagteam artifacts:\n%s", text)
+	}
+}
+
 func TestRunAdversaryDoesNotRetryInvocationFailures(t *testing.T) {
 	app := NewApp(DefaultConfig())
 	opts := RunOptions{
@@ -240,6 +296,10 @@ func TestRoleLabels(t *testing.T) {
 	editor, reviewer := roleLabels(ModeSupervisor)
 	if editor != "worker" || reviewer != "supervisor" {
 		t.Fatalf("supervisor labels = %q/%q", editor, reviewer)
+	}
+	editor, reviewer = roleLabels(ModeSolo)
+	if editor != "solo" || reviewer != "" {
+		t.Fatalf("solo labels = %q/%q", editor, reviewer)
 	}
 	editor, reviewer = roleLabels(ModeAdversarial)
 	if editor != "coder" || reviewer != "adversary" {
@@ -677,6 +737,97 @@ func TestRunLoop_SupervisorModeDryRun(t *testing.T) {
 	}
 	if !strings.Contains(final.LatestReviewPath, "supervisor-round-1.json") {
 		t.Fatalf("latest review path = %q", final.LatestReviewPath)
+	}
+}
+
+func TestRunLoop_SoloModeWritesArtifactsWithoutReview(t *testing.T) {
+	installFakeClaudeBinary(t)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	app := NewApp(DefaultConfig())
+	final, err := app.Run(context.Background(), RunOptions{
+		Prompt:  "add a feature",
+		Workdir: repo,
+		Mode:    ModeSolo,
+		Coder:   RoleTarget{Adapter: "claude", Model: "sonnet"},
+		Rounds:  1,
+		Timeout: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if final.Mode != ModeSolo {
+		t.Fatalf("mode = %q", final.Mode)
+	}
+	if final.Review != nil || final.LatestReviewPath != "" {
+		t.Fatalf("solo run should not have review: review=%#v path=%q", final.Review, final.LatestReviewPath)
+	}
+	if final.Verdict != "done" || final.ExitCode != ExitSuccess {
+		t.Fatalf("verdict/exit = %q/%d", final.Verdict, final.ExitCode)
+	}
+	if final.Adapters["solo"] != "claude" || final.Models["solo"] != "sonnet" {
+		t.Fatalf("adapters/models = %#v %#v", final.Adapters, final.Models)
+	}
+	for _, name := range []string{
+		"solo-round-1.md",
+		"diff-round-1.patch",
+		"diff-round-1.numstat",
+		"diff-round-1.files.json",
+		"diff-round-1.sha256",
+		"final.json",
+	} {
+		if !fileExists(filepath.Join(final.RunDir, name)) {
+			t.Fatalf("expected solo artifact %s in %s", name, final.RunDir)
+		}
+	}
+	if fileExists(filepath.Join(final.RunDir, "review-schema.json")) {
+		t.Fatal("solo run should not write review schema")
+	}
+}
+
+func TestRunLoop_SoloModeTestFailureExitsTwo(t *testing.T) {
+	installFakeClaudeBinary(t)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	app := NewApp(DefaultConfig())
+	final, err := app.Run(context.Background(), RunOptions{
+		Prompt:  "add a feature",
+		Workdir: repo,
+		Mode:    ModeSolo,
+		Coder:   RoleTarget{Adapter: "claude"},
+		Rounds:  1,
+		TestCmd: "false",
+		Timeout: 10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected test failure error")
+	}
+	if ExitCode(err) != ExitTestsFailed || final.ExitCode != ExitTestsFailed {
+		t.Fatalf("exit = err:%d final:%d err=%v", ExitCode(err), final.ExitCode, err)
+	}
+	if final.Review != nil {
+		t.Fatalf("solo test failure should not have review: %#v", final.Review)
+	}
+	if len(final.Tests) != 1 || final.Tests[0].Passed {
+		t.Fatalf("tests = %#v", final.Tests)
 	}
 }
 
@@ -1593,6 +1744,14 @@ func TestFix_LegacyFinalJSONResumesAdversarialMode(t *testing.T) {
 }
 
 func TestEditorSystemPromptForMode(t *testing.T) {
+	soloPrompt := editorSystemPromptForMode(ModeSolo)
+	if soloPrompt != soloSystemPrompt {
+		t.Fatal("solo mode should select soloSystemPrompt")
+	}
+	if strings.Contains(soloPrompt, "two-agent adversarial workflow") || strings.Contains(soloPrompt, "supervisor-worker") {
+		t.Fatalf("solo prompt should not use multi-agent workflow wording: %q", soloPrompt)
+	}
+
 	supervisorPrompt := editorSystemPromptForMode(ModeSupervisor)
 	if supervisorPrompt != workerSystemPrompt {
 		t.Fatal("supervisor mode should select workerSystemPrompt")

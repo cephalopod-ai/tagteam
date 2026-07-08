@@ -1,6 +1,6 @@
 # tagteam
 
-`tagteam` is a standalone Go CLI that runs two headless coding agents as one command.
+`tagteam` is a standalone Go CLI that runs one or more headless coding agents as one command.
 
 By default it runs in **supervisor mode**:
 
@@ -13,12 +13,18 @@ It can also run **relay mode** (`--relay` / `--mode relay`):
 - a write-enabled `coder` implements
 - a stronger read-only `supervisor` reviews and arbitrates
 
+For quick baseline runs it can run **solo mode** (`--solo <adapter[:model]>` / `--mode solo`):
+
+- one implementation agent edits the repo
+- no reviewer, supervisor, adversary, or scout runs
+- optional tests still run, and output explicitly reports `review=none`
+
 And it can run the original **adversarial mode** (`--mode adversarial`):
 
 - a `coder` agent that edits the repo
 - an `adversary` agent that reviews the resulting diff
 
-In all modes the tool loops findings back into the editor role until the change passes review, tests fail, or the user-defined round limit is reached. When the limit is reached with unresolved blocker/major findings, `tagteam` stops asking for edits and asks both agents for final "what remains incomplete / what do you dispute" reports instead of continuing indefinitely.
+In reviewed modes the tool loops findings back into the editor role until the change passes review, tests fail, or the user-defined round limit is reached. When the limit is reached with unresolved blocker/major findings, `tagteam` stops asking for edits and asks both agents for final "what remains incomplete / what do you dispute" reports instead of continuing indefinitely. Solo mode runs once and does not pretend to be reviewed.
 
 ## Vision
 
@@ -34,6 +40,7 @@ Recent additions in this repo:
 
 - supervisor/worker mode is now the default flow
 - relay scout/coder/supervisor mode is available with `--relay`
+- solo mode is available with `--solo <adapter[:model]>`
 - adversarial coder/adversary mode remains available for backward compatibility
 - saved run artifacts include briefs, diffs, reviews, tests, and final summaries
 - command surface now includes `review`, `fix`, `status`, `transcript`, `doctor`, and `init`
@@ -65,7 +72,11 @@ Supported adapters in this repo today:
 - `gosling` (coder-only)
 - `openai-compatible` / `oai` (review-only first cut)
 
-Authentication is owned by the vendor CLIs. `tagteam` does not proxy API keys.
+## Authentication
+
+Each vendor CLI adapter (`codex`, `claude`, `agy`, `gosling`, etc.) must already be logged in on your machine before you run `tagteam`. `tagteam` does not run vendor login flows, store credentials, or proxy/inject API keys for those CLIs. If an adapter is not authenticated, the run will fail with that CLI's own auth error.
+
+This note applies to the vendor CLI adapters; the separate `openai-compatible` adapter uses its documented `api_key_env` setting.
 
 ## Compatibility Risks
 
@@ -74,6 +85,22 @@ Authentication is owned by the vendor CLIs. `tagteam` does not proxy API keys.
 That means adapters in this repository can break when tools like `codex`, `claude`, `agy`, `codex-oss`, or `gosling` change their flags or behavior. Expect periodic adapter maintenance as those CLIs evolve.
 
 ## Install
+
+Download a prebuilt archive for your platform from GitHub Releases, then put
+the `tagteam` binary on your `PATH`.
+
+Binary releases are published for:
+
+- macOS (`darwin/amd64`, `darwin/arm64`)
+- Linux (`linux/amd64`, `linux/arm64`)
+- Windows (`windows/amd64`, `windows/arm64`)
+
+Platform note: the developer has only tested `tagteam` on macOS 26 Tahoe and
+Ubuntu. Other targets may build and release successfully but should be treated
+as unverified until they are exercised in real use.
+
+Create a release by pushing a tag such as `v0.1.0`; GitHub Actions runs
+GoReleaser and attaches archives plus `checksums.txt` to the release.
 
 Build from source:
 
@@ -113,6 +140,17 @@ tagteam \
 ```
 
 The supervisor is read-only by default (it writes the brief and review findings but does not edit files). Allow it to make small exploratory edits with `--supervisor-can-edit`.
+
+### Solo mode
+
+Solo mode runs exactly one implementation agent and no reviewer. It is useful as a quick baseline for comparing cost, speed, and quality against supervisor, relay, or adversarial runs.
+
+```bash
+tagteam --solo codex:gpt-5.5 "rename UserSvc to UserService"
+tagteam --mode solo --worker claude:sonnet -t "go test ./..." "make a small README edit"
+```
+
+In solo mode, legacy `-mc` and preferred `--worker` both select the implementation agent. Reviewer flags such as `-ma`, `--reviewer`, and `--supervisor` are invalid.
 
 ### Relay mode
 
@@ -242,7 +280,8 @@ tagteam init
 
 Relevant `defaults` keys:
 
-- `mode` — `supervisor` (default), `adversarial`, or `relay`
+- `mode` — `supervisor` (default), `solo`, `adversarial`, or `relay`
+- `worker` — `adapter[:model]` target used in solo mode
 - `worker` / `supervisor` — `adapter[:model]` targets used in supervisor mode
 - `coder` / `adversary` — `adapter[:model]` targets used in adversarial mode
 - `scout` / `coder` / `supervisor` — `adapter[:model]` targets used in relay mode
@@ -283,6 +322,7 @@ Typical contents include:
 
 - `meta.json`
 - `input.md`
+- `solo-round-1.md` (solo mode)
 - `supervisor-work-plan.json` (supervisor mode with slicing)
 - `supervisor-brief.md` (supervisor or relay mode, round 1)
 - `scout-round-1.json` (relay mode)

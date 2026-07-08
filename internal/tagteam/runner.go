@@ -58,6 +58,9 @@ func (a *App) Run(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	if err := validateRunRoles(opts); err != nil {
 		return FinalRun{}, err
 	}
+	if opts.Mode == ModeSolo {
+		return a.runSolo(ctx, opts)
+	}
 	return a.runLoop(ctx, opts, nil)
 }
 
@@ -306,6 +309,9 @@ func validateExplicitTargetModes(opts RunOptions) error {
 // roleLabels returns the display names for the editor and reviewer roles
 // used in progress output, run metadata, and transcript filenames.
 func roleLabels(mode Mode) (editor string, reviewer string) {
+	if mode == ModeSolo {
+		return "solo", ""
+	}
 	if mode == ModeSupervisor {
 		return "worker", "supervisor"
 	}
@@ -319,6 +325,9 @@ func roleLabels(mode Mode) (editor string, reviewer string) {
 // active mode: the supervisor-worker-flavored prompt in ModeSupervisor, and
 // the original adversarial-flavored prompt in ModeAdversarial.
 func editorSystemPromptForMode(mode Mode) string {
+	if mode == ModeSolo {
+		return soloSystemPrompt
+	}
 	if mode == ModeSupervisor || mode == ModeRelay {
 		return workerSystemPrompt
 	}
@@ -338,6 +347,9 @@ func supervisorBriefRole(canEdit bool) Role {
 func validateRunRoles(opts RunOptions) error {
 	if err := validateRoleTarget(RoleCoder, opts.Coder); err != nil {
 		return err
+	}
+	if opts.Mode == ModeSolo {
+		return nil
 	}
 	if opts.Mode != ModeAdversarial && (opts.Adversary.Adapter == "openai-compatible" || opts.Adversary.Adapter == "oai") {
 		return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("openai-compatible adapter is review-only in this version; use it with --mode adversarial or tagteam review")}
@@ -388,7 +400,10 @@ func (a *App) Doctor(ctx context.Context, opts RunOptions) (map[string]VersionIn
 	if err := validateRunRoles(opts); err != nil {
 		return status, err
 	}
-	targets := []RoleTarget{opts.Coder, opts.Adversary}
+	targets := []RoleTarget{opts.Coder}
+	if opts.Mode != ModeSolo {
+		targets = append(targets, opts.Adversary)
+	}
 	if opts.Mode == ModeRelay {
 		targets = append(targets, opts.Scout)
 	}
@@ -406,6 +421,131 @@ func (a *App) Doctor(ctx context.Context, opts RunOptions) (map[string]VersionIn
 		}
 	}
 	return status, nil
+}
+
+func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
+	editorLabel, _ := roleLabels(opts.Mode)
+	runID := newRunID()
+	logProgress(opts, "run %s preflight started workdir=%s", runID, opts.Workdir)
+	baseline, cleanup, err := preflight(opts, runID)
+	if err != nil {
+		return FinalRun{}, err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+	runDir, err := createRunDir(opts.Workdir, runID)
+	if err != nil {
+		return FinalRun{}, &ExitError{Code: ExitAdapterFailure, Err: err}
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "input.md"), []byte(opts.Prompt), 0o644); err != nil {
+		return FinalRun{}, err
+	}
+	meta := Meta{
+		RunID:         runID,
+		Workdir:       opts.Workdir,
+		Baseline:      baseline,
+		Command:       "run",
+		Prompt:        opts.Prompt,
+		StartedAt:     time.Now().UTC(),
+		Adapters:      map[string]string{editorLabel: opts.Coder.Adapter},
+		Models:        map[string]string{editorLabel: opts.Coder.Model},
+		ConfigSources: opts.ConfigSources,
+	}
+	if err := writeJSON(filepath.Join(runDir, "meta.json"), meta); err != nil {
+		return FinalRun{}, err
+	}
+	logProgress(opts, "run %s started mode=%s baseline=%s run-dir=%s", runID, opts.Mode, baseline, runDir)
+
+	registry := Registry(a.Config, opts)
+	editor, ok := registry[opts.Coder.Adapter]
+	if !ok {
+		return FinalRun{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown %s adapter %q", editorLabel, opts.Coder.Adapter)}
+	}
+	if err := checkAdapters(ctx, editor); err != nil {
+		return FinalRun{}, err
+	}
+
+	final := FinalRun{
+		RunID:           runID,
+		RunDir:          runDir,
+		Workdir:         opts.Workdir,
+		Baseline:        baseline,
+		Mode:            opts.Mode,
+		Coder:           opts.Coder,
+		Verdict:         "done",
+		RoundsRequested: 1,
+		Costs:           map[string]float64{},
+		Adapters:        meta.Adapters,
+		Models:          meta.Models,
+		StartedAt:       meta.StartedAt,
+	}
+
+	logProgress(opts, "solo implementation started adapter=%s", editor.ID())
+	outputPath := filepath.Join(runDir, "solo-round-1.md")
+	editorResult, err := a.runAdapter(ctx, editor, RoleCoder, Request{
+		Context:      ctx,
+		Prompt:       BuildSoloPrompt(opts.Workdir, opts.Prompt),
+		SystemPrompt: soloSystemPrompt,
+		Model:        opts.Coder.Model,
+		Workdir:      opts.Workdir,
+		RunDir:       runDir,
+		OutputPath:   outputPath,
+		Timeout:      opts.Timeout,
+		Phase:        fmt.Sprintf("solo %s", editor.ID()),
+		Quiet:        opts.Quiet,
+		Verbose:      opts.Verbose,
+	}, opts.DryRun)
+	if err != nil {
+		return final, err
+	}
+	final.Costs[editorLabel] += editorResult.CostUSD
+	final.Summary = strings.TrimSpace(editorResult.Text)
+	final.RoundsCompleted = 1
+	logProgress(opts, "solo implementation completed output=%s", outputPath)
+
+	diffArtifact, err := captureDiffArtifact(ctx, opts.Workdir, baseline, runDir, 1)
+	if err != nil {
+		return final, err
+	}
+	final.LatestDiffPath = diffArtifact.PatchPath
+	final.LatestNumstatPath = diffArtifact.NumstatPath
+	final.LatestFilesPath = diffArtifact.FilesPath
+	final.LatestSHA256Path = diffArtifact.SHA256Path
+	final.LatestDiffSHA256 = diffArtifact.Metadata.DiffSHA256
+	final.ChangedFiles = diffArtifact.ChangedFiles()
+	logProgress(opts, "solo diff captured bytes=%d path=%s", len(diffArtifact.Patch), diffArtifact.PatchPath)
+
+	if opts.TestCmd != "" && !opts.NoTest {
+		testPath := filepath.Join(runDir, "test-round-1.txt")
+		logProgress(opts, "solo tests started command=%q", opts.TestCmd)
+		testRun, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, testPath, opts.DryRun)
+		if err != nil {
+			return final, err
+		}
+		final.Tests = append(final.Tests, testRun)
+		if testRun.Passed {
+			logProgress(opts, "solo tests passed output=%s", testPath)
+		} else {
+			logProgress(opts, "solo tests failed output=%s", testPath)
+		}
+	}
+
+	if final.Summary == "" {
+		final.Summary = "Solo implementation completed; review was not run."
+	} else {
+		final.Summary = strings.TrimSpace(final.Summary + "\n\nReview was not run in solo mode.")
+	}
+	final.FinishedAt = time.Now().UTC()
+	final.ExitCode = a.computeExitCode(final)
+	logProgress(opts, "run %s finished mode=solo exit=%d", runID, final.ExitCode)
+	if err := a.persistFinal(opts.Workdir, final); err != nil {
+		return final, err
+	}
+	if final.ExitCode != ExitSuccess {
+		return final, &ExitError{Code: final.ExitCode, Err: fmt.Errorf("run completed with exit code %d", final.ExitCode)}
+	}
+	return final, nil
 }
 
 func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Review) (FinalRun, error) {
@@ -1474,12 +1614,26 @@ func deterministicDiffPatch(ctx context.Context, workdir, baseline, indexPath st
 func deterministicDiffOutputs(ctx context.Context, workdir, baseline, indexPath string) ([]byte, []byte, []byte, []byte, error) {
 	defer os.Remove(indexPath)
 	defer os.Remove(indexPath + ".lock")
+	pathspecPath := indexPath + ".pathspec"
+	defer os.Remove(pathspecPath)
 	env := []string{"LC_ALL=C", "GIT_INDEX_FILE=" + indexPath}
 	if _, err := runGitCommandBytes(ctx, workdir, env, "read-tree", baseline); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	if _, err := runGitCommandBytes(ctx, workdir, env, "add", "-A", "--", ".", ":(exclude).tagteam"); err != nil {
+	if _, err := runGitCommandBytes(ctx, workdir, env, "add", "-u", "--", "."); err != nil {
 		return nil, nil, nil, nil, err
+	}
+	pathspec, err := deterministicUntrackedPathspec(ctx, workdir)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if len(pathspec) > 0 {
+		if err := os.WriteFile(pathspecPath, pathspec, 0o644); err != nil {
+			return nil, nil, nil, nil, err
+		}
+		if _, err := runGitCommandBytes(ctx, workdir, env, "add", "--pathspec-from-file="+pathspecPath, "--pathspec-file-nul"); err != nil {
+			return nil, nil, nil, nil, err
+		}
 	}
 	patch, err := runGitCommandBytes(ctx, workdir, env, "-c", "core.quotepath=false", "diff", "--cached", "--no-ext-diff", "--no-color", "--binary", "--full-index", "--find-renames=50%", baseline, "--", ".")
 	if err != nil {
@@ -1498,6 +1652,33 @@ func deterministicDiffOutputs(ctx context.Context, workdir, baseline, indexPath 
 		return nil, nil, nil, nil, err
 	}
 	return patch, numstat, statusZ, numstatZ, nil
+}
+
+func deterministicUntrackedPathspec(ctx context.Context, workdir string) ([]byte, error) {
+	currentFiles, err := runGitCommandBytes(ctx, workdir, []string{"LC_ALL=C"}, "ls-files", "-z", "--others", "--exclude-standard", "--", ".")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	paths := []string{}
+	for _, raw := range splitNULTokens(currentFiles) {
+		path := strings.TrimPrefix(raw, "./")
+		if path == "" || path == ".tagteam" || strings.HasPrefix(path, ".tagteam/") {
+			continue
+		}
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	var buf bytes.Buffer
+	for _, path := range paths {
+		buf.WriteString(path)
+		buf.WriteByte(0)
+	}
+	return buf.Bytes(), nil
 }
 
 func buildDiffFiles(statusZ, numstatZ []byte) []DiffFile {

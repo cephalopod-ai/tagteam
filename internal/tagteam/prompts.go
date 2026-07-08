@@ -17,6 +17,17 @@ Rules:
 
 Finish with a concise summary: files changed, behavior changed, checks run, known remaining risk.`
 
+const soloSystemPrompt = `You are the implementation agent in a solo tagteam run. There is no reviewer, supervisor, or adversary in this run.
+
+Rules:
+- Edit files directly. Do not describe a plan instead of implementing.
+- Make the smallest correct change that satisfies the request.
+- Follow the repository's existing style and architecture.
+- Add or update tests when behavior changes.
+- Leave unrelated files alone.
+
+Finish with a concise summary: files changed, behavior changed, checks run, known remaining risk.`
+
 const workerSystemPrompt = `You are the worker in a supervisor-worker coding workflow. A supervisor writes a compact implementation brief before you start, then reviews your diff; it does not edit files by default.
 
 Rules:
@@ -27,6 +38,25 @@ Rules:
 - Leave unrelated files alone.
 
 Finish with a concise summary: files changed, behavior changed, checks run, known remaining risk.`
+
+func BuildSoloPrompt(workdir, userPrompt string) string {
+	return fmt.Sprintf(`You are the implementation agent in a solo tagteam run.
+There is no reviewer, supervisor, or adversary in this run.
+
+Complete this request in the repository at %s:
+
+%s
+
+Rules:
+- Edit files directly. Do not describe a plan instead of implementing.
+- Make the smallest correct change that satisfies the request.
+- Follow the repository's existing style and architecture.
+- Add or update tests when behavior changes.
+- Leave unrelated files alone.
+
+Finish with a concise summary: files changed, behavior changed,
+checks run, known remaining risk.`, workdir, userPrompt)
+}
 
 func BuildCoderPrompt(workdir, userPrompt string) string {
 	return fmt.Sprintf(`You are the coder in a two-agent adversarial workflow. An independent

@@ -50,7 +50,8 @@ func NewRootCommand() *cobra.Command {
 
 func bindSharedFlags(cmd *cobra.Command, flags *flagState) {
 	flagSet := cmd.PersistentFlags()
-	flagSet.StringVar(&flags.Mode, "mode", "", "Orchestration mode: supervisor (default), adversarial, or relay")
+	flagSet.StringVar(&flags.Mode, "mode", "", "Orchestration mode: supervisor (default), solo, adversarial, or relay")
+	flagSet.StringVar(&flags.Solo, "solo", "", "Run one implementation adapter[:model] with no reviewer")
 	flagSet.BoolVar(&flags.Relay, "relay", false, "Convenience alias for --mode relay")
 	flagSet.StringVar(&flags.Coder, "mc", "", "Editor adapter[:model] (coder in adversarial mode, worker in supervisor mode)")
 	flagSet.StringVar(&flags.CoderRole, "coder", "", "Coder adapter[:model] (adversarial or relay mode)")
@@ -288,6 +289,9 @@ func renderFinal(cmd *cobra.Command, final tagteam.FinalRun, opts tagteam.RunOpt
 	}
 	if final.RunDir != "" {
 		fmt.Fprintln(cmd.OutOrStdout(), final.RunDir)
+	}
+	if final.Mode == tagteam.ModeSolo {
+		fmt.Fprintln(cmd.OutOrStdout(), "review=none")
 	}
 	if final.SelectedPackage != nil {
 		fmt.Fprintf(cmd.OutOrStdout(), "package=%s %s\n", final.SelectedPackage.ID, final.SelectedPackage.Title)
