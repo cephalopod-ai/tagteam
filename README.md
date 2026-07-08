@@ -5,6 +5,24 @@
 
 `tagteam` is a standalone Go CLI that runs one or more headless coding agents as one command.
 
+## What is this?
+
+You already have coding agent CLIs installed — `claude`, `codex`, `agy`, whatever. Running two of them together, one writing code and one reviewing it, means babysitting a handoff: copy the diff, paste it into the other tool, feed the findings back, repeat. `tagteam` makes that combo a single command. You say what you want, it drives the whole back-and-forth, and it saves every brief, diff, review, and test result so you can see exactly what happened instead of trusting a vendor UI.
+
+The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode and go.
+
+**Who it's for:**
+
+- People who don't want to think about it. You want more than one agent on the problem and you want it in one command, not a config project.
+- People who don't want to burn frontier-model money on everything. Put a cheap model on the grunt work and a stronger one on review — you keep most of the benefit for a fraction of the cost.
+- People who don't care about cost and just want the best code. Point every role at top frontier models and let them fight it out.
+
+**Why it exists:** I wanted something quick that worked across my tools without configuring each one from scratch. I ended up doing the per-tool config too, but this felt like the thing I'd actually reach for in a lot of different situations.
+
+**How it's different:** it's transparent and simple. The roles are explicit, the artifacts are on disk, nothing is hidden. If you're a serious coder who wants fine-grained control over every agent, it's probably too simple for you — and that's fine.
+
+## Modes
+
 By default it runs in **supervisor mode**:
 
 - a `supervisor` agent that writes a compact implementation brief, then reviews the resulting diff (it does not edit files by default)
@@ -28,12 +46,6 @@ And it can run the original **adversarial mode** (`--mode adversarial`):
 - an `adversary` agent that reviews the resulting diff
 
 In reviewed modes the tool loops findings back into the editor role until the change passes review, tests fail, or the user-defined round limit is reached. When the limit is reached with unresolved blocker/major findings, `tagteam` stops asking for edits and asks both agents for final "what remains incomplete / what do you dispute" reports instead of continuing indefinitely. Solo mode runs once and does not pretend to be reviewed.
-
-## Vision
-
-The goal is to make adversarial review and supervisor-worker coding transparent in a CLI.
-
-Instead of hiding the interaction inside a vendor UI, `tagteam` makes the roles explicit, saves the brief/review/diff/test artifacts for each run, and keeps the handoff between "build" and "criticize" inspectable from the repository.
 
 ## Architecture at a glance
 
@@ -146,16 +158,14 @@ Binary releases are published for:
 
 - macOS (`darwin/amd64`, `darwin/arm64`)
 - Linux (`linux/amd64`, `linux/arm64`)
-- Windows (`windows/amd64`, `windows/arm64`)
 
-Platform note: CI runs formatting, tests, and vet on macOS, Linux, and Windows
-before release packaging. Real end-to-end vendor CLI behavior has only been
-manually exercised on macOS 26 Tahoe and Ubuntu so far; Windows artifacts should
-be treated as Go-level verified but operationally experimental until the vendor
-CLI adapters are exercised there in real use.
+Windows is not validated. The test suite relies on POSIX shell adapters, so
+`tagteam` is only exercised and released on macOS and Linux. It may well build
+and run on Windows — if you get it working and verify it, open an issue or PR
+and I'm more than happy to add Windows back to CI and releases.
 
 Create a release by pushing a tag such as `v0.1.0`; GitHub Actions runs
-cross-platform Go checks, then GoReleaser attaches archives plus
+Go checks on macOS and Linux, then GoReleaser attaches archives plus
 `checksums.txt` to the release.
 
 Build from source:
