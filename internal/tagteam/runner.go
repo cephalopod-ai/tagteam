@@ -486,7 +486,7 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	editorResult, err := a.runAdapter(ctx, editor, RoleCoder, Request{
 		Context:      ctx,
 		Prompt:       BuildSoloPrompt(opts.Workdir, opts.Prompt),
-		SystemPrompt: soloSystemPrompt,
+		SystemPrompt: "",
 		Model:        opts.Coder.Model,
 		Workdir:      opts.Workdir,
 		RunDir:       runDir,

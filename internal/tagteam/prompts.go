@@ -40,22 +40,11 @@ Rules:
 Finish with a concise summary: files changed, behavior changed, checks run, known remaining risk.`
 
 func BuildSoloPrompt(workdir, userPrompt string) string {
-	return fmt.Sprintf(`You are the implementation agent in a solo tagteam run.
-There is no reviewer, supervisor, or adversary in this run.
+	return fmt.Sprintf(`%s
 
 Complete this request in the repository at %s:
 
-%s
-
-Rules:
-- Edit files directly. Do not describe a plan instead of implementing.
-- Make the smallest correct change that satisfies the request.
-- Follow the repository's existing style and architecture.
-- Add or update tests when behavior changes.
-- Leave unrelated files alone.
-
-Finish with a concise summary: files changed, behavior changed,
-checks run, known remaining risk.`, workdir, userPrompt)
+%s`, soloSystemPrompt, workdir, userPrompt)
 }
 
 func BuildCoderPrompt(workdir, userPrompt string) string {

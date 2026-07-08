@@ -741,6 +741,8 @@ func TestRunLoop_SupervisorModeDryRun(t *testing.T) {
 }
 
 func TestRunLoop_SoloModeWritesArtifactsWithoutReview(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "claude-args.log")
+	t.Setenv("CLAUDE_ARGS_LOG", logPath)
 	installFakeClaudeBinary(t)
 
 	repo := t.TempDir()
@@ -791,6 +793,17 @@ func TestRunLoop_SoloModeWritesArtifactsWithoutReview(t *testing.T) {
 	}
 	if fileExists(filepath.Join(final.RunDir, "review-schema.json")) {
 		t.Fatal("solo run should not write review schema")
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read claude args log: %v", err)
+	}
+	log := string(data)
+	if strings.Contains(log, "--append-system-prompt") {
+		t.Fatalf("solo mode should not use adapter-specific system prompt append:\n%s", log)
+	}
+	if !strings.Contains(log, "solo tagteam run") {
+		t.Fatalf("solo prompt missing role framing:\n%s", log)
 	}
 }
 

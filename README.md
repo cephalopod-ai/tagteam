@@ -95,12 +95,15 @@ Binary releases are published for:
 - Linux (`linux/amd64`, `linux/arm64`)
 - Windows (`windows/amd64`, `windows/arm64`)
 
-Platform note: the developer has only tested `tagteam` on macOS 26 Tahoe and
-Ubuntu. Other targets may build and release successfully but should be treated
-as unverified until they are exercised in real use.
+Platform note: CI runs formatting, tests, and vet on macOS, Linux, and Windows
+before release packaging. Real end-to-end vendor CLI behavior has only been
+manually exercised on macOS 26 Tahoe and Ubuntu so far; Windows artifacts should
+be treated as Go-level verified but operationally experimental until the vendor
+CLI adapters are exercised there in real use.
 
 Create a release by pushing a tag such as `v0.1.0`; GitHub Actions runs
-GoReleaser and attaches archives plus `checksums.txt` to the release.
+cross-platform Go checks, then GoReleaser attaches archives plus
+`checksums.txt` to the release.
 
 Build from source:
 

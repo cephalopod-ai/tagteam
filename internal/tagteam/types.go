@@ -451,15 +451,17 @@ type RunOptions struct {
 	// left at the config/built-in default. Fix uses this to decide whether
 	// to keep the caller's mode or resume the saved run's mode.
 	ModeExplicit bool
-	// Coder and Adversary hold the resolved editor and reviewer targets for
-	// whichever mode is active (worker/supervisor in ModeSupervisor, coder/
-	// adversary in ModeAdversarial, coder/supervisor in ModeRelay).
+	// Coder holds the resolved implementation target for whichever mode is
+	// active: solo in ModeSolo, worker in ModeSupervisor, coder in
+	// ModeAdversarial/ModeRelay. Adversary holds the resolved review target
+	// for reviewed modes only: supervisor in ModeSupervisor/ModeRelay and
+	// adversary in ModeAdversarial. It is empty in ModeSolo.
 	Coder     RoleTarget
 	Adversary RoleTarget
 	Scout     RoleTarget
-	// CoderExplicit and AdversaryExplicit mirror ModeExplicit for the role
-	// targets: true when the caller passed -mc/--worker or
-	// -ma/--supervisor/--reviewer for this invocation.
+	// CoderExplicit and AdversaryExplicit mirror ModeExplicit for the
+	// implementation/review targets: true when the caller passed
+	// --solo/-mc/--worker or -ma/--supervisor/--reviewer for this invocation.
 	CoderExplicit             bool
 	AdversaryExplicit         bool
 	ScoutExplicit             bool
@@ -539,10 +541,11 @@ type FinalRun struct {
 	Workdir  string `json:"workdir"`
 	Baseline string `json:"baseline"`
 	Mode     Mode   `json:"mode,omitempty"`
-	// Coder and Adversary persist the resolved editor/reviewer targets used
-	// for this run so that `tagteam fix` can resume with the same mode and
-	// adapters instead of re-resolving from the (possibly different)
-	// current defaults/flags.
+	// Coder persists the resolved implementation target used for this run.
+	// Adversary persists the resolved review target for reviewed modes; it is
+	// empty in solo mode. `tagteam fix` uses these saved targets to resume
+	// with the same mode and adapters instead of re-resolving from current
+	// defaults/flags.
 	Coder             RoleTarget         `json:"coder,omitempty"`
 	Adversary         RoleTarget         `json:"adversary,omitempty"`
 	Scout             RoleTarget         `json:"scout,omitempty"`

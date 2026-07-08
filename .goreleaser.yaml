@@ -4,7 +4,9 @@ project_name: tagteam
 
 before:
   hooks:
+    - sh -c 'test -z "$(gofmt -l .)"'
     - go test ./...
+    - go vet ./...
 
 builds:
   - id: tagteam
