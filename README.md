@@ -148,6 +148,7 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - Vendor CLI flag drift can break adapters. `codex`, `codex-oss`, `claude`, `agy`, `gosling`, and similar tools may rename flags, change output formats, or alter auth behavior between releases.
 - Authentication is adapter-specific. CLI-backed adapters usually rely on the vendor's own login/session flow; `openai-compatible` / `oai` relies on explicit environment/config values.
 - Supervisor slicing is more format-sensitive than the final review pass. The final review path is schema-validated, but some supervisor planning/instruction steps still depend on adapter output being reasonably well-formed.
+- Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and can recover when a valid review JSON object is embedded in the prose; if no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection.
 - Different adapters do not expose identical capabilities. Some support schema-constrained output, stdin, or session resume; others do not. `tagteam` degrades where possible, but behavior is not perfectly uniform.
 - Local `.env` loading is a convenience feature, not a secret-management system. It helps with local runs, but shell-exported environment variables still take precedence.
 - Repo-local `.tagteam.toml` is partially trusted by default: low-authority defaults such as roles/models can be read, but shell tests, adapter passthrough args, Claude permission/tool widening, and `openai-compatible` endpoints/headers are ignored unless you pass `--trust-repo-config`.
@@ -307,7 +308,15 @@ If an adapter has explicit context limits configured, relay pre-scout `recon` al
 
 Scout model failures are explicit and configurable. By default, `scout_failure_policy = "continue"` warns, writes `scout-execution-round-1.json`, and continues without scout context so the coder and supervisor can still run. Use `--strict-scout` or `scout_failure_policy = "fail"` when evaluation or reproducibility should abort before coder edits if the scout invocation, scout JSON contract, or scout context-budget check fails. Retrieval unavailable/timeout/empty/degraded states are separate from scout model failure and continue into the scout pass where possible.
 
-For finer control, `loss_policy` can be configured per non-primary role: `block`, `degrade`, `replace_then_block`, or `replace_then_degrade`. Replacement is bounded to preflight fallback selection; tagteam does not loop or replay an already-started role invocation. Fallback chains are ordered, deduped, capped at five targets, and recorded in `final.json`.
+For finer control, `loss_policy` can be configured per non-primary role: `block`, `degrade`, `replace_then_block`, or `replace_then_degrade`. Replacement is bounded: tagteam may replace an unavailable target during preflight, and reviewer/supervisor review calls may try the configured fallback chain once after an invocation or output-contract failure. Fallback chains are ordered, deduped, capped at five targets, and recorded in `final.json`.
+
+The built-in `claude-failover` profile enables a small Claude-to-Codex fallback ladder for review/supervision failures:
+
+```bash
+tagteam -P claude-failover --supervisor claude:opus-4.8 "fix the bug"
+```
+
+It maps `claude:opus` / `claude:opus-4.8` to `codex:gpt-5.5`, `claude:sonnet` / `claude:sonnet-5` to `codex:gpt-5.4`, and `claude:haiku` to `codex:gpt-5.4-mini`. Target-specific fallbacks run before role-level fallback lists.
 
 </details>
 
@@ -445,7 +454,7 @@ tagteam init
 
 </details>
 
-Profiles may override `mode`, `scout`, `scout_mode`, `scout_retrieval`, `scout_failure_policy`, `scout_context_policy`, `loss_policy`, `fallbacks`, `post_scout_mode`, `worker`, `supervisor`, `coder`, `adversary`, `rounds`, and `test`. A profile that sets `coder`/`adversary` but omits `mode` resolves as an adversarial-mode profile, so profiles written before `mode` existed keep working unchanged:
+Profiles may override `mode`, `scout`, `scout_mode`, `scout_retrieval`, `scout_failure_policy`, `scout_context_policy`, `loss_policy`, `fallbacks`, `fallbacks_by_target`, `post_scout_mode`, `worker`, `supervisor`, `coder`, `adversary`, `rounds`, and `test`. A profile that sets `coder`/`adversary` but omits `mode` resolves as an adversarial-mode profile, so profiles written before `mode` existed keep working unchanged:
 
 ```toml
 [defaults]
@@ -463,6 +472,15 @@ supervisor = "block"
 [profiles.relay.fallbacks]
 scout = ["openai-compatible:gpt-oss-120b"]
 supervisor = ["claude:sonnet", "codex:gpt-5.4"]
+
+[profiles.claude-failover.loss_policy]
+reviewer = "replace_then_block"
+supervisor = "replace_then_block"
+
+[profiles.claude-failover.fallbacks_by_target]
+"claude:opus-4.8" = ["codex:gpt-5.5"]
+"claude:sonnet-5" = ["codex:gpt-5.4"]
+"claude:haiku" = ["codex:gpt-5.4-mini"]
 
 [profiles.fast]
 coder = "codex:gpt-5-codex-mini"

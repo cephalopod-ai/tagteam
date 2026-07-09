@@ -247,15 +247,20 @@ func buildReviewBundle(runDir string, opts RunOptions, role string, round int, b
 	return bundle, nil
 }
 
-func fallbackTargetsForRole(opts RunOptions, role string) []string {
+func fallbackTargetsForRole(opts RunOptions, role string, primary RoleTarget) []string {
+	var out []string
+	if len(opts.FallbacksByTarget) > 0 {
+		out = append(out, opts.FallbacksByTarget[roleTargetString(primary)]...)
+	}
 	switch role {
 	case "scout":
-		return opts.Fallbacks.Scout
+		out = append(out, opts.Fallbacks.Scout...)
 	case "supervisor":
-		return opts.Fallbacks.Supervisor
+		out = append(out, opts.Fallbacks.Supervisor...)
 	default:
-		return opts.Fallbacks.Reviewer
+		out = append(out, opts.Fallbacks.Reviewer...)
 	}
+	return normalizeFallbackTargets(out, primary)
 }
 
 func lossPolicyForRole(opts RunOptions, role string) LossPolicy {

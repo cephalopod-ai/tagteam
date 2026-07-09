@@ -567,9 +567,77 @@ func TestRunAdversaryDoesNotRetryInvocationFailures(t *testing.T) {
 		Adversary: RoleTarget{Adapter: "missing"},
 		Timeout:   time.Second,
 	}
-	_, _, _, err := app.runAdversary(context.Background(), opts, 1, opts.Workdir, filepath.Join(opts.Workdir, "schema.json"), "prompt", "HEAD", "diff", filepath.Join(opts.Workdir, "diff.patch"), "", "", nil, RelayContext{}, "")
+	_, _, _, err := app.runAdversary(context.Background(), opts, 1, opts.Workdir, filepath.Join(opts.Workdir, "schema.json"), "prompt", "HEAD", "diff", filepath.Join(opts.Workdir, "diff.patch"), "", "", nil, RelayContext{}, "", nil)
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestRunAdversaryUsesConfiguredFallbackAfterPrimaryFailure(t *testing.T) {
+	installFakeBinaries(t, map[string]string{
+		"claude": fakeClaudeInvokeFailScript,
+		"codex":  fakeCodexPassingReviewScript,
+	})
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "hello\nworld\n")
+
+	cfg := DefaultConfig()
+	app := NewApp(cfg)
+	runDir := filepath.Join(repo, ".tagteam", "runs", "fallback-test")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	schemaPath := filepath.Join(runDir, "review-schema.json")
+	if err := os.WriteFile(schemaPath, []byte(ReviewSchema), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diffPath := filepath.Join(runDir, "diff.patch")
+	if err := os.WriteFile(diffPath, []byte("diff --git a/README.md b/README.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	final := FinalRun{Adapters: map[string]string{"adversary": "claude"}, Models: map[string]string{"adversary": "sonnet-5"}}
+	initFinalState(&final, RunOptions{EnvOverlay: map[string]string{}})
+	opts := RunOptions{
+		Prompt:    "review",
+		Workdir:   repo,
+		Mode:      ModeAdversarial,
+		Adversary: RoleTarget{Adapter: "claude", Model: "sonnet-5"},
+		LossPolicy: RoleLossPolicies{
+			Reviewer: LossPolicyReplaceThenBlock,
+		},
+		FallbacksByTarget: TargetFallbacks{
+			"claude:sonnet-5": []string{"codex:gpt-5.4"},
+		},
+		Timeout:        5 * time.Second,
+		MaxOutputBytes: 2 * 1024 * 1024,
+	}
+
+	review, _, outputPath, err := app.runAdversary(context.Background(), opts, 1, runDir, schemaPath, opts.Prompt, "HEAD", "diff --git a/README.md b/README.md\n", diffPath, "", "", nil, RelayContext{}, "", &final)
+	if err != nil {
+		t.Fatalf("runAdversary() error = %v", err)
+	}
+	if review == nil || review.Verdict != "pass" {
+		t.Fatalf("review = %#v", review)
+	}
+	if !strings.Contains(outputPath, "fallback-codex-gpt-5-4") {
+		t.Fatalf("output path = %q", outputPath)
+	}
+	if !final.Degraded || final.DegradedReason != string(ReasonFallbackUsed) {
+		t.Fatalf("final degradation = degraded=%v reason=%q", final.Degraded, final.DegradedReason)
+	}
+	if final.Adapters["adversary"] != "codex" || final.Models["adversary"] != "gpt-5.4" {
+		t.Fatalf("final adapter/model = %#v %#v", final.Adapters, final.Models)
+	}
+	status := final.RoleStatuses["adversary"]
+	if status.Selected != "codex:gpt-5.4" || len(status.Attempts) != 2 {
+		t.Fatalf("role status = %#v", status)
 	}
 }
 
@@ -1798,6 +1866,14 @@ if [ "$1" = "--version" ]; then
 fi
 echo "reviewer exploded" >&2
 exit 7
+`
+
+const fakeCodexPassingReviewScript = `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "codex 1.0.0"
+  exit 0
+fi
+printf '%s' '{"schema_version":1,"verdict":"pass","summary":"fallback passed","findings":[],"test_suggestions":[]}'
 `
 
 const fakeAgyScript = `#!/bin/sh

@@ -631,7 +631,7 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (final
 	final.LatestSHA256Path = diffArtifact.SHA256Path
 	final.LatestDiffSHA256 = diffArtifact.Metadata.DiffSHA256
 	final.ChangedFiles = diffArtifact.ChangedFiles()
-	review, cost, outputPath, err := a.runAdversary(ctx, opts, 1, runDir, schemaPath, prompt, baseline, diffArtifact.Patch, diffArtifact.PatchPath, "", "", nil, RelayContext{}, repoInstructions)
+	review, cost, outputPath, err := a.runAdversary(ctx, opts, 1, runDir, schemaPath, prompt, baseline, diffArtifact.Patch, diffArtifact.PatchPath, "", "", nil, RelayContext{}, repoInstructions, &final)
 	if err != nil {
 		return final, err
 	}
@@ -1294,7 +1294,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	setRoleStatus(&final, editorLabel, opts.Coder, "ready", "", "")
 	reviewerRoleForPolicy := reviewerLabel
 	currentRole = reviewerRoleForPolicy
-	opts.Adversary, reviewer, err = selectRunnableRoleAdapter(ctx, registry, reviewerRoleForPolicy, opts.Adversary, fallbackTargetsForRole(opts, reviewerRoleForPolicy), lossPolicyForRole(opts, reviewerRoleForPolicy), &final)
+	opts.Adversary, reviewer, err = selectRunnableRoleAdapter(ctx, registry, reviewerRoleForPolicy, opts.Adversary, fallbackTargetsForRole(opts, reviewerRoleForPolicy, opts.Adversary), lossPolicyForRole(opts, reviewerRoleForPolicy), &final)
 	if err != nil {
 		setFinalBlocking(&final, classifyRoleFailure(reviewerRoleForPolicy, err), err.Error())
 		return final, err
@@ -1340,7 +1340,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				return final, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown scout adapter %q", opts.Scout.Adapter)}
 			}
 			var scoutErr error
-			opts.Scout, scout, scoutErr = selectRunnableRoleAdapter(ctx, registry, "scout", opts.Scout, opts.Fallbacks.Scout, opts.LossPolicy.Scout, &final)
+			opts.Scout, scout, scoutErr = selectRunnableRoleAdapter(ctx, registry, "scout", opts.Scout, fallbackTargetsForRole(opts, "scout", opts.Scout), opts.LossPolicy.Scout, &final)
 			if scoutErr != nil {
 				setRoleStatus(&final, "scout", opts.Scout, "failed", ReasonScoutUnavailable, scoutErr.Error())
 				appendRoleLoss(&final, "scout", opts.LossPolicy.Scout, "preflight", "degraded", ReasonScoutUnavailable, scoutErr.Error())
@@ -1360,7 +1360,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		}
 	} else if opts.Mode == ModeRelay {
 		var scoutErr error
-		opts.Scout, scout, scoutErr = selectRunnableRoleAdapter(ctx, registry, "scout", opts.Scout, opts.Fallbacks.Scout, opts.LossPolicy.Scout, &final)
+		opts.Scout, scout, scoutErr = selectRunnableRoleAdapter(ctx, registry, "scout", opts.Scout, fallbackTargetsForRole(opts, "scout", opts.Scout), opts.LossPolicy.Scout, &final)
 		if scoutErr != nil {
 			setRoleStatus(&final, "scout", opts.Scout, "failed", ReasonScoutUnavailable, scoutErr.Error())
 			appendRoleLoss(&final, "scout", opts.LossPolicy.Scout, "preflight", "degraded", ReasonScoutUnavailable, scoutErr.Error())
@@ -1824,7 +1824,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		if latestReview.Verdict != "" {
 			priorReview = &latestReview
 		}
-		review, cost, reviewPath, err := a.runAdversary(ctx, opts, round, runDir, schemaPath, opts.Prompt, baseline, diff, diffArtifact.PatchPath, testOutput, editorOutputPath, priorReview, relay, repoInstructions)
+		review, cost, reviewPath, err := a.runAdversary(ctx, opts, round, runDir, schemaPath, opts.Prompt, baseline, diff, diffArtifact.PatchPath, testOutput, editorOutputPath, priorReview, relay, repoInstructions, &final)
 		if err != nil {
 			reason := classifyRoleFailure(reviewerLabel, err)
 			setRoleStatus(&final, reviewerLabel, opts.Adversary, "failed", reason, err.Error())
@@ -2151,13 +2151,12 @@ func appendRemainingPackagesSummary(summary string, remaining []string) string {
 	return strings.TrimSpace(summary) + "\n\nRemaining packages not run: " + strings.Join(remaining, "; ")
 }
 
-func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runDir, schemaPath, prompt, baseline, diff, diffPath, testOutput, coderOutputPath string, priorReview *Review, relay RelayContext, repoInstructions string) (*Review, float64, string, error) {
+func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runDir, schemaPath, prompt, baseline, diff, diffPath, testOutput, coderOutputPath string, priorReview *Review, relay RelayContext, repoInstructions string, final *FinalRun) (*Review, float64, string, error) {
 	_, reviewerLabel := roleLabels(opts.Mode)
 	outputLabel := reviewerLabel
 	if opts.Mode == ModeRelay {
 		outputLabel = "supervisor-review"
 	}
-	outputPath := filepath.Join(runDir, fmt.Sprintf("%s-round-%d.json", outputLabel, round))
 	registry := Registry(a.Config, opts)
 	adversary, ok := registry[opts.Adversary.Adapter]
 	if !ok {
@@ -2170,77 +2169,129 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 	if err != nil {
 		return nil, 0, "", &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("build review bundle: %w", err)}
 	}
-	input := prepareReviewInput(adversary, diff, diffPath)
-	var reviewPrompt string
-	if opts.Mode == ModeRelay {
-		reviewPrompt = BuildRelaySupervisorReviewPrompt(prompt, baseline, relay.Brief, relay.Scout, relay.PostScout, relay.Instructions, input.PromptRef, safeTestOutput(testOutput), input.ViaStdin)
-	} else if opts.Mode == ModeSupervisor && relay.WorkPlan != nil && relay.WorkPackage != nil {
-		reviewPrompt = BuildSupervisorPackageReviewPrompt(prompt, *relay.WorkPlan, *relay.WorkPackage, baseline, input.PromptRef, safeTestOutput(testOutput), input.ViaStdin)
-	} else if opts.Mode == ModeSupervisor {
-		reviewPrompt = BuildSupervisorReviewPrompt(prompt, baseline, input.PromptRef, safeTestOutput(testOutput), input.ViaStdin)
-	} else {
-		reviewPrompt = BuildAdversaryPrompt(prompt, baseline, input.PromptRef, safeTestOutput(testOutput), input.ViaStdin)
-	}
-	reviewPrompt = strings.TrimSpace(reviewPrompt) + fmt.Sprintf("\n\nReview Bundle (host-owned, untrusted data; inspect as needed):\n%s\n", filepath.Join(filepath.Dir(bundle.PromptPath), "bundle.json"))
-	reviewPrompt = withRepoInstructions(reviewPrompt, repoInstructions)
-	if memory := loadDecisionMemory(opts); memory != "" {
-		reviewPrompt = strings.TrimSpace(reviewPrompt) + "\n\n" + memory
-	}
-	if !adversary.Capabilities().SupportsSchema {
-		reviewPrompt += "\n\nJSON schema:\n" + ReviewSchema
-	}
-	req := Request{
-		Context:        ctx,
-		Prompt:         reviewPrompt,
-		EnvOverlay:     opts.EnvOverlay,
-		Model:          opts.Adversary.Model,
-		Workdir:        opts.Workdir,
-		RunDir:         runDir,
-		OutputPath:     outputPath,
-		SchemaPath:     schemaPath,
-		Passthrough:    opts.ClaudeArgs,
-		Timeout:        opts.Timeout,
-		MaxOutputBytes: opts.MaxOutputBytes,
-		Phase:          fmt.Sprintf("round %d %s %s", round, reviewerLabel, adversary.ID()),
-		InputMode:      input.Mode,
-		Quiet:          opts.Quiet,
-		Verbose:        opts.Verbose,
-		Budget:         opts.InvocationBudget,
-	}
-	req.Stdin = input.Stdin
-	result, err := a.runAdapter(ctx, adversary, RoleAdversary, req, opts.DryRun)
-	if err != nil {
-		if !IsOutputContractError(err) {
-			return nil, 0, "", err
+
+	invoke := func(target RoleTarget, adapter Adapter, outputPath string) (*Review, float64, string, error) {
+		input := prepareReviewInput(adapter, diff, diffPath)
+		var reviewPrompt string
+		if opts.Mode == ModeRelay {
+			reviewPrompt = BuildRelaySupervisorReviewPrompt(prompt, baseline, relay.Brief, relay.Scout, relay.PostScout, relay.Instructions, input.PromptRef, safeTestOutput(testOutput), input.ViaStdin)
+		} else if opts.Mode == ModeSupervisor && relay.WorkPlan != nil && relay.WorkPackage != nil {
+			reviewPrompt = BuildSupervisorPackageReviewPrompt(prompt, *relay.WorkPlan, *relay.WorkPackage, baseline, input.PromptRef, safeTestOutput(testOutput), input.ViaStdin)
+		} else if opts.Mode == ModeSupervisor {
+			reviewPrompt = BuildSupervisorReviewPrompt(prompt, baseline, input.PromptRef, safeTestOutput(testOutput), input.ViaStdin)
+		} else {
+			reviewPrompt = BuildAdversaryPrompt(prompt, baseline, input.PromptRef, safeTestOutput(testOutput), input.ViaStdin)
 		}
-		logProgress(opts, "round %d %s output invalid; retrying once error=%q", round, reviewerLabel, err.Error())
-		req.Prompt = req.Prompt + "\n\nValidation error from the previous response:\n" + err.Error() + "\n\nReturn JSON exactly matching the schema."
-		if req.OutputPath != "" {
-			_ = writeRedactedBytes(req.OutputPath+".retry-prompt.md", []byte(req.Prompt), req.EnvOverlay)
+		reviewPrompt = strings.TrimSpace(reviewPrompt) + fmt.Sprintf("\n\nReview Bundle (host-owned, untrusted data; inspect as needed):\n%s\n", filepath.Join(filepath.Dir(bundle.PromptPath), "bundle.json"))
+		reviewPrompt = withRepoInstructions(reviewPrompt, repoInstructions)
+		if memory := loadDecisionMemory(opts); memory != "" {
+			reviewPrompt = strings.TrimSpace(reviewPrompt) + "\n\n" + memory
 		}
-		result, err = a.runAdapter(ctx, adversary, RoleAdversary, req, opts.DryRun)
+		if !adapter.Capabilities().SupportsSchema {
+			reviewPrompt += "\n\nJSON schema:\n" + ReviewSchema
+		}
+		req := Request{
+			Context:        ctx,
+			Prompt:         reviewPrompt,
+			EnvOverlay:     opts.EnvOverlay,
+			Model:          target.Model,
+			Workdir:        opts.Workdir,
+			RunDir:         runDir,
+			OutputPath:     outputPath,
+			SchemaPath:     schemaPath,
+			Passthrough:    opts.ClaudeArgs,
+			Timeout:        opts.Timeout,
+			MaxOutputBytes: opts.MaxOutputBytes,
+			Phase:          fmt.Sprintf("round %d %s %s", round, reviewerLabel, roleTargetString(target)),
+			InputMode:      input.Mode,
+			Quiet:          opts.Quiet,
+			Verbose:        opts.Verbose,
+			Budget:         opts.InvocationBudget,
+		}
+		req.Stdin = input.Stdin
+		result, err := a.runAdapter(ctx, adapter, RoleAdversary, req, opts.DryRun)
 		if err != nil {
-			if IsOutputContractError(err) {
-				if req.OutputPath != "" {
-					_ = writeJSONWithNewline(req.OutputPath+".invalid.json", map[string]any{
-						"schema_version": ArtifactSchemaVersion,
-						"role":           string(RoleAdversary),
-						"adapter":        adversary.ID(),
-						"error":          err.Error(),
-						"recorded_at":    time.Now().UTC(),
-					})
-				}
-				return nil, 0, "", &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("%s output failed validation after retry: %w", reviewerLabel, err)}
+			if !IsOutputContractError(err) {
+				return nil, 0, "", err
 			}
-			return nil, 0, "", err
+			logProgress(opts, "round %d %s output invalid; retrying once error=%q", round, reviewerLabel, err.Error())
+			req.Prompt = req.Prompt + "\n\nValidation error from the previous response:\n" + err.Error() + "\n\nReturn JSON exactly matching the schema."
+			if req.OutputPath != "" {
+				_ = writeRedactedBytes(req.OutputPath+".retry-prompt.md", []byte(req.Prompt), req.EnvOverlay)
+			}
+			result, err = a.runAdapter(ctx, adapter, RoleAdversary, req, opts.DryRun)
+			if err != nil {
+				if IsOutputContractError(err) {
+					if req.OutputPath != "" {
+						_ = writeJSONWithNewline(req.OutputPath+".invalid.json", map[string]any{
+							"schema_version": ArtifactSchemaVersion,
+							"role":           string(RoleAdversary),
+							"adapter":        adapter.ID(),
+							"model":          target.Model,
+							"error":          err.Error(),
+							"recorded_at":    time.Now().UTC(),
+						})
+					}
+					return nil, 0, "", &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("%s output failed validation after retry: %w", reviewerLabel, err)}
+				}
+				return nil, 0, "", err
+			}
 		}
 		normalizeReview(result.Review)
 		applyReviewCaps(result.Review, opts.MaxFindings)
 		return result.Review, result.CostUSD, outputPath, nil
 	}
-	normalizeReview(result.Review)
-	applyReviewCaps(result.Review, opts.MaxFindings)
-	return result.Review, result.CostUSD, outputPath, nil
+
+	outputPath := filepath.Join(runDir, fmt.Sprintf("%s-round-%d.json", outputLabel, round))
+	review, cost, path, err := invoke(opts.Adversary, adversary, outputPath)
+	if err == nil {
+		return review, cost, path, nil
+	}
+	policy := lossPolicyForRole(opts, reviewerLabel)
+	if !policyAttemptsReplacement(policy) {
+		return nil, 0, "", err
+	}
+	attempts := []string{roleTargetString(opts.Adversary)}
+	for _, raw := range fallbackTargetsForRole(opts, reviewerLabel, opts.Adversary) {
+		target, parseErr := ParseRoleTarget(raw)
+		if parseErr != nil {
+			continue
+		}
+		attempts = append(attempts, roleTargetString(target))
+		candidate, ok := registry[target.Adapter]
+		if !ok {
+			continue
+		}
+		if detectErr := checkAdapters(ctx, candidate); detectErr != nil {
+			continue
+		}
+		logProgress(opts, "round %d %s failed; trying fallback target=%s error=%q", round, reviewerLabel, roleTargetString(target), err.Error())
+		fallbackPath := filepath.Join(runDir, fmt.Sprintf("%s-round-%d-fallback-%s.json", outputLabel, round, sanitizeArtifactName(roleTargetString(target))))
+		review, cost, path, fallbackErr := invoke(target, candidate, fallbackPath)
+		if fallbackErr != nil {
+			err = fallbackErr
+			continue
+		}
+		if final != nil {
+			if final.Adapters == nil {
+				final.Adapters = map[string]string{}
+			}
+			if final.Models == nil {
+				final.Models = map[string]string{}
+			}
+			final.Adapters[reviewerLabel] = target.Adapter
+			final.Models[reviewerLabel] = target.Model
+			setFinalDegraded(final, ReasonFallbackUsed, fmt.Sprintf("%s fallback selected after primary failure", reviewerLabel))
+			appendRoleLoss(final, reviewerLabel, policy, "replace", "fallback_selected_after_failure", ReasonFallbackUsed, fmt.Sprintf("%s -> %s", roleTargetString(opts.Adversary), roleTargetString(target)))
+			setRoleStatus(final, reviewerLabel, target, "completed", ReasonFallbackUsed, "fallback selected after primary failure")
+			status := final.RoleStatuses[reviewerLabel]
+			status.Attempts = attempts
+			status.Selected = roleTargetString(target)
+			final.RoleStatuses[reviewerLabel] = status
+		}
+		return review, cost, path, nil
+	}
+	return nil, 0, "", err
 }
 
 func normalizeReview(review *Review) {

@@ -217,6 +217,12 @@ type claudeEnvelope struct {
 func (a *ClaudeAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 	var envelope claudeEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {
+		if role == RoleAdversary {
+			review, parseErr := parseReviewPayload(raw)
+			if parseErr == nil {
+				return Result{Raw: raw, Text: review.Summary, Review: review}, nil
+			}
+		}
 		return Result{}, fmt.Errorf("decode claude JSON: %w", err)
 	}
 	result := Result{
@@ -226,24 +232,15 @@ func (a *ClaudeAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 		CostUSD:   envelope.TotalCostUSD,
 	}
 	if role == RoleAdversary {
-		var review Review
 		reviewRaw := envelope.StructuredOutput
 		if len(reviewRaw) == 0 || string(reviewRaw) == "null" {
 			reviewRaw = []byte(envelope.Result)
 		}
-		if err := json.Unmarshal(reviewRaw, &review); err != nil {
-			extracted, extractErr := extractJSONObject(reviewRaw)
-			if extractErr != nil {
-				return Result{}, &OutputContractError{Err: fmt.Errorf("decode claude review JSON: %w", err)}
-			}
-			if err := json.Unmarshal(extracted, &review); err != nil {
-				return Result{}, &OutputContractError{Err: fmt.Errorf("decode claude review JSON: %w", err)}
-			}
+		review, err := parseReviewPayload(reviewRaw)
+		if err != nil {
+			return Result{}, err
 		}
-		if err := review.Validate(); err != nil {
-			return Result{}, &OutputContractError{Err: err}
-		}
-		result.Review = &review
+		result.Review = review
 		result.Text = review.Summary
 	}
 	if role == RoleSupervisor && len(envelope.StructuredOutput) > 0 && string(envelope.StructuredOutput) != "null" {
@@ -258,6 +255,23 @@ func (a *ClaudeAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 		result.Scout = scout
 	}
 	return result, nil
+}
+
+func parseReviewPayload(raw []byte) (*Review, error) {
+	var review Review
+	if err := json.Unmarshal(raw, &review); err != nil {
+		extracted, extractErr := extractJSONObject(raw)
+		if extractErr != nil {
+			return nil, &OutputContractError{Err: fmt.Errorf("decode claude review JSON: %w", err)}
+		}
+		if err := json.Unmarshal(extracted, &review); err != nil {
+			return nil, &OutputContractError{Err: fmt.Errorf("decode claude review JSON: %w", err)}
+		}
+	}
+	if err := review.Validate(); err != nil {
+		return nil, &OutputContractError{Err: err}
+	}
+	return &review, nil
 }
 
 type AgyAdapter struct {

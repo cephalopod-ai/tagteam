@@ -78,6 +78,8 @@ type RoleFallbacks struct {
 	Scout      []string `json:"scout,omitempty" toml:"scout"`
 }
 
+type TargetFallbacks map[string][]string
+
 type RoleStatus struct {
 	Role          string     `json:"role"`
 	Adapter       string     `json:"adapter,omitempty"`
@@ -542,6 +544,7 @@ type DefaultsConfig struct {
 	ScoutFailurePolicy      string           `toml:"scout_failure_policy"`
 	LossPolicy              RoleLossPolicies `toml:"loss_policy"`
 	Fallbacks               RoleFallbacks    `toml:"fallbacks"`
+	FallbacksByTarget       TargetFallbacks  `toml:"fallbacks_by_target"`
 	ScoutRetrieval          *bool            `toml:"scout_retrieval"`
 	ScoutContextPolicy      string           `toml:"scout_context_policy"`
 	SupervisorSlicing       *bool            `toml:"supervisor_slicing"`
@@ -571,6 +574,7 @@ type ProfileConfig struct {
 	ScoutFailurePolicy      string           `toml:"scout_failure_policy"`
 	LossPolicy              RoleLossPolicies `toml:"loss_policy"`
 	Fallbacks               RoleFallbacks    `toml:"fallbacks"`
+	FallbacksByTarget       TargetFallbacks  `toml:"fallbacks_by_target"`
 	ScoutRetrieval          *bool            `toml:"scout_retrieval"`
 	ScoutContextPolicy      string           `toml:"scout_context_policy"`
 	SupervisorSlicing       *bool            `toml:"supervisor_slicing"`
@@ -718,6 +722,7 @@ type RunOptions struct {
 	ScoutFailurePolicy        string
 	LossPolicy                RoleLossPolicies
 	Fallbacks                 RoleFallbacks
+	FallbacksByTarget         TargetFallbacks
 	ScoutRetrieval            bool
 	ScoutContextPolicy        string
 	TrustRepoConfig           bool

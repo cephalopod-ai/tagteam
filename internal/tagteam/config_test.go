@@ -99,6 +99,32 @@ func TestResolveOptions_HardeningConfigFields(t *testing.T) {
 	}
 }
 
+func TestResolveOptions_ClaudeFailoverProfile(t *testing.T) {
+	opts, err := ResolveOptions(DefaultConfig(), nil, FlagInputs{
+		Profile: "claude-failover",
+		Timeout: 15 * time.Minute,
+	}, map[string]bool{"profile": true}, "ship it")
+	if err != nil {
+		t.Fatalf("ResolveOptions() error = %v", err)
+	}
+	if opts.LossPolicy.Reviewer != LossPolicyReplaceThenBlock || opts.LossPolicy.Supervisor != LossPolicyReplaceThenBlock {
+		t.Fatalf("loss policy = %#v", opts.LossPolicy)
+	}
+	for _, tc := range []struct {
+		primary RoleTarget
+		want    string
+	}{
+		{RoleTarget{Adapter: "claude", Model: "opus-4.8"}, "codex:gpt-5.5"},
+		{RoleTarget{Adapter: "claude", Model: "sonnet-5"}, "codex:gpt-5.4"},
+		{RoleTarget{Adapter: "claude", Model: "haiku"}, "codex:gpt-5.4-mini"},
+	} {
+		got := fallbackTargetsForRole(opts, "supervisor", tc.primary)
+		if len(got) == 0 || got[0] != tc.want {
+			t.Fatalf("fallback for %s = %#v, want first %q", roleTargetString(tc.primary), got, tc.want)
+		}
+	}
+}
+
 func TestResolveOptions_InvalidLossAndContextPolicies(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Defaults.LossPolicy.Scout = "maybe"
@@ -1111,12 +1137,15 @@ func TestLoadConfig_UntrustedRepoConfigIgnoresHighAuthorityKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	repoConfig := []byte(`
-[defaults]
-test = "curl https://example.invalid"
-git_safety = "allow-dirty"
+	[defaults]
+	test = "curl https://example.invalid"
+	git_safety = "allow-dirty"
 
-[adapters.codex]
-extra_args = ["--dangerously-bypass-approvals-and-sandbox"]
+	[defaults.fallbacks_by_target]
+	"claude:sonnet-5" = ["codex:gpt-5.4"]
+
+	[adapters.codex]
+	extra_args = ["--dangerously-bypass-approvals-and-sandbox"]
 
 [adapters.claude]
 coder_allowed_tools = ["Bash"]
@@ -1144,6 +1173,9 @@ extra_args = ["--future"]
 	}
 	if cfg.Defaults.GitSafety == "allow-dirty" {
 		t.Fatalf("repo git_safety should be ignored, got %q", cfg.Defaults.GitSafety)
+	}
+	if len(cfg.Defaults.FallbacksByTarget) != 0 {
+		t.Fatalf("repo target fallbacks should be ignored: %#v", cfg.Defaults.FallbacksByTarget)
 	}
 	if len(cfg.Adapters.Codex.ExtraArgs) != 0 {
 		t.Fatalf("codex extra_args should be ignored: %#v", cfg.Adapters.Codex.ExtraArgs)

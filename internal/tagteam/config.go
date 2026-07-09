@@ -72,6 +72,22 @@ func DefaultConfig() Config {
 				ScoutContextPolicy: "warn",
 				Rounds:             2,
 			},
+			"claude-failover": {
+				LossPolicy: RoleLossPolicies{
+					Reviewer:   LossPolicyReplaceThenBlock,
+					Supervisor: LossPolicyReplaceThenBlock,
+				},
+				FallbacksByTarget: TargetFallbacks{
+					"claude:opus":       []string{"codex:gpt-5.5"},
+					"claude:opus-4.8":   []string{"codex:gpt-5.5"},
+					"claude:sonnet":     []string{"codex:gpt-5.4"},
+					"claude:sonnet-5":   []string{"codex:gpt-5.4"},
+					"claude:haiku":      []string{"codex:gpt-5.4-mini"},
+					"claude:haiku-5":    []string{"codex:gpt-5.4-mini"},
+					"claude:haiku-4.8":  []string{"codex:gpt-5.4-mini"},
+					"claude:sonnet-4.5": []string{"codex:gpt-5.4"},
+				},
+			},
 		},
 		Adapters: AdapterConfigSet{
 			Codex: CodexConfig{},
@@ -313,6 +329,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 	src.Defaults.MaxRoleInvocations = 0
 	src.Defaults.LossPolicy = RoleLossPolicies{}
 	src.Defaults.Fallbacks = RoleFallbacks{}
+	src.Defaults.FallbacksByTarget = nil
 	src.Defaults.ScoutContextPolicy = ""
 	for name, profile := range src.Profiles {
 		profile.Test = ""
@@ -321,6 +338,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 		profile.MaxRoleInvocations = 0
 		profile.LossPolicy = RoleLossPolicies{}
 		profile.Fallbacks = RoleFallbacks{}
+		profile.FallbacksByTarget = nil
 		profile.ScoutContextPolicy = ""
 		src.Profiles[name] = profile
 	}
@@ -375,6 +393,7 @@ func mergeConfig(dst *Config, src Config) {
 	}
 	mergeRoleLossPolicies(&dst.Defaults.LossPolicy, src.Defaults.LossPolicy)
 	mergeRoleFallbacks(&dst.Defaults.Fallbacks, src.Defaults.Fallbacks)
+	mergeTargetFallbacks(&dst.Defaults.FallbacksByTarget, src.Defaults.FallbacksByTarget)
 	if src.Defaults.ScoutRetrieval != nil {
 		dst.Defaults.ScoutRetrieval = src.Defaults.ScoutRetrieval
 	}
@@ -455,6 +474,7 @@ func mergeConfig(dst *Config, src Config) {
 			}
 			mergeRoleLossPolicies(&current.LossPolicy, profile.LossPolicy)
 			mergeRoleFallbacks(&current.Fallbacks, profile.Fallbacks)
+			mergeTargetFallbacks(&current.FallbacksByTarget, profile.FallbacksByTarget)
 			if profile.ScoutRetrieval != nil {
 				current.ScoutRetrieval = profile.ScoutRetrieval
 			}
@@ -589,6 +609,18 @@ func mergeRoleFallbacks(dst *RoleFallbacks, src RoleFallbacks) {
 	}
 	if len(src.Scout) > 0 {
 		dst.Scout = append([]string{}, src.Scout...)
+	}
+}
+
+func mergeTargetFallbacks(dst *TargetFallbacks, src TargetFallbacks) {
+	if len(src) == 0 {
+		return
+	}
+	if *dst == nil {
+		*dst = TargetFallbacks{}
+	}
+	for primary, fallbacks := range src {
+		(*dst)[primary] = append([]string{}, fallbacks...)
 	}
 }
 
@@ -883,6 +915,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	scoutFailurePolicy := cfg.Defaults.ScoutFailurePolicy
 	lossPolicy := cfg.Defaults.LossPolicy
 	fallbacks := cfg.Defaults.Fallbacks
+	fallbacksByTarget := cloneTargetFallbacks(cfg.Defaults.FallbacksByTarget)
 	scoutRetrieval := true
 	if cfg.Defaults.ScoutRetrieval != nil {
 		scoutRetrieval = *cfg.Defaults.ScoutRetrieval
@@ -962,6 +995,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		}
 		mergeRoleLossPolicies(&lossPolicy, profile.LossPolicy)
 		mergeRoleFallbacks(&fallbacks, profile.Fallbacks)
+		mergeTargetFallbacks(&fallbacksByTarget, profile.FallbacksByTarget)
 		if profile.ScoutRetrieval != nil {
 			scoutRetrieval = *profile.ScoutRetrieval
 		}
@@ -1395,6 +1429,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		ScoutFailurePolicy:        scoutFailurePolicy,
 		LossPolicy:                lossPolicy,
 		Fallbacks:                 normalizeRoleFallbacks(fallbacks, editorTarget, reviewerTarget, scoutTarget),
+		FallbacksByTarget:         normalizeTargetFallbacks(fallbacksByTarget),
 		ScoutRetrieval:            scoutRetrieval,
 		ScoutContextPolicy:        scoutContextPolicy,
 		TrustRepoConfig:           flags.TrustRepoConfig && changed["trust-repo-config"],
@@ -1506,6 +1541,27 @@ func normalizeRoleFallbacks(f RoleFallbacks, editor, reviewer, scout RoleTarget)
 	}
 }
 
+func normalizeTargetFallbacks(f TargetFallbacks) TargetFallbacks {
+	if len(f) == 0 {
+		return nil
+	}
+	out := TargetFallbacks{}
+	for rawPrimary, rawFallbacks := range f {
+		primary, err := ParseRoleTarget(rawPrimary)
+		if err != nil || primary.Adapter == "" {
+			continue
+		}
+		normalized := normalizeFallbackTargets(rawFallbacks, primary)
+		if len(normalized) > 0 {
+			out[roleTargetString(primary)] = normalized
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func normalizeFallbackTargets(raw []string, primary RoleTarget) []string {
 	const maxFallbackTargets = 5
 	primaryRaw := roleTargetString(primary)
@@ -1527,6 +1583,17 @@ func normalizeFallbackTargets(raw []string, primary RoleTarget) []string {
 		if len(out) == maxFallbackTargets {
 			break
 		}
+	}
+	return out
+}
+
+func cloneTargetFallbacks(src TargetFallbacks) TargetFallbacks {
+	if len(src) == 0 {
+		return nil
+	}
+	out := TargetFallbacks{}
+	for primary, fallbacks := range src {
+		out[primary] = append([]string{}, fallbacks...)
 	}
 	return out
 }

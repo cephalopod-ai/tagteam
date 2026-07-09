@@ -238,6 +238,29 @@ func TestClaudeParseResultExtractsFencedResultJSON(t *testing.T) {
 	}
 }
 
+func TestClaudeParseResultRecoversPlainTextWrappedReviewJSON(t *testing.T) {
+	adapter := &ClaudeAdapter{}
+	raw := []byte(`Review complete.
+
+{
+  "schema_version": 1,
+  "verdict": "pass",
+  "summary": "looks good",
+  "findings": [],
+  "test_suggestions": []
+}`)
+	result, err := adapter.ParseResult(RoleAdversary, raw)
+	if err != nil {
+		t.Fatalf("ParseResult() error = %v", err)
+	}
+	if result.Review == nil || result.Review.Verdict != "pass" {
+		t.Fatalf("review = %#v", result.Review)
+	}
+	if result.Text != "looks good" {
+		t.Fatalf("text = %q", result.Text)
+	}
+}
+
 func TestClaudeParseResultWrapsContractErrors(t *testing.T) {
 	adapter := &ClaudeAdapter{}
 	_, err := adapter.ParseResult(RoleAdversary, []byte(`{"result":"ok","structured_output":{"verdict":"pass","summary":"bad","findings":[{"severity":"major","file":"main.go","issue":"bug","fix":"fix"}],"test_suggestions":[]}}`))
