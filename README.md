@@ -130,6 +130,9 @@ tagteam init
 - Git
 - At least one supported agent CLI on `PATH`
 
+> [!IMPORTANT]
+> The selected `--workdir` (the current directory, if unset) must itself be a Git repo with at least one commit — `tagteam` runs `git rev-parse --verify HEAD` there during preflight and uses that commit as the diff baseline for every round. A folder that only *contains* repos (e.g. a workspace directory with several projects as subfolders) does not qualify; point `--workdir` at the actual repo, not a parent above it. Failing this check exits with `workdir is not a git repo or has no HEAD`.
+
 Supported adapters in this repo today:
 
 | Adapter | Role support |
