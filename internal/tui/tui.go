@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"os"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 
@@ -57,13 +60,16 @@ func Run(ctx context.Context, workdir, runDir string, out *os.File, in *os.File)
 		if interactive {
 			clearScreen(out)
 		}
-		Render(out, snapshot, planPtr, toggles)
+		var rendered bytes.Buffer
+		Render(&rendered, snapshot, planPtr, toggles)
+		_, _ = out.WriteString(formatForTerminal(rendered.String(), terminalWidth(out)))
 
-		if snapshot.Status != "running" {
+		running := snapshot.Status == "running"
+		if !interactive && !running {
 			return nil
 		}
 
-		key, timedOut, err := waitForKey(ctx, keyCh, errCh, interactive)
+		key, timedOut, err := waitForKey(ctx, keyCh, errCh, interactive, running)
 		if err != nil {
 			return nil
 		}
@@ -83,6 +89,17 @@ func Run(ctx context.Context, workdir, runDir string, out *os.File, in *os.File)
 			toggles.ShowArtifacts = !toggles.ShowArtifacts
 		}
 	}
+}
+
+func terminalWidth(out *os.File) int {
+	if out == nil {
+		return 0
+	}
+	width, _, err := term.GetSize(int(out.Fd()))
+	if err != nil || width < 20 {
+		return 0
+	}
+	return width
 }
 
 func readPlan(runDir string) (tagteam.ExecutionPlan, bool) {
@@ -116,13 +133,24 @@ func readKeys(in *os.File, keyCh chan<- byte, errCh chan<- error) {
 // waitForKey waits up to one poll interval for a single keypress from the
 // shared reader channels. On a non-TTY stdin (CI, piped input) there is no
 // interactive key to read, so it just sleeps out the tick.
-func waitForKey(ctx context.Context, keyCh <-chan byte, errCh <-chan error, isTTY bool) (key byte, timedOut bool, err error) {
+func waitForKey(ctx context.Context, keyCh <-chan byte, errCh <-chan error, isTTY, poll bool) (key byte, timedOut bool, err error) {
 	if !isTTY {
 		select {
 		case <-ctx.Done():
 			return 0, false, ctx.Err()
 		case <-time.After(pollInterval):
 			return 0, true, nil
+		}
+	}
+
+	if !poll {
+		select {
+		case <-ctx.Done():
+			return 0, false, ctx.Err()
+		case readErr := <-errCh:
+			return 0, false, readErr
+		case k := <-keyCh:
+			return k, false, nil
 		}
 	}
 
@@ -136,4 +164,92 @@ func waitForKey(ctx context.Context, keyCh <-chan byte, errCh <-chan error, isTT
 	case <-time.After(pollInterval):
 		return 0, true, nil
 	}
+}
+
+func formatForTerminal(text string, width int) string {
+	if width <= 0 || text == "" {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	var out []string
+	for _, line := range lines {
+		out = append(out, wrapLine(line, width)...)
+	}
+	return strings.Join(out, "\n")
+}
+
+func wrapLine(line string, width int) []string {
+	if width <= 0 || utf8.RuneCountInString(line) <= width {
+		return []string{line}
+	}
+	indent := leadingWhitespace(line)
+	continuation := indent + "  "
+	words := strings.Fields(line)
+	if len(words) == 0 {
+		return []string{line}
+	}
+
+	var lines []string
+	current := indent
+	wordsOnLine := 0
+	for _, word := range words {
+		for len(word) > 0 {
+			candidate := word
+			if wordsOnLine > 0 {
+				candidate = current + " " + word
+			} else {
+				candidate = current + word
+			}
+			if utf8.RuneCountInString(candidate) <= width {
+				current = candidate
+				wordsOnLine++
+				break
+			}
+
+			if wordsOnLine > 0 {
+				lines = append(lines, current)
+				current = continuation
+				wordsOnLine = 0
+				continue
+			}
+
+			available := width - utf8.RuneCountInString(current)
+			if available <= 0 {
+				lines = append(lines, current)
+				current = continuation
+				continue
+			}
+			part, rest := splitRunes(word, available)
+			lines = append(lines, current+part)
+			current = continuation
+			word = rest
+		}
+	}
+	lines = append(lines, current)
+	return lines
+}
+
+func leadingWhitespace(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r != ' ' && r != '\t' {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func splitRunes(s string, limit int) (head, tail string) {
+	if limit <= 0 || s == "" {
+		return "", s
+	}
+	count := 0
+	for i := range s {
+		if count == limit {
+			return s[:i], s[i:]
+		}
+		count++
+	}
+	return s, ""
 }

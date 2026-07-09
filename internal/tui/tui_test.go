@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cephalopod-ai/tagteam/internal/tagteam"
 )
@@ -93,6 +94,62 @@ func TestRunMissingRunDirReturnsError(t *testing.T) {
 	err = Run(context.Background(), workdir, filepath.Join(workdir, ".tagteam", "runs", "does-not-exist"), devNull, inRead)
 	if err == nil {
 		t.Fatal("expected an error for a missing run directory")
+	}
+}
+
+func TestWaitForKeyCompletedInteractiveWaitsForExplicitQuit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	keyCh := make(chan byte, 1)
+	errCh := make(chan error, 1)
+	done := make(chan struct{})
+	var got byte
+	var timedOut bool
+	var err error
+	go func() {
+		got, timedOut, err = waitForKey(ctx, keyCh, errCh, true, false)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("waitForKey should block on completed interactive views until a key arrives")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	keyCh <- 'q'
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("waitForKey did not return after a keypress")
+	}
+	if err != nil {
+		t.Fatalf("waitForKey error = %v", err)
+	}
+	if timedOut {
+		t.Fatal("waitForKey unexpectedly timed out in completed interactive mode")
+	}
+	if got != 'q' {
+		t.Fatalf("waitForKey key = %q, want q", got)
+	}
+}
+
+func TestFormatForTerminalWrapsLongIndentedLines(t *testing.T) {
+	input := "  [R1-F1] needs_arbitration Rewrites the CLI help text and several flag descriptions.\n"
+	got := formatForTerminal(input, 40)
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped output to span multiple lines, got:\n%s", got)
+	}
+	for _, line := range lines {
+		if utf8.RuneCountInString(line) > 40 {
+			t.Fatalf("wrapped line exceeds width: %q", line)
+		}
+	}
+	if !strings.HasPrefix(lines[1], "    ") {
+		t.Fatalf("expected continuation indentation, got %q", lines[1])
 	}
 }
 

@@ -612,7 +612,7 @@ Diff artifacts are captured through a temporary Git index, not the real staging 
 tagteam tui [RUN_ID]
 ```
 
-`tagteam tui` is a read-only terminal view of a run: a header (run id, mode, status, phase, verdict, exit code), role statuses, the plan checklist (when `plan.json` exists), a findings count, changed files, and the latest diff/review/test artifact paths. It polls the run directory once a second while the run is `running`, and exits immediately once the run reaches a terminal state.
+`tagteam tui` is a read-only terminal view of a run: a header (run id, mode, status, phase, verdict, exit code), role statuses, the plan checklist (when `plan.json` exists), a findings count, changed files, and the latest diff/review/test artifact paths. It polls the run directory once a second while the run is `running`. In an interactive terminal it keeps the final view open until you quit; in non-interactive output it returns immediately once the run reaches a terminal state.
 
 With no `RUN_ID` it prefers the active run (`.tagteam/active.json`, if `status` is `running`) and otherwise falls back to the most recent completed run (`.tagteam/latest.json`), the same run `tagteam status` would show.
 
