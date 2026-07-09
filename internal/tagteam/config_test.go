@@ -21,7 +21,7 @@ func TestResolveOptions_ProfileAndFlags(t *testing.T) {
 	if opts.Coder.Adapter != "codex" {
 		t.Fatalf("coder adapter = %q", opts.Coder.Adapter)
 	}
-	if opts.Adversary.Model != "haiku" {
+	if opts.Adversary.Model != "claude-sonnet-5" {
 		t.Fatalf("adversary model = %q", opts.Adversary.Model)
 	}
 	if opts.Rounds != 3 {
@@ -34,11 +34,14 @@ func TestDefaultConfig_SupervisorDefaults(t *testing.T) {
 	if cfg.Defaults.Mode != "supervisor" {
 		t.Fatalf("mode = %q", cfg.Defaults.Mode)
 	}
-	if cfg.Defaults.Worker != "agy:Gemini 3.5 Flash (High)" {
+	if cfg.Defaults.Worker != defaultWorkerTarget {
 		t.Fatalf("worker = %q", cfg.Defaults.Worker)
 	}
-	if cfg.Defaults.Supervisor != "claude:opus" {
+	if cfg.Defaults.Supervisor != defaultSupervisorTarget {
 		t.Fatalf("supervisor = %q", cfg.Defaults.Supervisor)
+	}
+	if cfg.Defaults.RelayCoder != defaultRelayCoderTarget || cfg.Defaults.Scout != defaultRelayScoutTarget {
+		t.Fatalf("relay defaults = coder=%q scout=%q", cfg.Defaults.RelayCoder, cfg.Defaults.Scout)
 	}
 	if cfg.Defaults.Rounds != 2 {
 		t.Fatalf("rounds = %d", cfg.Defaults.Rounds)
@@ -53,8 +56,11 @@ func TestDefaultConfig_SupervisorDefaults(t *testing.T) {
 		t.Fatalf("max packages = %d", cfg.Defaults.MaxPackages)
 	}
 	// Legacy adversarial-mode defaults must still be present.
-	if cfg.Defaults.Coder != "codex" || cfg.Defaults.Adversary != "claude" {
+	if cfg.Defaults.Coder != defaultAdversarialCoderTarget || cfg.Defaults.Adversary != defaultAdversaryTarget {
 		t.Fatalf("legacy defaults = coder=%q adversary=%q", cfg.Defaults.Coder, cfg.Defaults.Adversary)
+	}
+	if cfg.Adapters.Codex.ReasoningEffort != "high" || cfg.Adapters.Claude.Effort != "high" {
+		t.Fatalf("effort defaults = codex=%q claude=%q", cfg.Adapters.Codex.ReasoningEffort, cfg.Adapters.Claude.Effort)
 	}
 	if cfg.Defaults.LossPolicy.Scout != LossPolicyDegrade || cfg.Defaults.LossPolicy.Supervisor != LossPolicyBlock {
 		t.Fatalf("loss policy = %#v", cfg.Defaults.LossPolicy)
@@ -94,8 +100,51 @@ func TestResolveOptions_HardeningConfigFields(t *testing.T) {
 	if got := strings.Join(opts.Fallbacks.Supervisor, ","); got != "claude:sonnet,codex:gpt-5.4" {
 		t.Fatalf("supervisor fallbacks = %q", got)
 	}
-	if got := strings.Join(opts.Fallbacks.Scout, ","); got != "openai-compatible:gpt-oss" {
+	if got := strings.Join(opts.Fallbacks.Scout, ","); got != "agy:gemini-3.5-flash-low,openai-compatible:gpt-oss" {
 		t.Fatalf("scout fallbacks = %q", got)
+	}
+}
+
+func TestResolveOptions_UsesDistinctRelayAndAdversarialCoders(t *testing.T) {
+	cfg := DefaultConfig()
+	relay, err := ResolveOptions(cfg, nil, FlagInputs{Mode: "relay", Timeout: 15 * time.Minute}, map[string]bool{"mode": true}, "ship it")
+	if err != nil {
+		t.Fatalf("resolve relay: %v", err)
+	}
+	adversarial, err := ResolveOptions(cfg, nil, FlagInputs{Mode: "adversarial", Timeout: 15 * time.Minute}, map[string]bool{"mode": true}, "ship it")
+	if err != nil {
+		t.Fatalf("resolve adversarial: %v", err)
+	}
+	if got := roleTargetString(relay.Coder); got != defaultRelayCoderTarget {
+		t.Fatalf("relay coder = %q", got)
+	}
+	if got := roleTargetString(adversarial.Coder); got != defaultAdversarialCoderTarget {
+		t.Fatalf("adversarial coder = %q", got)
+	}
+	if got := roleTargetString(adversarial.Adversary); got != defaultAdversaryTarget {
+		t.Fatalf("adversary = %q", got)
+	}
+}
+
+func TestResolveOptions_LegacyRelayConfigFallsBackToCoder(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Defaults.Mode = "relay"
+	cfg.Defaults.RelayCoder = ""
+	cfg.Defaults.Coder = "codex:legacy-relay-model"
+	opts, err := ResolveOptions(cfg, nil, FlagInputs{Timeout: 15 * time.Minute}, nil, "ship it")
+	if err != nil {
+		t.Fatalf("ResolveOptions() error = %v", err)
+	}
+	if got := roleTargetString(opts.Coder); got != "codex:legacy-relay-model" {
+		t.Fatalf("relay coder = %q", got)
+	}
+}
+
+func TestMergeConfig_LegacyRelayCoderOverridesBuiltInRelayCoder(t *testing.T) {
+	cfg := DefaultConfig()
+	mergeConfig(&cfg, Config{Defaults: DefaultsConfig{Mode: "relay", Coder: "codex:legacy-relay-model"}})
+	if cfg.Defaults.RelayCoder != "codex:legacy-relay-model" {
+		t.Fatalf("relay coder = %q", cfg.Defaults.RelayCoder)
 	}
 }
 
@@ -114,9 +163,9 @@ func TestResolveOptions_ClaudeFailoverProfile(t *testing.T) {
 		primary RoleTarget
 		want    string
 	}{
-		{RoleTarget{Adapter: "claude", Model: "opus-4.8"}, "codex:gpt-5.5"},
-		{RoleTarget{Adapter: "claude", Model: "sonnet-5"}, "codex:gpt-5.4"},
-		{RoleTarget{Adapter: "claude", Model: "haiku"}, "codex:gpt-5.4-mini"},
+		{RoleTarget{Adapter: "claude", Model: "opus-4.8"}, "codex:gpt-5.6-sol"},
+		{RoleTarget{Adapter: "claude", Model: "sonnet-5"}, "codex:gpt-5.6-terra"},
+		{RoleTarget{Adapter: "claude", Model: "haiku"}, "codex:gpt-5.6-terra"},
 	} {
 		got := fallbackTargetsForRole(opts, "supervisor", tc.primary)
 		if len(got) == 0 || got[0] != tc.want {
@@ -299,10 +348,10 @@ func TestResolveOptions_DefaultsToSupervisorMode(t *testing.T) {
 	if opts.Mode != ModeSupervisor {
 		t.Fatalf("mode = %q", opts.Mode)
 	}
-	if opts.Coder.Adapter != "agy" || opts.Coder.Model != "Gemini 3.5 Flash (High)" {
+	if opts.Coder.Adapter != "claude" || opts.Coder.Model != "claude-sonnet-5" {
 		t.Fatalf("worker target = %#v", opts.Coder)
 	}
-	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "opus" {
+	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-sol" {
 		t.Fatalf("supervisor target = %#v", opts.Adversary)
 	}
 	if opts.Rounds != 2 {
@@ -461,13 +510,13 @@ func TestResolveOptions_RelayFlagSelectsRelayDefaults(t *testing.T) {
 	if opts.Mode != ModeRelay || !opts.ModeExplicit {
 		t.Fatalf("mode = %q explicit=%t", opts.Mode, opts.ModeExplicit)
 	}
-	if opts.Scout.Adapter != "agy" || opts.Scout.Model != "gemini-3.5-flash-low" {
+	if opts.Scout.Adapter != "agy" || opts.Scout.Model != "Gemini 3.5 Flash (Medium)" {
 		t.Fatalf("scout = %#v", opts.Scout)
 	}
-	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "gpt-5.4-mini" {
+	if opts.Coder.Adapter != "claude" || opts.Coder.Model != "claude-sonnet-5" {
 		t.Fatalf("coder = %#v", opts.Coder)
 	}
-	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "sonnet" {
+	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-sol" {
 		t.Fatalf("supervisor = %#v", opts.Adversary)
 	}
 	if opts.ScoutMode != "recon" || opts.PostScoutMode != "polish" {
@@ -493,13 +542,13 @@ func TestResolveOptions_RelayProfileResolvesRoles(t *testing.T) {
 	if opts.Mode != ModeRelay {
 		t.Fatalf("mode = %q", opts.Mode)
 	}
-	if opts.Scout.Adapter != "agy" || opts.Scout.Model != "gemini-3.5-flash-low" {
+	if opts.Scout.Adapter != "agy" || opts.Scout.Model != "Gemini 3.5 Flash (Medium)" {
 		t.Fatalf("scout = %#v", opts.Scout)
 	}
-	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "gpt-5.4-mini" {
+	if opts.Coder.Adapter != "claude" || opts.Coder.Model != "claude-sonnet-5" {
 		t.Fatalf("coder = %#v", opts.Coder)
 	}
-	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "sonnet" {
+	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-sol" {
 		t.Fatalf("supervisor = %#v", opts.Adversary)
 	}
 	if opts.ScoutMode != "recon" || opts.PostScoutMode != "polish" {
@@ -939,6 +988,43 @@ func TestMergeEnvConfig_ModeWorkerSupervisor(t *testing.T) {
 	}
 	if cfg.Defaults.Supervisor != "claude:opus" {
 		t.Fatalf("supervisor = %q", cfg.Defaults.Supervisor)
+	}
+}
+
+func TestMergeEnvConfig_RelayCoderAndEffort(t *testing.T) {
+	t.Setenv("TAGTEAM_RELAY_CODER", "claude:custom-relay")
+	t.Setenv("TAGTEAM_CODEX_REASONING_EFFORT", "xhigh")
+	t.Setenv("TAGTEAM_CLAUDE_EFFORT", "medium")
+
+	cfg := DefaultConfig()
+	mergeEnvConfig(&cfg, nil)
+	if cfg.Defaults.RelayCoder != "claude:custom-relay" {
+		t.Fatalf("relay coder = %q", cfg.Defaults.RelayCoder)
+	}
+	if cfg.Adapters.Codex.ReasoningEffort != "xhigh" || cfg.Adapters.Claude.Effort != "medium" {
+		t.Fatalf("efforts = codex:%q claude:%q", cfg.Adapters.Codex.ReasoningEffort, cfg.Adapters.Claude.Effort)
+	}
+	if err := validateConfig(cfg); err != nil {
+		t.Fatalf("validateConfig() error = %v", err)
+	}
+}
+
+func TestMergeEnvConfig_LegacyRelayCoder(t *testing.T) {
+	t.Setenv("TAGTEAM_MODE", "relay")
+	t.Setenv("TAGTEAM_CODER", "codex:legacy-relay-model")
+
+	cfg := DefaultConfig()
+	mergeEnvConfig(&cfg, nil)
+	if cfg.Defaults.RelayCoder != "codex:legacy-relay-model" {
+		t.Fatalf("relay coder = %q", cfg.Defaults.RelayCoder)
+	}
+}
+
+func TestValidateConfig_RejectsInvalidEffort(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Adapters.Claude.Effort = "ultra"
+	if err := validateConfig(cfg); err == nil || !strings.Contains(err.Error(), "adapters.claude.effort") {
+		t.Fatalf("validateConfig() error = %v", err)
 	}
 }
 

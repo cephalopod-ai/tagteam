@@ -23,11 +23,12 @@ func DefaultConfig() Config {
 	return Config{
 		Defaults: DefaultsConfig{
 			Mode:                    "supervisor",
-			Coder:                   "codex",
-			Adversary:               "claude",
-			Worker:                  "agy:Gemini 3.5 Flash (High)",
-			Scout:                   "agy:gemini-3.5-flash-low",
-			Supervisor:              "claude:opus",
+			Coder:                   defaultAdversarialCoderTarget,
+			RelayCoder:              defaultRelayCoderTarget,
+			Adversary:               defaultAdversaryTarget,
+			Worker:                  defaultWorkerTarget,
+			Scout:                   defaultRelayScoutTarget,
+			Supervisor:              defaultSupervisorTarget,
 			ScoutMode:               "recon",
 			PostScoutMode:           "polish",
 			ScoutFailurePolicy:      "continue",
@@ -50,21 +51,21 @@ func DefaultConfig() Config {
 		Profiles: map[string]ProfileConfig{
 			"fast": {
 				Mode:      "adversarial",
-				Coder:     "codex:gpt-5-codex-mini",
-				Adversary: "claude:haiku",
+				Coder:     defaultAdversarialCoderTarget,
+				Adversary: defaultWorkerTarget,
 				Rounds:    1,
 			},
 			"paranoid": {
 				Mode:      "adversarial",
-				Adversary: "claude:opus",
+				Adversary: defaultAdversaryTarget,
 				Rounds:    4,
 				Test:      "make check",
 			},
 			"relay": {
 				Mode:               "relay",
-				Scout:              "agy:gemini-3.5-flash-low",
-				Coder:              "codex:gpt-5.4-mini",
-				Supervisor:         "claude:sonnet",
+				Scout:              defaultRelayScoutTarget,
+				Coder:              defaultRelayCoderTarget,
+				Supervisor:         defaultSupervisorTarget,
 				ScoutMode:          "recon",
 				PostScoutMode:      "polish",
 				ScoutFailurePolicy: "continue",
@@ -79,21 +80,27 @@ func DefaultConfig() Config {
 					Supervisor: LossPolicyReplaceThenBlock,
 				},
 				FallbacksByTarget: TargetFallbacks{
-					"claude:opus":       []string{"codex:gpt-5.5"},
-					"claude:opus-4.8":   []string{"codex:gpt-5.5"},
-					"claude:sonnet":     []string{"codex:gpt-5.4"},
-					"claude:sonnet-5":   []string{"codex:gpt-5.4"},
-					"claude:haiku":      []string{"codex:gpt-5.4-mini"},
-					"claude:haiku-5":    []string{"codex:gpt-5.4-mini"},
-					"claude:haiku-4.8":  []string{"codex:gpt-5.4-mini"},
-					"claude:sonnet-4.5": []string{"codex:gpt-5.4"},
+					"claude:claude-opus-4-8": []string{defaultSupervisorTarget},
+					"claude:claude-sonnet-5": []string{defaultAdversarialCoderTarget},
+					"claude:opus":            []string{defaultSupervisorTarget},
+					"claude:opus-4.8":        []string{defaultSupervisorTarget},
+					"claude:sonnet":          []string{defaultAdversarialCoderTarget},
+					"claude:sonnet-5":        []string{defaultAdversarialCoderTarget},
+					"claude:haiku":           []string{defaultAdversarialCoderTarget},
+					"claude:haiku-5":         []string{defaultAdversarialCoderTarget},
+					"claude:haiku-4.8":       []string{defaultAdversarialCoderTarget},
+					"claude:sonnet-4.5":      []string{defaultAdversarialCoderTarget},
 				},
 			},
 		},
 		Adapters: AdapterConfigSet{
-			Codex: CodexConfig{},
+			Codex: CodexConfig{
+				DefaultModel:    "gpt-5.6-sol",
+				ReasoningEffort: "high",
+			},
 			Claude: ClaudeConfig{
-				DefaultModel:      "sonnet",
+				DefaultModel:      "claude-sonnet-5",
+				Effort:            "high",
 				CoderAllowedTools: []string{"Edit", "Write", "Read", "Glob", "Grep", "Bash"},
 				ExtraArgs:         []string{},
 			},
@@ -101,7 +108,7 @@ func DefaultConfig() Config {
 				DefaultModel: "qwen3-coder",
 			},
 			Agy: AgyConfig{
-				DefaultModel: "gemini-3.5-flash",
+				DefaultModel: "Gemini 3.5 Flash (Medium)",
 				ExtraArgs:    []string{},
 			},
 			Gosling: GoslingConfig{
@@ -373,6 +380,13 @@ func mergeConfig(dst *Config, src Config) {
 	if src.Defaults.Coder != "" {
 		dst.Defaults.Coder = src.Defaults.Coder
 	}
+	if src.Defaults.RelayCoder != "" {
+		dst.Defaults.RelayCoder = src.Defaults.RelayCoder
+	} else if src.Defaults.Mode == string(ModeRelay) && src.Defaults.Coder != "" {
+		// Before relay_coder existed, relay configurations used coder for this
+		// slot. Preserve that meaning when loading an older config file.
+		dst.Defaults.RelayCoder = src.Defaults.Coder
+	}
 	if src.Defaults.Adversary != "" {
 		dst.Defaults.Adversary = src.Defaults.Adversary
 	}
@@ -532,12 +546,18 @@ func mergeConfig(dst *Config, src Config) {
 	if src.Adapters.Codex.DefaultModel != "" {
 		dst.Adapters.Codex.DefaultModel = src.Adapters.Codex.DefaultModel
 	}
+	if src.Adapters.Codex.ReasoningEffort != "" {
+		dst.Adapters.Codex.ReasoningEffort = src.Adapters.Codex.ReasoningEffort
+	}
 	if len(src.Adapters.Codex.ExtraArgs) > 0 {
 		dst.Adapters.Codex.ExtraArgs = append([]string{}, src.Adapters.Codex.ExtraArgs...)
 	}
 	mergeContextBudget(&dst.Adapters.Codex.MaxContextTokens, &dst.Adapters.Codex.ReservedOutputTokens, src.Adapters.Codex.MaxContextTokens, src.Adapters.Codex.ReservedOutputTokens)
 	if src.Adapters.Claude.DefaultModel != "" {
 		dst.Adapters.Claude.DefaultModel = src.Adapters.Claude.DefaultModel
+	}
+	if src.Adapters.Claude.Effort != "" {
+		dst.Adapters.Claude.Effort = src.Adapters.Claude.Effort
 	}
 	if len(src.Adapters.Claude.CoderAllowedTools) > 0 {
 		dst.Adapters.Claude.CoderAllowedTools = append([]string{}, src.Adapters.Claude.CoderAllowedTools...)
@@ -645,6 +665,7 @@ func hasTagteamEnv(overlay map[string]string) bool {
 	for _, key := range []string{
 		"TAGTEAM_MODE",
 		"TAGTEAM_CODER",
+		"TAGTEAM_RELAY_CODER",
 		"TAGTEAM_ADVERSARY",
 		"TAGTEAM_WORKER",
 		"TAGTEAM_SCOUT",
@@ -672,7 +693,9 @@ func hasTagteamEnv(overlay map[string]string) bool {
 		"TAGTEAM_TEST",
 		"TAGTEAM_GIT_SAFETY",
 		"TAGTEAM_CODEX_ARGS",
+		"TAGTEAM_CODEX_REASONING_EFFORT",
 		"TAGTEAM_CLAUDE_ARGS",
+		"TAGTEAM_CLAUDE_EFFORT",
 		"TAGTEAM_AGY_ARGS",
 		"TAGTEAM_GOSLING_ARGS",
 		"TAGTEAM_OPENAI_COMPATIBLE_BASE_URL",
@@ -698,9 +721,14 @@ func hasTagteamEnv(overlay map[string]string) bool {
 
 func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 	legacyRoleEnvSet := false
+	coderEnvSet := false
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CODER"); ok {
 		cfg.Defaults.Coder = value
 		legacyRoleEnvSet = true
+		coderEnvSet = true
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_RELAY_CODER"); ok {
+		cfg.Defaults.RelayCoder = value
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_ADVERSARY"); ok {
 		cfg.Defaults.Adversary = value
@@ -792,6 +820,11 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MODE"); ok {
 		cfg.Defaults.Mode = value
+		if value == string(ModeRelay) && coderEnvSet {
+			if _, relayCoderSet := envLookupNonEmpty(overlay, "TAGTEAM_RELAY_CODER"); !relayCoderSet {
+				cfg.Defaults.RelayCoder = cfg.Defaults.Coder
+			}
+		}
 	} else if legacyRoleEnvSet {
 		// TAGTEAM_CODER/TAGTEAM_ADVERSARY predate TAGTEAM_MODE and the
 		// supervisor default; keep them selecting adversarial mode instead
@@ -815,10 +848,16 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 			cfg.Adapters.Codex.ExtraArgs = parsed
 		}
 	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CODEX_REASONING_EFFORT"); ok {
+		cfg.Adapters.Codex.ReasoningEffort = value
+	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CLAUDE_ARGS"); ok {
 		if parsed, err := shlex.Split(value); err == nil {
 			cfg.Adapters.Claude.ExtraArgs = parsed
 		}
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CLAUDE_EFFORT"); ok {
+		cfg.Adapters.Claude.Effort = value
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_AGY_ARGS"); ok {
 		if parsed, err := shlex.Split(value); err == nil {
@@ -893,7 +932,25 @@ func validateConfig(cfg Config) error {
 			return err
 		}
 	}
+	if err := validateChoice("adapters.codex.reasoning_effort", cfg.Adapters.Codex.ReasoningEffort, "none", "minimal", "low", "medium", "high", "xhigh"); err != nil {
+		return err
+	}
+	if err := validateChoice("adapters.claude.effort", cfg.Adapters.Claude.Effort, "low", "medium", "high", "xhigh", "max"); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateChoice(name, value string, choices ...string) error {
+	if value == "" {
+		return nil
+	}
+	for _, choice := range choices {
+		if value == choice {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid %s %q (want %s)", name, value, strings.Join(choices, ", "))
 }
 
 func envLookup(overlay map[string]string, key string) (string, bool) {
@@ -1089,7 +1146,8 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		mode = ModeSolo
 	}
 
-	var editorRaw, reviewerRaw, scoutRaw string
+	targets := configuredTargetsForMode(cfg.Defaults, mode)
+	editorRaw, reviewerRaw, scoutRaw := targets.Editor, targets.Reviewer, targets.Scout
 	editorExplicit := false
 	reviewerExplicit := false
 	scoutExplicit := false
@@ -1097,15 +1155,12 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	reviewerExplicitMode := Mode("")
 	scoutExplicitMode := Mode("")
 	if mode == ModeSolo {
-		editorRaw = cfg.Defaults.Worker
 		if hasProfile && profile.Worker != "" {
 			editorRaw = profile.Worker
 			editorExplicit = true
 			editorExplicitMode = ModeSolo
 		}
 	} else if mode == ModeAdversarial {
-		editorRaw = cfg.Defaults.Coder
-		reviewerRaw = cfg.Defaults.Adversary
 		if hasProfile {
 			if profile.Coder != "" {
 				editorRaw = profile.Coder
@@ -1119,8 +1174,6 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 			}
 		}
 	} else if mode == ModeSupervisor {
-		editorRaw = cfg.Defaults.Worker
-		reviewerRaw = cfg.Defaults.Supervisor
 		if hasProfile {
 			if profile.Worker != "" {
 				editorRaw = profile.Worker
@@ -1134,18 +1187,6 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 			}
 		}
 	} else {
-		editorRaw = "codex:gpt-5.4-mini"
-		reviewerRaw = "claude:sonnet"
-		scoutRaw = "agy:gemini-3.5-flash-low"
-		if cfg.Defaults.Mode == string(ModeRelay) && cfg.Defaults.Coder != "" {
-			editorRaw = cfg.Defaults.Coder
-		}
-		if cfg.Defaults.Mode == string(ModeRelay) && cfg.Defaults.Supervisor != "" {
-			reviewerRaw = cfg.Defaults.Supervisor
-		}
-		if cfg.Defaults.Mode == string(ModeRelay) && cfg.Defaults.Scout != "" {
-			scoutRaw = cfg.Defaults.Scout
-		}
 		if hasProfile {
 			if profile.Coder != "" {
 				editorRaw = profile.Coder

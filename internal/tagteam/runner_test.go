@@ -2076,7 +2076,7 @@ func TestRunLoop_RelaySimplifiesToSupervisorBeforeScout(t *testing.T) {
 		Prompt:             "fix typo",
 		Workdir:            repo,
 		Mode:               ModeRelay,
-		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Scout:              RoleTarget{Adapter: "agy", Model: "Gemini 3.5 Flash (Medium)"},
 		Coder:              RoleTarget{Adapter: "claude"},
 		Adversary:          RoleTarget{Adapter: "claude"},
 		ScoutMode:          "recon",
@@ -2091,7 +2091,13 @@ func TestRunLoop_RelaySimplifiesToSupervisorBeforeScout(t *testing.T) {
 		t.Fatal("expected blocking review error from fake supervisor")
 	}
 	if final.Mode != ModeSupervisor {
-		t.Fatalf("mode = %q", final.Mode)
+		t.Fatalf("mode = %q error=%v", final.Mode, err)
+	}
+	if _, ok := final.RoleStatuses["coder"]; ok {
+		t.Fatalf("stale coder status after supervisor transition: %#v", final.RoleStatuses)
+	}
+	if _, ok := final.RoleStatuses["worker"]; !ok {
+		t.Fatalf("missing worker status after supervisor transition: %#v", final.RoleStatuses)
 	}
 	if fileExists(filepath.Join(final.RunDir, "scout-round-1.json")) {
 		t.Fatal("scout should be skipped after relay simplification")
@@ -2126,7 +2132,6 @@ func TestRunLoop_SupervisorEscalatesToRelayWhenBothAgentsAgree(t *testing.T) {
 		Prompt:             "map this unfamiliar repo and fix the bug",
 		Workdir:            repo,
 		Mode:               ModeSupervisor,
-		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
 		Coder:              RoleTarget{Adapter: "claude"},
 		Adversary:          RoleTarget{Adapter: "claude"},
 		ScoutMode:          "recon",
@@ -2142,6 +2147,15 @@ func TestRunLoop_SupervisorEscalatesToRelayWhenBothAgentsAgree(t *testing.T) {
 	}
 	if final.Mode != ModeRelay {
 		t.Fatalf("mode = %q", final.Mode)
+	}
+	if got := roleTargetString(final.Scout); got != defaultRelayScoutTarget {
+		t.Fatalf("escalated scout = %q", got)
+	}
+	if _, ok := final.RoleStatuses["worker"]; ok {
+		t.Fatalf("stale worker status after relay transition: %#v", final.RoleStatuses)
+	}
+	if _, ok := final.RoleStatuses["coder"]; !ok {
+		t.Fatalf("missing coder status after relay transition: %#v", final.RoleStatuses)
 	}
 	if !fileExists(filepath.Join(final.RunDir, "scout-round-1.json")) {
 		t.Fatal("expected scout to run after escalation")

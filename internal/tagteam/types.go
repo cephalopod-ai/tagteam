@@ -536,6 +536,7 @@ type Config struct {
 type DefaultsConfig struct {
 	Mode                    string           `toml:"mode"`
 	Coder                   string           `toml:"coder"`
+	RelayCoder              string           `toml:"relay_coder"`
 	Adversary               string           `toml:"adversary"`
 	Worker                  string           `toml:"worker"`
 	Scout                   string           `toml:"scout"`
@@ -605,6 +606,7 @@ type AdapterConfigSet struct {
 
 type CodexConfig struct {
 	DefaultModel         string   `toml:"default_model"`
+	ReasoningEffort      string   `toml:"reasoning_effort"`
 	MaxContextTokens     *int     `toml:"max_context_tokens"`
 	ReservedOutputTokens *int     `toml:"reserved_output_tokens"`
 	ExtraArgs            []string `toml:"extra_args"`
@@ -612,6 +614,7 @@ type CodexConfig struct {
 
 type ClaudeConfig struct {
 	DefaultModel         string   `toml:"default_model"`
+	Effort               string   `toml:"effort"`
 	MaxContextTokens     *int     `toml:"max_context_tokens"`
 	ReservedOutputTokens *int     `toml:"reserved_output_tokens"`
 	CoderAllowedTools    []string `toml:"coder_allowed_tools"`

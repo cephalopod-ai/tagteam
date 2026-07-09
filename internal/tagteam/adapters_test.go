@@ -36,7 +36,7 @@ func TestCodexBuildCmd(t *testing.T) {
 }
 
 func TestCodexBuildCmdSupervisor(t *testing.T) {
-	adapter := &CodexAdapter{IDValue: "codex", DefaultModel: "gpt-5-codex"}
+	adapter := &CodexAdapter{IDValue: "codex", DefaultModel: "gpt-5.6-sol", ReasoningEffort: "high"}
 	spec, err := adapter.BuildCmd(RoleSupervisor, Request{
 		Prompt:  "write a brief",
 		Workdir: "/repo",
@@ -44,7 +44,7 @@ func TestCodexBuildCmdSupervisor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildCmd() error = %v", err)
 	}
-	want := []string{"codex", "exec", "-C", "/repo", "-s", "read-only", "-m", "gpt-5-codex", "-"}
+	want := []string{"codex", "exec", "-C", "/repo", "-s", "read-only", "-m", "gpt-5.6-sol", "-c", `model_reasoning_effort="high"`, "-"}
 	if !reflect.DeepEqual(spec.Argv, want) {
 		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
 	}
@@ -119,7 +119,7 @@ func TestClaudeBuildCmdAdversary(t *testing.T) {
 }
 
 func TestClaudeBuildCmdSupervisor(t *testing.T) {
-	adapter := &ClaudeAdapter{DefaultModel: "opus"}
+	adapter := &ClaudeAdapter{DefaultModel: "claude-sonnet-5", Effort: "high"}
 	spec, err := adapter.BuildCmd(RoleSupervisor, Request{
 		Prompt:  "write a brief",
 		Workdir: "/repo",
@@ -131,6 +131,9 @@ func TestClaudeBuildCmdSupervisor(t *testing.T) {
 		t.Fatalf("binary = %q", spec.Argv[0])
 	}
 	argv := strings.Join(spec.Argv, " ")
+	if !strings.Contains(argv, "--model claude-sonnet-5 --effort high") {
+		t.Fatalf("expected model and effort, got argv = %v", spec.Argv)
+	}
 	if !strings.Contains(argv, "--permission-mode dontAsk") {
 		t.Fatalf("expected read-only permission mode, got argv = %v", spec.Argv)
 	}
@@ -223,6 +226,30 @@ func TestClaudeParseResultFallsBackToResultJSON(t *testing.T) {
 	}
 	if result.Review == nil || result.Review.Verdict != "pass" {
 		t.Fatalf("review = %#v", result.Review)
+	}
+}
+
+func TestClaudeParseResultAcceptsStringifiedStructuredOutput(t *testing.T) {
+	adapter := &ClaudeAdapter{}
+	raw := []byte(`{"result":"","structured_output":"{\"verdict\":\"pass\",\"summary\":\"looks good\",\"findings\":[],\"test_suggestions\":[]}"}`)
+	result, err := adapter.ParseResult(RoleAdversary, raw)
+	if err != nil {
+		t.Fatalf("ParseResult() error = %v", err)
+	}
+	if result.Review == nil || result.Review.Verdict != "pass" || result.Text != "looks good" {
+		t.Fatalf("review = %#v text=%q", result.Review, result.Text)
+	}
+}
+
+func TestClaudeParseResultSupervisorAcceptsStringifiedStructuredOutput(t *testing.T) {
+	adapter := &ClaudeAdapter{}
+	raw := []byte(`{"result":"","structured_output":"{\"schema_version\":1,\"summary\":\"split\",\"packages\":[]}"}`)
+	result, err := adapter.ParseResult(RoleSupervisor, raw)
+	if err != nil {
+		t.Fatalf("ParseResult() error = %v", err)
+	}
+	if !strings.Contains(result.Text, `"summary":"split"`) {
+		t.Fatalf("text = %q", result.Text)
 	}
 }
 

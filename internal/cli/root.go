@@ -63,10 +63,10 @@ Operational behavior
   Claude supervisors have a known JSON-output rough edge. tagteam does not silently repair that output; use --repair-json-with-worker to explicitly allow the selected worker to act as a read-only parser for invalid JSON contract artifacts.
 `,
 		Example: `tagteam "add OAuth login"
-tagteam --worker codex:gpt-5-codex --supervisor claude:opus "refactor billing flow"
-tagteam --solo codex:gpt-5.5 "rename UserSvc to UserService"
-tagteam --relay --no-scout-retrieval --scout agy:gemini-3.5-flash-low --worker codex:gpt-5.4-mini --supervisor claude:sonnet "add OAuth login"
-tagteam --mode adversarial -mc codex:gpt-5-codex -ma claude:opus "refactor billing flow"`,
+tagteam --worker claude:claude-sonnet-5 --supervisor codex:gpt-5.6-sol "refactor billing flow"
+tagteam --solo codex:gpt-5.6-terra "rename UserSvc to UserService"
+tagteam --relay --no-scout-retrieval --scout 'agy:Gemini 3.5 Flash (Medium)' --worker claude:claude-sonnet-5 --supervisor codex:gpt-5.6-sol "add OAuth login"
+tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma claude:claude-opus-4-8 "refactor billing flow"`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args: func(cmd *cobra.Command, args []string) error {

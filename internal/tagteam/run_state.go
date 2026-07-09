@@ -98,6 +98,20 @@ func setRoleStatus(final *FinalRun, role string, target RoleTarget, status strin
 	final.RoleStatuses[role] = current
 }
 
+func renameRoleStatus(final *FinalRun, from, to string) {
+	if from == to || final.RoleStatuses == nil {
+		return
+	}
+	status, ok := final.RoleStatuses[from]
+	if !ok {
+		return
+	}
+	delete(final.RoleStatuses, from)
+	status.Role = to
+	status.LastUpdatedAt = time.Now().UTC()
+	final.RoleStatuses[to] = status
+}
+
 func appendRoleLoss(final *FinalRun, role string, policy LossPolicy, action, outcome string, reason ReasonCode, message string) {
 	final.RoleLosses = append(final.RoleLosses, RoleLossRecord{
 		Role:            role,

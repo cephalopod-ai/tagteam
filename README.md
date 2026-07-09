@@ -213,7 +213,7 @@ go run . "add OAuth login"
 
 ## Quick start
 
-Default run (supervisor mode, built-in worker `agy:Gemini 3.5 Flash (High)` and supervisor `claude:opus`):
+Default run (supervisor mode, Claude Sonnet 5 worker at high effort and GPT-5.6 Sol supervisor at high reasoning effort):
 
 ```bash
 tagteam "add OAuth login"
@@ -226,7 +226,7 @@ cd my-project
 tagteam "add a --json flag to the export command and cover it with a test"
 ```
 
-With no other options, `tagteam` uses the default supervisor mode: the `claude:opus` supervisor writes a brief and reviews, the `agy` worker implements, and findings loop back until the change passes review, tests fail, or the round limit is hit. Every brief, diff, review, and test run is written under `.tagteam/runs/<run-id>/`, and the final verdict prints to the terminal. Run `tagteam status` afterward to see the latest run, or `tagteam doctor` first if you're not sure your agent CLIs are set up.
+With no other options, `tagteam` uses the default supervisor mode: `codex:gpt-5.6-sol` writes a brief and reviews, `claude:claude-sonnet-5` implements, and findings loop back until the change passes review, tests fail, or the round limit is hit. Every brief, diff, review, and test run is written under `.tagteam/runs/<run-id>/`, and the final verdict prints to the terminal. Run `tagteam status` afterward to see the latest run, or `tagteam doctor` first if you're not sure your agent CLIs are set up.
 
 Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
 
@@ -238,8 +238,8 @@ Choose explicit worker/supervisor adapters, rounds, and a test command:
 
 ```bash
 tagteam \
-  --worker codex:gpt-5-codex \
-  --supervisor claude:opus \
+  --worker claude:claude-sonnet-5 \
+  --supervisor codex:gpt-5.6-sol \
   -r 3 \
   -t "go test ./..." \
   "refactor billing flow"
@@ -257,8 +257,8 @@ Supervisor and relay runs may perform one bounded orchestration adjustment befor
 Solo mode runs exactly one implementation agent and no reviewer. It is useful as a quick baseline for comparing cost, speed, and quality against supervisor, relay, or adversarial runs.
 
 ```bash
-tagteam --solo codex:gpt-5.5 "rename UserSvc to UserService"
-tagteam --mode solo --worker claude:sonnet -t "go test ./..." "make a small README edit"
+tagteam --solo codex:gpt-5.6-terra "rename UserSvc to UserService"
+tagteam --mode solo --worker claude:claude-sonnet-5 -t "go test ./..." "make a small README edit"
 ```
 
 > [!IMPORTANT]
@@ -281,9 +281,9 @@ The built-in relay profile uses:
 ```toml
 [profiles.relay]
 mode = "relay"
-scout = "agy:gemini-3.5-flash-low"
-coder = "codex:gpt-5.4-mini"
-supervisor = "claude:sonnet"
+scout = "agy:Gemini 3.5 Flash (Medium)"
+coder = "claude:claude-sonnet-5"
+supervisor = "codex:gpt-5.6-sol"
 scout_mode = "recon"
 scout_retrieval = true
 scout_failure_policy = "continue"
@@ -296,11 +296,11 @@ Override relay roles explicitly:
 ```bash
 tagteam \
   --mode relay \
-  --scout agy:gemini-3.5-flash-low \
+  --scout 'agy:Gemini 3.5 Flash (Medium)' \
   --scout-mode recon \
   --post-scout-mode polish \
-  --coder codex:gpt-5.4-mini \
-  --supervisor claude:sonnet \
+  --coder claude:claude-sonnet-5 \
+  --supervisor codex:gpt-5.6-sol \
   "refactor billing flow"
 ```
 
@@ -329,10 +329,10 @@ For finer control, `loss_policy` can be configured per non-primary role: `block`
 The built-in `claude-failover` profile enables a small Claude-to-Codex fallback ladder for review/supervision failures:
 
 ```bash
-tagteam -P claude-failover --supervisor claude:opus-4.8 "fix the bug"
+tagteam -P claude-failover --mode adversarial --reviewer claude:claude-opus-4-8 "fix the bug"
 ```
 
-It maps `claude:opus` / `claude:opus-4.8` to `codex:gpt-5.5`, `claude:sonnet` / `claude:sonnet-5` to `codex:gpt-5.4`, and `claude:haiku` to `codex:gpt-5.4-mini`. Target-specific fallbacks run before role-level fallback lists.
+It maps the current Opus target to `codex:gpt-5.6-sol` and the current Sonnet target to `codex:gpt-5.6-terra`; compatibility aliases for older Claude CLI model names remain available. Target-specific fallbacks run before role-level fallback lists.
 
 </details>
 
@@ -342,8 +342,8 @@ The original coder/adversary loop is still available via `--mode adversarial`. T
 
 ```bash
 tagteam --mode adversarial \
-  -mc codex:gpt-5-codex \
-  -ma claude:opus \
+  -mc codex:gpt-5.6-terra \
+  -ma claude:claude-opus-4-8 \
   -r 3 \
   -t "go test ./..." \
   "refactor billing flow"
@@ -352,16 +352,16 @@ tagteam --mode adversarial \
 `--reviewer` is an adversarial-mode-flavored alias for `-ma`/`--supervisor`:
 
 ```bash
-tagteam --mode adversarial -mc agy --reviewer claude:sonnet "clean up the CLI help"
+tagteam --mode adversarial -mc agy --reviewer claude:claude-sonnet-5 "clean up the CLI help"
 ```
 
 Use Agy with its configured default Gemini model:
 
 ```bash
-tagteam --worker agy --supervisor claude:sonnet "clean up the CLI help"
+tagteam --worker agy --supervisor codex:gpt-5.6-sol "clean up the CLI help"
 ```
 
-The built-in `agy` default model is `gemini-3.5-flash`; override it with `agy:<model>`.
+The built-in `agy` default model is `Gemini 3.5 Flash (Medium)`; override it with `agy:<model>`.
 
 ### OpenAI-compatible reviewers
 
@@ -394,7 +394,7 @@ FEATHERLESS_API_KEY=your-key-here
 ```bash
 tagteam \
   --mode adversarial \
-  -mc claude:sonnet \
+  -mc claude:claude-sonnet-5 \
   -ma openai-compatible:openai/gpt-oss-120b \
   --show-review \
   "make a tiny README wording cleanup"
@@ -454,6 +454,7 @@ tagteam init
 | `worker` | `adapter[:model]` target used in solo mode, and in supervisor mode alongside `supervisor` |
 | `supervisor` | `adapter[:model]` target used in supervisor mode, and in relay mode alongside `scout`/`coder` |
 | `coder` / `adversary` | `adapter[:model]` targets used in adversarial mode |
+| `relay_coder` | relay-specific implementation target; falls back to `coder` for older configurations |
 | `scout` | `adapter[:model]` target used in relay mode |
 | `scout_mode` / `post_scout_mode` | relay scout task modes: `recon`, `lint`, `polish`, `tests`, or `risk` |
 | `scout_retrieval` | enable bounded local retrieval for relay pre-scout `recon` (default `true`; disable with `--no-scout-retrieval` or `TAGTEAM_SCOUT_RETRIEVAL=false`). Relay scouts work best with `256k+` context and ideally at least as much context as the relay coder/supervisor |
@@ -476,8 +477,12 @@ Profiles may override `mode`, `scout`, `scout_mode`, `scout_retrieval`, `scout_f
 ```toml
 [defaults]
 mode = "supervisor"
-worker = "agy:Gemini 3.5 Flash (High)"
-supervisor = "claude:opus"
+worker = "claude:claude-sonnet-5"
+supervisor = "codex:gpt-5.6-sol"
+coder = "codex:gpt-5.6-terra"
+relay_coder = "claude:claude-sonnet-5"
+adversary = "claude:claude-opus-4-8"
+scout = "agy:Gemini 3.5 Flash (Medium)"
 supervisor_slicing = true
 max_packages = 5
 rounds = 2
@@ -489,20 +494,20 @@ supervisor = "block"
 
 [profiles.relay.fallbacks]
 scout = ["openai-compatible:gpt-oss-120b"]
-supervisor = ["claude:sonnet", "codex:gpt-5.4"]
+supervisor = ["claude:claude-opus-4-8"]
 
 [profiles.claude-failover.loss_policy]
 reviewer = "replace_then_block"
 supervisor = "replace_then_block"
 
 [profiles.claude-failover.fallbacks_by_target]
-"claude:opus-4.8" = ["codex:gpt-5.5"]
-"claude:sonnet-5" = ["codex:gpt-5.4"]
-"claude:haiku" = ["codex:gpt-5.4-mini"]
+"claude:claude-opus-4-8" = ["codex:gpt-5.6-sol"]
+"claude:claude-sonnet-5" = ["codex:gpt-5.6-terra"]
+"claude:haiku" = ["codex:gpt-5.6-terra"]
 
 [profiles.fast]
-coder = "codex:gpt-5-codex-mini"
-adversary = "claude:haiku"
+coder = "codex:gpt-5.6-terra"
+adversary = "claude:claude-sonnet-5"
 rounds = 1
 ```
 
@@ -515,6 +520,18 @@ api_key_env = "EXAMPLE_API_KEY"
 max_context_tokens = 32768
 reserved_output_tokens = 2048
 ```
+
+Codex and Claude inference effort is configured separately from model identity, following the same provider/model/settings separation used by mature agent CLIs:
+
+```toml
+[adapters.codex]
+reasoning_effort = "high"
+
+[adapters.claude]
+effort = "high"
+```
+
+The equivalent environment variables are `TAGTEAM_CODEX_REASONING_EFFORT` and `TAGTEAM_CLAUDE_EFFORT`.
 
 For `openai-compatible`, environment overrides are `TAGTEAM_OPENAI_COMPATIBLE_MAX_CONTEXT_TOKENS` and `TAGTEAM_OPENAI_COMPATIBLE_RESERVED_OUTPUT_TOKENS`. Omitted limits mean `unknown` and preserve existing relay behavior.
 
@@ -631,7 +648,7 @@ Core keyboard affordances:
 
 - `j` / `k` or arrows move selection and scroll
 - `g` launches the composed run
-- `/` opens slash commands such as `/run`, `/profile relay`, `/mode relay`, `/model codex:gpt-5.5`, `/supervisor claude:opus`, `/watch latest`, `/scout-retrieval off`
+- `/` opens slash commands such as `/run`, `/profile relay`, `/mode relay`, `/model claude:claude-sonnet-5`, `/supervisor codex:gpt-5.6-sol`, `/watch latest`, `/scout-retrieval off`
 - `s` opens settings
 - `u` opens recent runs
 - `r` refreshes

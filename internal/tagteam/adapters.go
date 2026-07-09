@@ -23,9 +23,10 @@ func Registry(cfg Config, opts RunOptions) map[string]Adapter {
 	}
 	return map[string]Adapter{
 		"codex": &CodexAdapter{
-			IDValue:      "codex",
-			DefaultModel: cfg.Adapters.Codex.DefaultModel,
-			ExtraArgs:    opts.CodexArgs,
+			IDValue:         "codex",
+			DefaultModel:    cfg.Adapters.Codex.DefaultModel,
+			ReasoningEffort: cfg.Adapters.Codex.ReasoningEffort,
+			ExtraArgs:       opts.CodexArgs,
 		},
 		"codex-oss": &CodexAdapter{
 			IDValue:      "codex-oss",
@@ -35,6 +36,7 @@ func Registry(cfg Config, opts RunOptions) map[string]Adapter {
 		},
 		"claude": &ClaudeAdapter{
 			DefaultModel:      cfg.Adapters.Claude.DefaultModel,
+			Effort:            cfg.Adapters.Claude.Effort,
 			CoderAllowedTools: cfg.Adapters.Claude.CoderAllowedTools,
 			Bare:              cfg.Adapters.Claude.Bare,
 			ExtraArgs:         opts.ClaudeArgs,
@@ -53,10 +55,11 @@ func Registry(cfg Config, opts RunOptions) map[string]Adapter {
 }
 
 type CodexAdapter struct {
-	IDValue      string
-	DefaultModel string
-	ExtraArgs    []string
-	OSS          bool
+	IDValue         string
+	DefaultModel    string
+	ReasoningEffort string
+	ExtraArgs       []string
+	OSS             bool
 }
 
 func (a *CodexAdapter) ID() string {
@@ -90,6 +93,9 @@ func (a *CodexAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	}
 	if model != "" {
 		argv = append(argv, "-m", model)
+	}
+	if a.ReasoningEffort != "" {
+		argv = append(argv, "-c", fmt.Sprintf("model_reasoning_effort=%q", a.ReasoningEffort))
 	}
 	if (role == RoleAdversary || role == RoleSupervisor) && req.SchemaPath != "" {
 		argv = append(argv, "--output-schema", req.SchemaPath)
@@ -127,6 +133,7 @@ func (a *CodexAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 
 type ClaudeAdapter struct {
 	DefaultModel      string
+	Effort            string
 	CoderAllowedTools []string
 	Bare              bool
 	ExtraArgs         []string
@@ -156,6 +163,9 @@ func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	argv := []string{"claude", "-p"}
 	if model != "" {
 		argv = append(argv, "--model", model)
+	}
+	if a.Effort != "" {
+		argv = append(argv, "--effort", a.Effort)
 	}
 	if a.Bare {
 		argv = append(argv, "--bare")
@@ -232,7 +242,7 @@ func (a *ClaudeAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 		CostUSD:   envelope.TotalCostUSD,
 	}
 	if role == RoleAdversary {
-		reviewRaw := envelope.StructuredOutput
+		reviewRaw := normalizeClaudeStructuredOutput(envelope.StructuredOutput)
 		if len(reviewRaw) == 0 || string(reviewRaw) == "null" {
 			reviewRaw = []byte(envelope.Result)
 		}
@@ -243,8 +253,11 @@ func (a *ClaudeAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 		result.Review = review
 		result.Text = review.Summary
 	}
-	if role == RoleSupervisor && len(envelope.StructuredOutput) > 0 && string(envelope.StructuredOutput) != "null" {
-		result.Text = strings.TrimSpace(string(envelope.StructuredOutput))
+	if role == RoleSupervisor {
+		structured := normalizeClaudeStructuredOutput(envelope.StructuredOutput)
+		if len(structured) > 0 && string(structured) != "null" {
+			result.Text = strings.TrimSpace(string(structured))
+		}
 	}
 	if role == RoleScout {
 		scoutRaw := []byte(envelope.Result)
@@ -255,6 +268,21 @@ func (a *ClaudeAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 		result.Scout = scout
 	}
 	return result, nil
+}
+
+func normalizeClaudeStructuredOutput(raw json.RawMessage) []byte {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	if trimmed[0] != '"' {
+		return trimmed
+	}
+	var encoded string
+	if err := json.Unmarshal(trimmed, &encoded); err != nil {
+		return trimmed
+	}
+	return []byte(encoded)
 }
 
 func parseReviewPayload(raw []byte) (*Review, error) {

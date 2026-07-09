@@ -1281,7 +1281,7 @@ func (m *model) detailLines() []string {
 			"",
 			"Useful commands:",
 			"  /profile relay",
-			"  /model codex:gpt-5.5",
+			"  /model claude:claude-sonnet-5",
 			"  /mode relay",
 			"  /runs",
 			"  /watch latest",
@@ -1608,6 +1608,7 @@ func collectTargetChoices(cfg tagteam.Config) []string {
 	add(cfg.Defaults.Worker)
 	add(cfg.Defaults.Supervisor)
 	add(cfg.Defaults.Coder)
+	add(cfg.Defaults.RelayCoder)
 	add(cfg.Defaults.Adversary)
 	add(cfg.Defaults.Scout)
 	for _, profile := range cfg.Profiles {

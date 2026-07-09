@@ -1387,8 +1387,18 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		}
 		if effectiveMode != opts.Mode {
 			logProgress(opts, "orchestration transition applied %s -> %s reason=%q", opts.Mode, effectiveMode, decision.HostReason)
+			previousEditorLabel := editorLabel
 			opts.Mode = effectiveMode
 			editorLabel, reviewerLabel = roleLabels(opts.Mode)
+			if opts.Mode == ModeRelay && opts.Scout.Adapter == "" {
+				relayTargets := configuredTargetsForMode(a.Config.Defaults, ModeRelay)
+				opts.Scout, err = ParseRoleTarget(relayTargets.Scout)
+				if err != nil {
+					return final, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("resolve escalated relay scout target: %w", err)}
+				}
+				opts.Fallbacks.Scout = normalizeFallbackTargets(opts.Fallbacks.Scout, opts.Scout)
+			}
+			renameRoleStatus(&final, previousEditorLabel, editorLabel)
 			meta.Adapters = map[string]string{editorLabel: opts.Coder.Adapter, reviewerLabel: opts.Adversary.Adapter}
 			meta.Models = map[string]string{editorLabel: opts.Coder.Model, reviewerLabel: opts.Adversary.Model}
 			if opts.Mode == ModeRelay {

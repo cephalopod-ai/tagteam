@@ -113,6 +113,18 @@ func TestSetModeRelaySuppliesMissingScoutTarget(t *testing.T) {
 	}
 }
 
+func TestTargetChoicesIncludeRelaySpecificCoder(t *testing.T) {
+	cfg := tagteam.DefaultConfig()
+	cfg.Defaults.RelayCoder = "claude:relay-only-model"
+	want := cfg.Defaults.RelayCoder
+	for _, target := range collectTargetChoices(cfg) {
+		if target == want {
+			return
+		}
+	}
+	t.Fatalf("target choices do not include relay coder %q", want)
+}
+
 func TestSettingsModeCycleSuppliesMissingScoutTarget(t *testing.T) {
 	m, err := newModel(RunOptions{Workdir: t.TempDir()})
 	if err != nil {
