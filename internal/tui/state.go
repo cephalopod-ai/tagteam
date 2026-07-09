@@ -1759,7 +1759,7 @@ func (m *model) buildRunOptions() (tagteam.RunOptions, tagteam.Config, error) {
 
 func clearTUIControlledFlags(changed map[string]bool) {
 	for _, name := range []string{
-		"allow-dirty", "coder", "mc", "mode", "no-scout-retrieval", "no-slice",
+		"allow-dirty", "coder", "mc", "mode", "model", "no-scout-retrieval", "no-slice",
 		"no-test", "post-scout-mode", "profile", "relay", "repair-json-with-worker",
 		"reviewer", "scout", "scout-context-policy", "scout-mode", "slice", "solo",
 		"strict-scout", "supervisor", "test", "worker",

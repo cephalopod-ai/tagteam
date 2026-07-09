@@ -104,7 +104,7 @@ Recent additions in this repo:
 - adversarial coder/adversary mode remains available for backward compatibility
 - saved run artifacts include briefs, diffs, reviews, tests, and final summaries
 - active runs publish `.tagteam/active.json` so live views can discover in-flight work
-- command surface now includes `review`, `fix`, `status`, `plan`, `transcript`, `tui`, `doctor`, and `init`
+- command surface now includes `run`, `review`, `fix`, `status`, `plan`, `transcript`, `tui`, `doctor`, and `init`
 - config layering supports repo config, user config, env overrides, flags, and named profiles
 - explicit JSON repair is available through `--repair-json-with-worker` / `json_repair = "worker"`
 - explicit repo instruction files are loaded by default and appended to role prompts
@@ -114,6 +114,7 @@ Current commands:
 
 ```
 tagteam "<prompt>"
+tagteam run "<prompt>"
 tagteam review
 tagteam fix
 tagteam status
@@ -123,6 +124,12 @@ tagteam tui [RUN_ID]
 tagteam doctor
 tagteam init
 ```
+
+`tagteam run` is an explicit alias for the default positional run path. Like
+other agent CLIs, Tagteam also accepts `-m` / `--model`; because Tagteam is
+multi-agent, that flag selects only the active implementation role (worker,
+coder, or solo model). Use `--supervisor`, `--reviewer`, or `--scout` for the
+other roles.
 
 ## Requirements
 
@@ -217,6 +224,8 @@ Default run (supervisor mode, Claude Sonnet 5 worker at high effort and GPT-5.6 
 
 ```bash
 tagteam "add OAuth login"
+# Equivalent explicit one-shot spelling:
+tagteam run -m claude:claude-sonnet-5 "add OAuth login"
 ```
 
 That's the whole thing — no flags, no config. From your repo root you just describe the change:

@@ -1221,6 +1221,13 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		editorExplicit = true
 		editorExplicitMode = ""
 	}
+	// --model is the conventional, mode-neutral spelling for the same
+	// implementation slot. Keep reviewer and scout selection role-specific.
+	if changed["model"] {
+		editorRaw = flags.Model
+		editorExplicit = true
+		editorExplicitMode = mode
+	}
 	if changed["solo"] {
 		editorRaw = flags.Solo
 		editorExplicit = true

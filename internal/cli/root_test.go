@@ -26,6 +26,7 @@ func TestNewRootCommandHelpIncludesModeModelAndFlags(t *testing.T) {
 		"adversarial",
 		"Role flags by mode",
 		"--mode",
+		"--model",
 		"--worker",
 		"--supervisor",
 		"--mc",
@@ -34,6 +35,7 @@ func TestNewRootCommandHelpIncludesModeModelAndFlags(t *testing.T) {
 		"--scout",
 		"--no-scout-retrieval",
 		"tagteam --solo codex:gpt-5.6-terra",
+		"tagteam run -m claude:claude-sonnet-5",
 		"tagteam --relay --no-scout-retrieval",
 		"tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma claude:claude-opus-4-8",
 	}
@@ -41,6 +43,21 @@ func TestNewRootCommandHelpIncludesModeModelAndFlags(t *testing.T) {
 		if !strings.Contains(help, want) {
 			t.Fatalf("help output missing %q\nfull output:\n%s", want, help)
 		}
+	}
+}
+
+func TestRunCommandAndModelFlagUseExistingRunSurface(t *testing.T) {
+	cmd := NewRootCommand()
+	run, _, err := cmd.Find([]string{"run"})
+	if err != nil {
+		t.Fatalf("find run command: %v", err)
+	}
+	if run == nil || run.Use != "run <prompt>" {
+		t.Fatalf("run command = %#v", run)
+	}
+	model := cmd.PersistentFlags().Lookup("model")
+	if model == nil || model.Shorthand != "m" {
+		t.Fatalf("model flag = %#v", model)
 	}
 }
 

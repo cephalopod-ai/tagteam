@@ -652,6 +652,7 @@ type FlagInputs struct {
 	Relay                   bool
 	Coder                   string
 	CoderRole               string
+	Model                   string
 	Adversary               string
 	Worker                  string
 	Scout                   string
@@ -717,7 +718,7 @@ type RunOptions struct {
 	Scout     RoleTarget
 	// CoderExplicit and AdversaryExplicit mirror ModeExplicit for the
 	// implementation/review targets: true when the caller passed
-	// --solo/-mc/--worker or -ma/--supervisor/--reviewer for this invocation.
+	// --model/--solo/-mc/--worker or -ma/--supervisor/--reviewer for this invocation.
 	CoderExplicit             bool
 	AdversaryExplicit         bool
 	ScoutExplicit             bool

@@ -43,6 +43,8 @@ Modes
 
 Role flags by mode
 
+  -m / --model
+    Conventional implementation-slot name. Selects the worker, coder, or solo model for the active mode.
   -mc / --mc
     Implementation slot. Worker in supervisor and solo modes; coder in relay and adversarial modes.
   -ma / --ma
@@ -63,6 +65,7 @@ Operational behavior
   Claude supervisors have a known JSON-output rough edge. tagteam does not silently repair that output; use --repair-json-with-worker to explicitly allow the selected worker to act as a read-only parser for invalid JSON contract artifacts.
 `,
 		Example: `tagteam "add OAuth login"
+tagteam run -m claude:claude-sonnet-5 "add OAuth login"
 tagteam --worker claude:claude-sonnet-5 --supervisor codex:gpt-5.6-sol "refactor billing flow"
 tagteam --solo codex:gpt-5.6-terra "rename UserSvc to UserService"
 tagteam --relay --no-scout-retrieval --scout 'agy:Gemini 3.5 Flash (Medium)' --worker claude:claude-sonnet-5 --supervisor codex:gpt-5.6-sol "add OAuth login"
@@ -82,6 +85,7 @@ tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma claude:claude-opus-4-8 "r
 	}
 
 	bindSharedFlags(root, flags)
+	root.AddCommand(newRunCommand(flags))
 	root.AddCommand(newReviewCommand(flags))
 	root.AddCommand(newFixCommand(flags))
 	root.AddCommand(newStatusCommand(flags))
@@ -111,6 +115,7 @@ func bindSharedFlags(cmd *cobra.Command, flags *flagState) {
 	flagSet.BoolVar(&flags.Relay, "relay", false, "Shortcut for relay mode (scout, coder, supervisor)")
 	flagSet.StringVar(&flags.Coder, "mc", "", "Legacy implementation slot: worker in supervisor/solo, coder in relay/adversarial")
 	flagSet.StringVar(&flags.CoderRole, "coder", "", "Coder adapter[:model] (adversarial or relay mode)")
+	flagSet.StringVarP(&flags.Model, "model", "m", "", "Primary implementation role adapter[:model] (worker, coder, or solo model for the selected mode)")
 	flagSet.StringVar(&flags.Adversary, "ma", "", "Legacy review slot: supervisor in supervisor/relay, adversary in adversarial")
 	flagSet.StringVar(&flags.Worker, "worker", "", "Preferred implementation slot in supervisor/relay/solo; alias for --mc")
 	flagSet.StringVar(&flags.Scout, "scout", "", "Relay-mode scout adapter[:model] for pre-scout recon")
@@ -155,6 +160,24 @@ func bindSharedFlags(cmd *cobra.Command, flags *flagState) {
 	flagSet.StringVar(&flags.AgyArgsRaw, "agy-args", "", "Raw args appended to agy invocations")
 	flagSet.StringVar(&flags.GoslingArgsRaw, "gosling-args", "", "Raw args appended to gosling invocations")
 	flagSet.StringVar(&flags.OpenAICompatibleArgsRaw, "openai-compatible-args", "", "Reserved passthrough args for openai-compatible invocations")
+}
+
+func newRunCommand(shared *flagState) *cobra.Command {
+	return &cobra.Command{
+		Use:          "run <prompt>",
+		Short:        "Run a prompt non-interactively through the selected Tagteam mode",
+		SilenceUsage: true,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				_ = cmd.Help()
+				return &tagteam.ExitError{Code: tagteam.ExitInvalidArguments}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDefault(cmd, shared, strings.Join(args, " "))
+		},
+	}
 }
 
 func runDefault(cmd *cobra.Command, flags *flagState, prompt string) error {

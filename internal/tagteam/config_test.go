@@ -437,19 +437,39 @@ func TestResolveOptions_NewRoleFlagsOverrideLegacy(t *testing.T) {
 	cfg := DefaultConfig()
 	opts, err := ResolveOptions(cfg, nil, FlagInputs{
 		Coder:      "codex",
+		Model:      "agy:generic",
 		Worker:     "gosling:flash",
 		Adversary:  "claude:haiku",
 		Supervisor: "claude:opus",
 		Timeout:    15 * time.Minute,
-	}, map[string]bool{"mc": true, "worker": true, "ma": true, "supervisor": true}, "ship it")
+	}, map[string]bool{"mc": true, "model": true, "worker": true, "ma": true, "supervisor": true}, "ship it")
 	if err != nil {
 		t.Fatalf("ResolveOptions() error = %v", err)
 	}
 	if opts.Coder.Adapter != "gosling" || opts.Coder.Model != "flash" {
-		t.Fatalf("--worker should win over --mc: %#v", opts.Coder)
+		t.Fatalf("--worker should win over generic/legacy implementation flags: %#v", opts.Coder)
 	}
 	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "opus" {
 		t.Fatalf("--supervisor should win over --ma: %#v", opts.Adversary)
+	}
+}
+
+func TestResolveOptions_ModelFlagSelectsImplementationRoleByMode(t *testing.T) {
+	for _, mode := range []Mode{ModeSolo, ModeSupervisor, ModeRelay, ModeAdversarial} {
+		opts, err := ResolveOptions(DefaultConfig(), nil, FlagInputs{
+			Mode:    string(mode),
+			Model:   "codex:implementation-model",
+			Timeout: 15 * time.Minute,
+		}, map[string]bool{"mode": true, "model": true}, "ship it")
+		if err != nil {
+			t.Fatalf("ResolveOptions(%s) error = %v", mode, err)
+		}
+		if opts.Coder.Adapter != "codex" || opts.Coder.Model != "implementation-model" {
+			t.Fatalf("ResolveOptions(%s) implementation target = %#v", mode, opts.Coder)
+		}
+		if !opts.CoderExplicit || opts.CoderExplicitMode != mode {
+			t.Fatalf("ResolveOptions(%s) explicit metadata = explicit:%t mode:%q", mode, opts.CoderExplicit, opts.CoderExplicitMode)
+		}
 	}
 }
 
