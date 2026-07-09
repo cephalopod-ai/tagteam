@@ -7,10 +7,10 @@ where a detail is intended-but-partial it is marked.
 
 `tagteam` is a single-binary Go CLI that orchestrates one or more headless
 coding-agent CLIs (adapters) through a run loop, captures deterministic Git
-diffs and review artifacts, writes machine-readable run state, and exposes a
-read-only live TUI over that persisted state. The command surface lives in
-`internal/cli`; orchestration logic lives in `internal/tagteam`; the TUI lives
-in `internal/tui`.
+diffs and review artifacts, writes machine-readable run state, and exposes an
+interactive live TUI that can both inspect persisted state and launch new runs
+through the same runner/config path. The command surface lives in `internal/cli`;
+orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`.
 
 ## Component map
 
@@ -35,7 +35,7 @@ in `internal/tui`.
 | Bounded writer | `internal/tagteam/bounded_writer.go` | Capped output capture. |
 | Process control | `internal/tagteam/process_{unix,windows}.go` | Platform process-group handling. |
 | CLI exports | `internal/tagteam/cli_exports.go` | Symbols surfaced to the `internal/cli` layer. |
-| Read-only TUI | `internal/tui/render.go`, `internal/tui/tui.go` | Polling terminal view over `RunSnapshot` + `plan.json`; no agent control or run-directory writes. |
+| Interactive TUI | `internal/tui/render.go`, `internal/tui/state.go`, `internal/tui/tui.go` | Dashboard with recent runs, compose/settings, slash commands, and a scrollable detail pane. Reads `RunSnapshot`/`plan.json` for inspection and invokes `App.Run` for TUI-launched runs. |
 
 ## Run modes
 
@@ -82,8 +82,8 @@ as the TUI. See the README
 4. `BuildRunSnapshot` merges `active.json`, `state.json`, `final.json`, and
    `plan.json` into one read-only `RunSnapshot`.
 5. `tagteam tui` polls that snapshot once a second while the run is active and
-   renders a plain-text view with optional panels for plan, findings, and
-   artifacts.
+   renders it in a scrollable detail pane alongside recent runs and a compose
+   pane.
 
 ## Dependency boundaries
 

@@ -1,7 +1,7 @@
 # Test Ledger
 
 Derived from the current test files and a local validation run on 2026-07-09.
-232 test functions across 13 files.
+250 test functions across 14 files.
 
 | Test Area | Command / Evidence | Last Known Result | Source | Coverage Meaning | Gaps |
 |---|---|---|---|---|---|
@@ -11,7 +11,7 @@ Derived from the current test files and a local validation run on 2026-07-09.
 | Run state / reasons | `go test ./internal/tagteam/` (`run_state_test.go`, 5 tests) | pass | `run_state_test.go` | Failure classification, exit→reason, budget wiring, overlay redaction | — |
 | Active run lifecycle | `go test ./internal/tagteam/` (`active_run_test.go`, 8 tests) | pass | `active_run_test.go` | `.tagteam/active.json` creation, cleanup, stale-pointer safety, post-failure inspection | — |
 | Snapshot / live status | `go test ./internal/tagteam/` (`snapshot_test.go`, 9 tests) | pass | `snapshot_test.go` | `RunSnapshot` assembly from `active.json`, `state.json`, `final.json`, `plan.json`; compatibility regressions | — |
-| TUI | `go test ./internal/tui/` (`render_test.go`, 4 tests; `tui_test.go`, 2 tests) | pass | `internal/tui/*_test.go` | Stable rendering, panel toggles, non-interactive behavior, missing-run handling | No interactive keypath/viewport tests yet |
+| TUI | `go test ./internal/tui/` (`render_test.go`, 9 tests; `state_test.go`, 10 tests; `tui_test.go`, 5 tests) | pass | `internal/tui/*_test.go` | Compose/config resolution, profiles, mode defaults, bounded overlays, detail scrolling, command completion, split terminal input, non-interactive behavior, and missing-run handling | Automated coverage does not execute a full vendor-backed launch in a real terminal |
 | CLI | `go test ./internal/cli/` (`root_test.go`, 1 test; `tui_test.go`, 6 tests) | pass | `internal/cli/*_test.go` | Command wiring, TUI run resolution, completed-run command behavior | General CLI layer coverage remains thinner than runner coverage |
 | Redaction | `go test ./internal/tagteam/` (`redact_test.go`, 6 tests) | pass | `redact_test.go` | Overlay-aware secret scrubbing | — |
 | Scout context budget | `go test ./internal/tagteam/` (`context_budget_test.go`, 4 tests) | pass | `context_budget_test.go` | Deterministic estimate + policy | — |
@@ -23,9 +23,9 @@ Derived from the current test files and a local validation run on 2026-07-09.
 
 ## Known gaps
 
-- The current suite passes, but interactive TUI behavior is only covered for
-  non-TTY/headless execution. There is no automated coverage yet for live
-  keypress handling in a real terminal.
+- The TUI suite covers the key decoder and state transitions, and this repair
+  campaign included a manual TTY smoke check. There is still no automated
+  full-screen terminal integration harness.
 - CLI integration coverage is still lighter than orchestration coverage; most
   behavioral confidence lives in `internal/tagteam`.
 - The test suite uses fake adapters and local fixtures. It validates host

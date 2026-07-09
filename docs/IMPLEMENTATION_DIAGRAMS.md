@@ -8,7 +8,7 @@ evidence note listing the source files the diagram was derived from.
 ```mermaid
 flowchart TD
     main["main.go"] --> cli["internal/cli (commands, flags)"]
-    cli --> tui["internal/tui (read-only terminal view)"]
+    cli --> tui["internal/tui (interactive terminal dashboard)"]
     cli --> app["internal/tagteam App (runner.go)"]
     app --> config["config.go (layered resolution)"]
     app --> adapters["adapters.go (codex/claude/agy/gosling/openai)"]

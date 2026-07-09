@@ -1,123 +1,425 @@
-// Package tui implements the read-only "tagteam tui" terminal view: it polls
-// the on-disk run artifacts (via tagteam.BuildRunSnapshot and the plan
-// reader) and renders them. It never invokes an adapter or writes to a run
-// directory.
 package tui
 
 import (
 	"fmt"
-	"io"
-	"sort"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/cephalopod-ai/tagteam/internal/tagteam"
 )
 
-// Toggles tracks which optional panels are currently shown.
-type Toggles struct {
-	ShowPlan      bool
-	ShowFindings  bool
-	ShowArtifacts bool
+type slashCommand struct {
+	Name        string
+	Description string
 }
 
-// DefaultToggles returns the MVP's initial panel visibility: everything on.
-func DefaultToggles() Toggles {
-	return Toggles{ShowPlan: true, ShowFindings: true, ShowArtifacts: true}
+func renderDashboard(model *model) string {
+	topLines := renderTopCard(model)
+	composerLines := renderComposerSection(model)
+	overlayBudget := maxInt(0, model.height-len(topLines)-len(composerLines)-1-3)
+	overlayLines := renderOverlayLines(model, overlayBudget)
+	mainHeight := maxInt(0, model.height-len(topLines)-len(overlayLines)-len(composerLines)-1)
+
+	mainLines := renderMainLines(model)
+	scroll := model.scroll
+	if model.currentSnapshot == nil {
+		scroll = 0
+	}
+	lines := make([]string, 0, model.height)
+	lines = append(lines, topLines...)
+	lines = append(lines, viewport(mainLines, scroll, mainHeight)...)
+	lines = append(lines, overlayLines...)
+	lines = append(lines, composerLines...)
+	lines = append(lines, renderStatus(model))
+	for index, line := range lines {
+		lines[index] = padOrTrim(line, model.width)
+	}
+	if model.height > 0 && len(lines) > model.height {
+		lines = lines[:model.height]
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
-// Render writes a stable, plain-text view of snapshot (and plan, if given) to
-// w. It performs no I/O of its own and reads no wall-clock time, so the same
-// inputs always produce the same output.
-func Render(w io.Writer, snapshot tagteam.RunSnapshot, plan *tagteam.ExecutionPlan, toggles Toggles) {
-	fmt.Fprintf(w, "tagteam tui  run=%s mode=%s status=%s phase=%s verdict=%s exit=%d\n",
-		snapshot.RunID, snapshot.Mode, orDash(snapshot.Status), orDash(snapshot.Phase), orDash(snapshot.Verdict), snapshot.ExitCode)
-	if snapshot.Degraded {
-		fmt.Fprintf(w, "degraded=true reason=%s\n", snapshot.DegradedReason)
+func renderTopCard(model *model) []string {
+	dir := filepath.Base(model.workdir)
+	versionLine := fmt.Sprintf("> tagteam  %s", dir)
+	modeLine := fmt.Sprintf("mode %s", model.compose.Mode)
+	targetLine := fmt.Sprintf("model %s", dashIfEmpty(model.primaryTarget()))
+	if model.compose.Mode != tagteam.ModeSolo {
+		targetLine += " | review " + dashIfEmpty(model.compose.ReviewerTarget)
 	}
-	if snapshot.BlockingReason != "" {
-		fmt.Fprintf(w, "blocking_reason=%s\n", snapshot.BlockingReason)
+	pathLine := shortenPath(model.workdir, model.width)
+	lines := []string{
+		versionLine,
+		modeLine,
+		targetLine,
+		pathLine,
 	}
-	fmt.Fprintf(w, "round=%d rounds=%d/%d updated=%s\n",
-		snapshot.CurrentRound, snapshot.RoundsCompleted, snapshot.RoundsRequested, formatTime(snapshot.UpdatedAt))
-	fmt.Fprintln(w, strings.Repeat("-", 60))
-
-	renderRoleStatuses(w, snapshot.RoleStatuses)
-
-	if toggles.ShowPlan {
-		renderPlan(w, plan)
+	if model.currentSnapshot != nil {
+		lines = append(lines, fmt.Sprintf("watching %s [%s]", shortRunLabel(model.currentSnapshot.RunID), statusBadge(model.currentSnapshot.Status)))
+	} else if len(model.runs) > 0 {
+		lines = append(lines, fmt.Sprintf("latest %s [%s] | press u for recent runs", shortRunLabel(model.runs[0].RunID), statusBadge(model.runs[0].Status)))
 	}
-	if toggles.ShowFindings {
-		renderFindings(w, snapshot)
-	}
-	if toggles.ShowArtifacts {
-		renderArtifacts(w, snapshot)
-	}
-
-	fmt.Fprintln(w, strings.Repeat("-", 60))
-	fmt.Fprintln(w, "[q] quit  [r] refresh  [p] plan  [f] findings  [d] files/artifacts")
+	lines = append(lines, "")
+	return lines
 }
 
-func renderRoleStatuses(w io.Writer, roles map[string]tagteam.RoleStatus) {
-	fmt.Fprintln(w, "Roles:")
-	if len(roles) == 0 {
-		fmt.Fprintln(w, "  (none reported yet)")
-		return
+func renderMainLines(model *model) []string {
+	if model.currentSnapshot == nil {
+		return renderEmptySessionLines(model)
 	}
-	names := make([]string, 0, len(roles))
-	for name := range roles {
-		names = append(names, name)
+	return model.detailLines()
+}
+
+func renderEmptySessionLines(model *model) []string {
+	lines := []string{
+		"",
+		"",
+		"Ready for a new task.",
+		"",
+		"Type in the composer below to start a run.",
+		"",
+		"/ for commands",
+		"s for settings",
+		"u for recent runs",
 	}
-	sort.Strings(names)
-	for _, name := range names {
-		role := roles[name]
-		line := fmt.Sprintf("  %-12s status=%-10s adapter=%s", name, orDash(role.Status), orDash(role.Adapter))
-		if role.Model != "" {
-			line += " model=" + role.Model
+	if len(model.runs) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Latest saved run: %s  %s  %s", shortRunLabel(model.runs[0].RunID), shortMode(string(model.runs[0].Mode)), statusBadge(model.runs[0].Status)))
+	}
+	return lines
+}
+
+func renderStatus(model *model) string {
+	status := strings.TrimSpace(model.statusMessage)
+	if status == "" {
+		status = "? for shortcuts"
+	}
+	return padOrTrim(status, model.width)
+}
+
+func renderOverlayLines(model *model, maxHeight int) []string {
+	if maxHeight < 5 {
+		return nil
+	}
+	width := minInt(maxInt(8, model.width-4), 88)
+	contentHeight := maxInt(1, maxHeight-4)
+	switch {
+	case model.commandMode:
+		content := renderSlashCommandLines(model, contentHeight)
+		lines := []string{""}
+		lines = append(lines, box("Commands", width, len(content)+2, content)...)
+		lines = append(lines, "")
+		return lines
+	case model.settingsOpen:
+		settings := model.settingsLines()
+		selectedLine := model.selectedField + 1
+		if len(model.profileChoices) > 0 {
+			selectedLine++
 		}
-		if role.Message != "" {
-			line += " message=" + role.Message
+		content := viewport(settings, viewportStart(len(settings), selectedLine, contentHeight), contentHeight)
+		lines := []string{""}
+		lines = append(lines, box("Settings", minInt(width, 96), len(content)+2, content)...)
+		lines = append(lines, "")
+		return lines
+	case model.runsOpen:
+		runs := renderRunPickerLines(model)
+		content := viewport(runs, viewportStart(len(runs), model.selectedRun, contentHeight), contentHeight)
+		lines := []string{""}
+		lines = append(lines, box("Runs", minInt(width, 72), len(content)+2, content)...)
+		lines = append(lines, "")
+		return lines
+	default:
+		return nil
+	}
+}
+
+func renderComposerSection(model *model) []string {
+	lines := viewport(model.composerLines(model.width), 0, composerPaneHeight(model.height)-1)
+	out := []string{strings.Repeat("─", model.width)}
+	for _, line := range lines {
+		out = append(out, padOrTrim(line, model.width))
+	}
+	return out
+}
+
+func renderSlashCommandLines(model *model, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	matches := model.matchingSlashCommands()
+	selection := model.commandSelection
+	if selection < 0 || selection >= len(matches) {
+		selection = 0
+	}
+	lines := []string{"/" + model.commandBuffer}
+	listHeight := maxInt(1, height-2)
+	start := viewportStart(len(matches), selection, listHeight)
+	for index, command := range matches[start:minInt(len(matches), start+listHeight)] {
+		prefix := "  "
+		if start+index == selection {
+			prefix = "> "
 		}
-		fmt.Fprintln(w, line)
+		lines = append(lines, prefix+padOrTrim(command.Name, 18)+" "+command.Description)
+	}
+	if len(matches) == 0 {
+		lines = append(lines, "  no matching commands")
+	}
+	lines = append(lines, "↑/↓ select  tab complete  enter submit  esc cancel")
+	return viewport(lines, 0, height)
+}
+
+func slashCommands() []slashCommand {
+	return []slashCommand{
+		{Name: "/run", Description: "Launch the current draft"},
+		{Name: "/refresh", Description: "Reload runs and snapshots from disk"},
+		{Name: "/runs", Description: "Browse recent runs"},
+		{Name: "/watch latest", Description: "Open the latest saved run"},
+		{Name: "/watch active", Description: "Open the active run"},
+		{Name: "/watch <run-id>", Description: "Open a specific saved run"},
+		{Name: "/settings", Description: "Open the settings panel"},
+		{Name: "/profiles", Description: "List available named profiles"},
+		{Name: "/profile <name>", Description: "Apply a named profile or /profile off"},
+		{Name: "/mode <mode>", Description: "Switch between supervisor, relay, solo, adversarial"},
+		{Name: "/model <target>", Description: "Set the primary editor/worker target"},
+		{Name: "/worker <target>", Description: "Set the worker target for solo/supervisor/relay"},
+		{Name: "/coder <target>", Description: "Set the coder target for relay/adversarial"},
+		{Name: "/supervisor <target>", Description: "Set the supervisor target"},
+		{Name: "/reviewer <target>", Description: "Set the adversarial reviewer target"},
+		{Name: "/scout <target>", Description: "Set the relay scout target"},
+		{Name: "/scout-mode <mode>", Description: "Set relay pre-scout mode: recon/lint/polish/tests/risk"},
+		{Name: "/post-scout-mode <mode>", Description: "Set relay post-scout mode"},
+		{Name: "/strict-scout on|off", Description: "Fail relay when scout execution fails"},
+		{Name: "/scout-retrieval on|off", Description: "Enable or disable relay recon retrieval"},
+		{Name: "/scout-context-policy <policy>", Description: "Set relay scout context policy: warn/skip/block"},
+		{Name: "/rounds <n>", Description: "Set the run round limit"},
+		{Name: "/test <cmd>", Description: "Set the test command"},
+		{Name: "/no-test on|off", Description: "Enable or disable tests"},
+		{Name: "/slice on|off", Description: "Enable or disable supervisor slicing"},
+		{Name: "/allow-dirty on|off", Description: "Allow launching with a dirty worktree"},
+		{Name: "/repair-json on|off", Description: "Enable worker JSON repair fallback"},
+		{Name: "/prompt <text>", Description: "Set the draft prompt directly"},
+		{Name: "/toggle plan", Description: "Show or hide plan details"},
+		{Name: "/toggle findings", Description: "Show or hide findings"},
+		{Name: "/toggle artifacts", Description: "Show or hide artifacts"},
+		{Name: "/toggle test", Description: "Show or hide test output"},
 	}
 }
 
-func renderPlan(w io.Writer, plan *tagteam.ExecutionPlan) {
-	if plan == nil {
-		return
+func renderRunPickerLines(model *model) []string {
+	if len(model.runs) == 0 {
+		return []string{"No saved runs."}
 	}
-	fmt.Fprintf(w, "Plan (run=%s status=%s items=%d):\n", plan.RunID, plan.Status, len(plan.Items))
-	for _, item := range plan.Items {
-		fmt.Fprintf(w, "  [%s] %-17s %s\n", item.ID, item.Status, item.Title)
+	lines := make([]string, 0, len(model.runs))
+	for index, run := range model.runs {
+		prefix := "  "
+		if index == model.selectedRun {
+			prefix = "> "
+		}
+		lines = append(lines, fmt.Sprintf("%s%-4s %-3s %s", prefix, statusBadge(run.Status), shortMode(string(run.Mode)), shortRunLabel(run.RunID)))
+	}
+	return lines
+}
+
+func sectionPane(title string, width, height int, content []string) []string {
+	if width < 8 {
+		width = 8
+	}
+	if height < 2 {
+		height = 2
+	}
+	lines := make([]string, 0, height)
+	lines = append(lines, padOrTrim(title+" "+strings.Repeat("─", maxInt(0, width-len([]rune(title))-1)), width))
+	for i := 0; i < height-1; i++ {
+		text := ""
+		if i < len(content) {
+			text = content[i]
+		}
+		lines = append(lines, padOrTrim(text, width))
+	}
+	return lines
+}
+
+func box(title string, width, height int, content []string) []string {
+	if width < 8 {
+		width = 8
+	}
+	if height < 3 {
+		height = 3
+	}
+	lines := make([]string, 0, height)
+	top := "+" + padOrTrim(" "+title+" ", width-2, '-') + "+"
+	lines = append(lines, top)
+	for i := 0; i < height-2; i++ {
+		text := ""
+		if i < len(content) {
+			text = content[i]
+		}
+		lines = append(lines, "|"+padOrTrim(text, width-2)+"|")
+	}
+	lines = append(lines, "+"+strings.Repeat("-", width-2)+"+")
+	return lines
+}
+
+func overlayBox(base []string, overlay []string, x, y int) []string {
+	out := append([]string(nil), base...)
+	for row := 0; row < len(overlay); row++ {
+		targetRow := y + row
+		if targetRow < 0 || targetRow >= len(out) {
+			continue
+		}
+		line := []rune(padOrTrim(out[targetRow], maxInt(len([]rune(out[targetRow])), x+len([]rune(overlay[row])))))
+		patch := []rune(overlay[row])
+		for col := 0; col < len(patch) && x+col < len(line); col++ {
+			line[x+col] = patch[col]
+		}
+		out[targetRow] = string(line)
+	}
+	return out
+}
+
+func viewport(lines []string, scroll, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > len(lines) {
+		scroll = len(lines)
+	}
+	end := scroll + height
+	if end > len(lines) {
+		end = len(lines)
+	}
+	window := append([]string(nil), lines[scroll:end]...)
+	for len(window) < height {
+		window = append(window, "")
+	}
+	return window
+}
+
+func viewportStart(total, selected, height int) int {
+	if total <= height || height <= 0 {
+		return 0
+	}
+	if selected < 0 {
+		selected = 0
+	}
+	if selected >= total {
+		selected = total - 1
+	}
+	start := selected - height/2
+	if start < 0 {
+		return 0
+	}
+	if maxStart := total - height; start > maxStart {
+		return maxStart
+	}
+	return start
+}
+
+func padOrTrim(s string, width int, fill ...rune) string {
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) > width {
+		if width <= 1 {
+			return string(runes[:width])
+		}
+		return string(runes[:width-1]) + ">"
+	}
+	pad := ' '
+	if len(fill) > 0 {
+		pad = fill[0]
+	}
+	return s + strings.Repeat(string(pad), width-len(runes))
+}
+
+func composerPaneHeight(totalHeight int) int {
+	height := 5
+	if totalHeight < 24 {
+		height = 4
+	}
+	return height
+}
+
+func shortRunLabel(runID string) string {
+	if ts, err := parseRunTime(runID); err == nil {
+		return ts.Format("Jan02 15:04")
+	}
+	if len(runID) > 16 {
+		return runID[len(runID)-16:]
+	}
+	return runID
+}
+
+func parseRunTime(runID string) (time.Time, error) {
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02T150405.000000000Z07:00",
+		"2006-01-02T150405.000000000Z",
+	} {
+		if ts, err := time.Parse(layout, runID); err == nil {
+			return ts, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unrecognized run id time")
+}
+
+func statusBadge(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running":
+		return "run"
+	case "passed", "finished":
+		return "ok"
+	case "degraded":
+		return "warn"
+	case "blocked":
+		return "hold"
+	case "failed", "error":
+		return "fail"
+	default:
+		return "idle"
 	}
 }
 
-func renderFindings(w io.Writer, snapshot tagteam.RunSnapshot) {
-	fmt.Fprintf(w, "Findings: %d\n", snapshot.FindingsCount)
-}
-
-func renderArtifacts(w io.Writer, snapshot tagteam.RunSnapshot) {
-	fmt.Fprintf(w, "Changed files (%d):\n", len(snapshot.ChangedFiles))
-	for _, file := range snapshot.ChangedFiles {
-		fmt.Fprintf(w, "  %s\n", file)
-	}
-	fmt.Fprintln(w, "Artifacts:")
-	fmt.Fprintf(w, "  diff:   %s\n", orDash(snapshot.LatestDiffPath))
-	fmt.Fprintf(w, "  review: %s\n", orDash(snapshot.LatestReviewPath))
-	fmt.Fprintf(w, "  test:   %s\n", orDash(snapshot.LatestTestPath))
-	fmt.Fprintf(w, "  run_dir: %s\n", snapshot.RunDir)
-}
-
-func orDash(s string) string {
-	if s == "" {
+func shortMode(mode string) string {
+	switch mode {
+	case "supervisor":
+		return "sup"
+	case "adversarial":
+		return "adv"
+	case "relay":
+		return "rly"
+	case "solo":
+		return "sol"
+	default:
 		return "-"
 	}
-	return s
 }
 
-func formatTime(t time.Time) string {
-	if t.IsZero() {
-		return "-"
+func minInt(a, b int) int {
+	if a < b {
+		return a
 	}
-	return t.Format(time.RFC3339)
+	return b
+}
+
+func shortenPath(path string, width int) string {
+	if width <= 0 {
+		return path
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(path, home) {
+		path = "~" + strings.TrimPrefix(path, home)
+	}
+	maxWidth := maxInt(24, width-2)
+	runes := []rune(path)
+	if len(runes) <= maxWidth {
+		return path
+	}
+	return "..." + string(runes[len(runes)-maxWidth+3:])
 }

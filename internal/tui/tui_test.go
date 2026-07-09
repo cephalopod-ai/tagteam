@@ -9,15 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/cephalopod-ai/tagteam/internal/tagteam"
 )
 
-// TestRunNonTTYCompletedRunRendersOnceAndReturns exercises Run() against a
-// completed (non-running) fixture run using a non-TTY stdin (an os.Pipe read
-// end, never a real terminal in CI). Run() must render once and return
-// immediately without entering the interactive polling loop -- proof the
-// package builds and behaves in a headless/CI environment.
 func TestRunNonTTYCompletedRunRendersOnceAndReturns(t *testing.T) {
 	workdir := t.TempDir()
 	runDir := filepath.Join(workdir, ".tagteam", "runs", "run-1")
@@ -55,7 +48,7 @@ func TestRunNonTTYCompletedRunRendersOnceAndReturns(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(context.Background(), workdir, runDir, outWrite, inRead)
+		done <- Run(context.Background(), RunOptions{Workdir: workdir, InitialRunDir: runDir, InspectOnStart: true}, outWrite, inRead)
 	}()
 
 	select {
@@ -74,6 +67,35 @@ func TestRunNonTTYCompletedRunRendersOnceAndReturns(t *testing.T) {
 	if strings.Contains(string(rendered), "\x1b[H\x1b[2J") {
 		t.Fatalf("expected non-interactive output to omit clear-screen escape codes, got:\n%s", string(rendered))
 	}
+	if !strings.Contains(string(rendered), "Run: run-1") {
+		t.Fatalf("expected rendered dashboard to include run details, got:\n%s", string(rendered))
+	}
+}
+
+func TestRunNonTTYNoRunsRendersComposeAndReturns(t *testing.T) {
+	workdir := t.TempDir()
+	outRead, outWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer outRead.Close()
+	inRead, inWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inWrite.Close()
+
+	if err := Run(context.Background(), RunOptions{Workdir: workdir}, outWrite, inRead); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	outWrite.Close()
+	rendered, err := io.ReadAll(outRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rendered), "Ready for a new task.") {
+		t.Fatalf("expected empty-state render, got:\n%s", string(rendered))
+	}
 }
 
 func TestRunMissingRunDirReturnsError(t *testing.T) {
@@ -90,63 +112,38 @@ func TestRunMissingRunDirReturnsError(t *testing.T) {
 	}
 	defer devNull.Close()
 
-	err = Run(context.Background(), workdir, filepath.Join(workdir, ".tagteam", "runs", "does-not-exist"), devNull, inRead)
+	err = Run(context.Background(), RunOptions{
+		Workdir:       workdir,
+		InitialRunDir: filepath.Join(workdir, ".tagteam", "runs", "does-not-exist"),
+	}, devNull, inRead)
 	if err == nil {
 		t.Fatal("expected an error for a missing run directory")
-	}
-}
-
-func TestWaitForKeyCompletedInteractiveWaitsForExplicitQuit(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	keyCh := make(chan byte, 1)
-	errCh := make(chan error, 1)
-	done := make(chan struct{})
-	var got byte
-	var timedOut bool
-	var err error
-	go func() {
-		got, timedOut, err = waitForKey(ctx, keyCh, errCh, true, false)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		t.Fatal("waitForKey should block on completed interactive views until a key arrives")
-	case <-time.After(150 * time.Millisecond):
-	}
-
-	keyCh <- 'q'
-
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("waitForKey did not return after a keypress")
-	}
-	if err != nil {
-		t.Fatalf("waitForKey error = %v", err)
-	}
-	if timedOut {
-		t.Fatal("waitForKey unexpectedly timed out in completed interactive mode")
-	}
-	if got != 'q' {
-		t.Fatalf("waitForKey key = %q, want q", got)
 	}
 }
 
 func TestNormalizeTerminalNewlinesUsesCRLF(t *testing.T) {
 	input := "one\ntwo\r\nthree\rfour"
 	got := normalizeTerminalNewlines(input)
-	if strings.Contains(got, "\n") && strings.Contains(got, "\r\n") {
-		withoutCRLF := strings.ReplaceAll(got, "\r\n", "")
-		if strings.Contains(withoutCRLF, "\n") {
-			t.Fatalf("expected only CRLF newlines, got %q", got)
-		}
-	}
 	if want := "one\r\ntwo\r\nthree\r\nfour"; got != want {
 		t.Fatalf("normalizeTerminalNewlines() = %q, want %q", got, want)
 	}
 }
 
-var _ tagteam.RunSnapshot // keeps the tagteam import honest if fixtures above change
+func TestInputDecoderPreservesSplitEscapeAndUTF8Sequences(t *testing.T) {
+	decoder := inputDecoder{}
+	if events := decoder.Feed([]byte("\x1b[")); len(events) != 0 {
+		t.Fatalf("partial arrow emitted events: %#v", events)
+	}
+	events := decoder.Feed([]byte("A"))
+	if len(events) != 1 || events[0].Kind != keyUp {
+		t.Fatalf("split arrow = %#v, want keyUp", events)
+	}
+
+	if events := decoder.Feed([]byte{0xc3}); len(events) != 0 {
+		t.Fatalf("partial UTF-8 rune emitted events: %#v", events)
+	}
+	events = decoder.Feed([]byte{0xa9})
+	if len(events) != 1 || events[0].Kind != keyRune || events[0].Rune != rune(0x00e9) {
+		t.Fatalf("split UTF-8 rune = %#v, want U+00E9", events)
+	}
+}

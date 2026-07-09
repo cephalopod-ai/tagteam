@@ -75,9 +75,12 @@ func TestResolveTUIRunDir_MissingExplicitRunReturnsClearError(t *testing.T) {
 func TestResolveTUIRunDir_NoRunsAtAllReturnsClearError(t *testing.T) {
 	workdir := t.TempDir()
 
-	_, err := resolveTUIRunDir(workdir, nil)
-	if err == nil {
-		t.Fatal("expected an error when no run has ever been recorded")
+	runDir, err := resolveTUIRunDir(workdir, nil)
+	if err != nil {
+		t.Fatalf("resolveTUIRunDir() error = %v", err)
+	}
+	if runDir != "" {
+		t.Fatalf("expected no initial run dir, got %q", runDir)
 	}
 }
 

@@ -52,7 +52,7 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 
 ## What's New In v0.1.4
 
-- **TUI scaffold/start.** `tagteam tui [RUN_ID]` is an early scaffold for a future live terminal view. It is not currently reliable or functional enough to depend on for normal use.
+- **Interactive TUI dashboard.** `tagteam tui [RUN_ID]` can now launch runs, switch modes/targets, and inspect recent runs from one terminal UI.
 - **Better live-state observability.** In-progress runs now publish `.tagteam/active.json`, richer `state.json` updates, and a shared run snapshot surface that powers both the TUI and status-style views.
 - **Opt-in JSON repair for malformed contract output.** `--repair-json-with-worker` and `json_repair = "worker"` explicitly allow the selected worker to act as a read-only parser workaround for invalid JSON artifacts; repaired runs are marked degraded with `json_repair_used`.
 - **More resilient Claude-heavy setups.** The built-in `claude-failover` profile adds target-specific fallbacks from Claude supervisor/reviewer roles to Codex models when those invocations fail.
@@ -94,7 +94,7 @@ Full documentation — architecture, more diagrams, and the test ledger — is i
 
 ## Status
 
-This repository now reflects most of the `v0.1.4` CLI surface: the core run loop, adapter abstraction, persisted run artifacts, live status plumbing, and the main command set are implemented. The `tui` command exists as an early scaffold only and should not be treated as functional production behavior yet. Remaining rough edges are mostly adapter-behavior issues, TUI incompleteness, and post-release ergonomics rather than missing core workflow support.
+This repository now reflects most of the `v0.1.4` CLI surface: the core run loop, adapter abstraction, persisted run artifacts, live status plumbing, and the main command set are implemented. The main rough edges are adapter-behavior issues and general ergonomics rather than missing core workflow support.
 
 Recent additions in this repo:
 
@@ -615,16 +615,30 @@ Diff artifacts are captured through a temporary Git index, not the real staging 
 tagteam tui [RUN_ID]
 ```
 
-> [!WARNING]
-> `tagteam tui` is currently scaffold-stage only. The command surface exists, but the interactive experience is not yet reliable enough to call functional. Treat it as a development stub, not a supported workflow.
+`tagteam tui` is an interactive dashboard. It opens in a sparse compose-first state by default, surfaces the latest known run as context, and lets you explicitly open saved run details when you want them.
 
-The intended shape of `tagteam tui` is a read-only terminal view of a run: a header (run id, mode, status, phase, verdict, exit code), role statuses, the plan checklist (when `plan.json` exists), a findings count, changed files, and the latest diff/review/test artifact paths. It is meant to poll the run directory once a second while the run is `running`, keep the final view open in an interactive terminal until you quit, and return immediately in non-interactive output once the run reaches a terminal state.
+The dashboard has three main surfaces:
 
-When it is eventually stabilized, no `RUN_ID` will prefer the active run (`.tagteam/active.json`, if `status` is `running`) and otherwise fall back to the most recent completed run (`.tagteam/latest.json`), the same run `tagteam status` would show.
+- a compose surface for prompt entry and run launch
+- an on-demand settings panel for mode, targets, profiles, rounds, tests, and core toggles
+- a scrollable run-detail view showing status, roles, plan items, findings, changed files, and artifact paths
 
-The current scaffold includes planned keyboard affordances: `q` quit, `r` refresh, `p` toggle the plan panel, `f` toggle the findings panel, `d` toggle the changed-files/artifact-paths panel.
+It polls the run directory once a second while a run is active and can also launch a new run directly through the same config/runner path as the normal CLI.
 
-Its intended data path is read-only: `active.json`, `state.json`, `final.json`, and `plan.json` from the run directory (the same sources `RunSnapshot` assembles for `tagteam status --json`). Even once completed, it should never invoke an adapter, write to a run directory, or edit a plan; `status`, `plan`, and `transcript` remain the source of truth for their respective one-shot views.
+With no `RUN_ID`, it still discovers the active run (`.tagteam/active.json`, if `status` is `running`) and the most recent completed run (`.tagteam/latest.json`) so the dashboard can show context and open them on demand. Passing `RUN_ID` opens that run immediately.
+
+Core keyboard affordances:
+
+- `j` / `k` or arrows move selection and scroll
+- `g` launches the composed run
+- `/` opens slash commands such as `/run`, `/profile relay`, `/mode relay`, `/model codex:gpt-5.5`, `/supervisor claude:opus`, `/watch latest`, `/scout-retrieval off`
+- `s` opens settings
+- `u` opens recent runs
+- `r` refreshes
+- `p`, `f`, `a`, and `t` toggle detail sections
+- `q` quits
+
+The run-detail surface still reads `active.json`, `state.json`, `final.json`, and `plan.json` from the run directory (the same sources `RunSnapshot` assembles for `tagteam status --json`), but the compose surface is intentionally primary and can invoke adapters through the normal runner path.
 
 ## Development
 

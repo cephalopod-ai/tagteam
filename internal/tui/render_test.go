@@ -1,129 +1,213 @@
 package tui
 
 import (
-	"bytes"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/cephalopod-ai/tagteam/internal/tagteam"
 )
 
-func fixtureSnapshot() tagteam.RunSnapshot {
+func fixtureModel() *model {
 	updated := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	return tagteam.RunSnapshot{
-		SchemaVersion:   1,
-		RunID:           "2026-01-01T120000.000000000Z",
-		RunDir:          "/repo/.tagteam/runs/2026-01-01T120000.000000000Z",
-		Mode:            tagteam.ModeSupervisor,
-		Status:          "running",
-		Phase:           "round-1",
-		Verdict:         "needs_changes",
-		ExitCode:        1,
-		Degraded:        true,
-		DegradedReason:  "scout_unavailable",
-		BlockingReason:  "blocking_findings",
-		CurrentRound:    1,
-		RoundsCompleted: 0,
-		RoundsRequested: 2,
-		RoleStatuses: map[string]tagteam.RoleStatus{
-			"worker":     {Role: "worker", Status: "completed", Adapter: "claude", Model: "sonnet"},
-			"supervisor": {Role: "supervisor", Status: "running", Adapter: "claude", Model: "opus"},
+	return &model{
+		workdir: "/repo",
+		width:   120,
+		height:  48,
+		focus:   focusCompose,
+		compose: composeState{
+			Mode:           tagteam.ModeSupervisor,
+			EditorTarget:   "agy:Gemini 3.5 Flash (High)",
+			ReviewerTarget: "claude:opus",
+			Prompt:         "add OAuth login",
+			Rounds:         2,
+			Slice:          true,
 		},
-		LatestDiffPath:   "/repo/.tagteam/runs/x/diff-round-1.patch",
-		LatestReviewPath: "/repo/.tagteam/runs/x/supervisor-round-1.json",
-		LatestTestPath:   "/repo/.tagteam/runs/x/test-round-1.txt",
-		ChangedFiles:     []string{"main.go", "README.md"},
-		FindingsCount:    2,
-		UpdatedAt:        updated,
-	}
-}
-
-func fixturePlan() *tagteam.ExecutionPlan {
-	return &tagteam.ExecutionPlan{
-		RunID:  "2026-01-01T120000.000000000Z",
-		Status: "running",
-		Items: []tagteam.PlanItem{
-			{ID: "P1", Title: "one", Status: tagteam.PlanStatusPassed},
-			{ID: "P2", Title: "two", Status: tagteam.PlanStatusPending},
+		profileChoices: []string{"relay", "claude-failover"},
+		runs: []runListItem{
+			{RunID: "run-2", RunDir: "/repo/.tagteam/runs/run-2", Mode: tagteam.ModeSupervisor, Status: "running", Verdict: "needs_changes", UpdatedAt: updated, Active: true},
+			{RunID: "run-1", RunDir: "/repo/.tagteam/runs/run-1", Mode: tagteam.ModeSolo, Status: "passed", Verdict: "done", UpdatedAt: updated.Add(-time.Hour)},
 		},
+		currentRunDir: "/repo/.tagteam/runs/run-2",
+		currentSnapshot: &tagteam.RunSnapshot{
+			RunID:           "run-2",
+			RunDir:          "/repo/.tagteam/runs/run-2",
+			Mode:            tagteam.ModeSupervisor,
+			Status:          "running",
+			Phase:           "review",
+			Verdict:         "needs_changes",
+			UpdatedAt:       updated,
+			CurrentRound:    1,
+			RoundsCompleted: 0,
+			RoundsRequested: 2,
+			RoleStatuses: map[string]tagteam.RoleStatus{
+				"worker":     {Role: "worker", Status: "completed", Adapter: "agy", Model: "Gemini 3.5 Flash (High)"},
+				"supervisor": {Role: "supervisor", Status: "running", Adapter: "claude", Model: "opus"},
+			},
+			LatestDiffPath:   "/repo/.tagteam/runs/run-2/diff-round-1.patch",
+			LatestReviewPath: "/repo/.tagteam/runs/run-2/supervisor-round-1.json",
+			LatestTestPath:   "/repo/.tagteam/runs/run-2/test-round-1.txt",
+			ChangedFiles:     []string{"main.go", "README.md"},
+			FindingsCount:    2,
+		},
+		currentPlan: &tagteam.ExecutionPlan{
+			RunID:  "run-2",
+			Status: "running",
+			Items: []tagteam.PlanItem{
+				{ID: "P1", Title: "Add login flow", Status: tagteam.PlanStatusInProgress},
+				{ID: "P2", Title: "Add tests", Status: tagteam.PlanStatusPending},
+			},
+		},
+		currentReview: &tagteam.Review{
+			Summary: "Fix the failing edge case.",
+			Findings: []tagteam.Finding{
+				{Severity: "major", File: "main.go", Line: 42, Issue: "nil check missing"},
+				{Severity: "minor", File: "README.md", Line: 12, Issue: "docs drift"},
+			},
+		},
+		currentTestTail: []string{"  FAIL TestLoginFlow", "  expected 200 got 500"},
+		showPlan:        true,
+		showFindings:    true,
+		showArtifacts:   true,
+		showTestOutput:  true,
 	}
 }
 
-func TestRenderStableOutput(t *testing.T) {
-	snapshot := fixtureSnapshot()
-	plan := fixturePlan()
-
-	var first, second bytes.Buffer
-	Render(&first, snapshot, plan, DefaultToggles())
-	Render(&second, snapshot, plan, DefaultToggles())
-
-	if first.String() != second.String() {
-		t.Fatalf("Render output is not stable across identical inputs:\n--- first ---\n%s\n--- second ---\n%s", first.String(), second.String())
-	}
-	if first.Len() == 0 {
-		t.Fatal("expected non-empty render output")
-	}
-}
-
-func TestRenderIncludesExpectedPanels(t *testing.T) {
-	snapshot := fixtureSnapshot()
-	plan := fixturePlan()
-
-	var buf bytes.Buffer
-	Render(&buf, snapshot, plan, DefaultToggles())
-	out := buf.String()
-
+func TestRenderDashboardIncludesCorePanels(t *testing.T) {
+	out := renderDashboard(fixtureModel())
 	for _, want := range []string{
-		"run=2026-01-01T120000.000000000Z",
-		"mode=supervisor",
-		"status=running",
-		"degraded=true reason=scout_unavailable",
-		"blocking_reason=blocking_findings",
+		"tagteam  repo",
+		"mode supervisor",
+		"watching run-2 [run]",
+		"draft supervisor  target=agy:Gemini 3.5 Flash (High)",
+		"> add OAuth login",
+		"Run: run-2",
+		"Mode: supervisor",
 		"Roles:",
-		"worker",
-		"supervisor",
-		"Plan (run=2026-01-01T120000.000000000Z status=running items=2):",
-		"[P1]",
-		"[P2]",
-		"Findings: 2",
+		"Plan (running, 2 items):",
+		"Review summary: Fix the failing edge case.",
 		"Changed files (2):",
-		"main.go",
-		"diff:   /repo/.tagteam/runs/x/diff-round-1.patch",
-		"[q] quit",
+		"Enter edit  / commands",
 	} {
-		if !bytes.Contains([]byte(out), []byte(want)) {
+		if !strings.Contains(out, want) {
 			t.Fatalf("render output missing %q\nfull output:\n%s", want, out)
 		}
 	}
 }
 
-func TestRenderTogglesHidePanels(t *testing.T) {
-	snapshot := fixtureSnapshot()
-	plan := fixturePlan()
-
-	var buf bytes.Buffer
-	Render(&buf, snapshot, plan, Toggles{})
-	out := buf.String()
-
-	for _, notWant := range []string{"Plan (run=", "Findings:", "Changed files ("} {
-		if bytes.Contains([]byte(out), []byte(notWant)) {
-			t.Fatalf("expected toggled-off panel %q to be hidden, got:\n%s", notWant, out)
-		}
-	}
-	// The header/roles/footer panels are not gated by toggles.
-	for _, want := range []string{"run=2026-01-01T120000.000000000Z", "Roles:", "[q] quit"} {
-		if !bytes.Contains([]byte(out), []byte(want)) {
-			t.Fatalf("expected always-on panel %q, got:\n%s", want, out)
+func TestRenderDashboardNoSelectedRunShowsComposeHint(t *testing.T) {
+	m := fixtureModel()
+	m.currentSnapshot = nil
+	m.currentPlan = nil
+	m.currentReview = nil
+	m.currentTestTail = nil
+	m.currentRunDir = ""
+	out := renderDashboard(m)
+	for _, want := range []string{
+		"Ready for a new task.",
+		"Type in the composer below to start a run.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("render output missing %q\nfull output:\n%s", want, out)
 		}
 	}
 }
 
-func TestRenderNilPlanOmitsPlanPanel(t *testing.T) {
-	snapshot := fixtureSnapshot()
+func TestRenderDashboardSettingsOverlay(t *testing.T) {
+	m := fixtureModel()
+	m.settingsOpen = true
+	out := renderDashboard(m)
+	for _, want := range []string{
+		"Settings",
+		"Profiles: off",
+		"mode: supervisor",
+		"worker: agy:Gemini 3.5 Flash (High)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("render output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+}
 
-	var buf bytes.Buffer
-	Render(&buf, snapshot, nil, DefaultToggles())
-	if bytes.Contains(buf.Bytes(), []byte("Plan (run=")) {
-		t.Fatalf("expected no plan panel when plan is nil, got:\n%s", buf.String())
+func TestRenderDashboardCommandOverlay(t *testing.T) {
+	m := fixtureModel()
+	m.commandMode = true
+	m.commandBuffer = ""
+	out := renderDashboard(m)
+	for _, want := range []string{
+		"Commands",
+		"/profile <name>",
+		"/model",
+		"Set the primary editor/worker target",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("render output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderDashboardUsesDetailScrollOffset(t *testing.T) {
+	m := fixtureModel()
+	m.height = 18
+	m.scroll = 6
+	out := renderDashboard(m)
+	if strings.Contains(out, "Run: run-2") {
+		t.Fatalf("detail viewport ignored scroll offset:\n%s", out)
+	}
+	if !strings.Contains(out, "Roles:") {
+		t.Fatalf("detail viewport did not advance to later content:\n%s", out)
+	}
+}
+
+func TestRenderDashboardBoundsOverlaysToTerminalHeight(t *testing.T) {
+	m := fixtureModel()
+	m.height = 24
+	m.commandMode = true
+	out := renderDashboard(m)
+	if got := len(strings.Split(strings.TrimSuffix(out, "\n"), "\n")); got > m.height {
+		t.Fatalf("command overlay rendered %d rows in a %d-row terminal:\n%s", got, m.height, out)
+	}
+	if !strings.Contains(out, "tab complete") {
+		t.Fatalf("command overlay missing completion hint:\n%s", out)
+	}
+}
+
+func TestRenderDashboardKeepsSelectedSettingVisible(t *testing.T) {
+	m := fixtureModel()
+	m.height = 24
+	m.compose.Mode = tagteam.ModeRelay
+	m.settingsOpen = true
+	m.selectedField = len(m.visibleFields()) - 1
+	out := renderDashboard(m)
+	if !strings.Contains(out, "> repair-json:") {
+		t.Fatalf("selected off-screen setting was not rendered:\n%s", out)
+	}
+}
+
+func TestRenderDashboardTrimsLongDetailLines(t *testing.T) {
+	m := fixtureModel()
+	m.width = 40
+	m.currentReview.Findings[0].Issue = strings.Repeat("long finding ", 12)
+	out := renderDashboard(m)
+	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		if width := len([]rune(line)); width > m.width {
+			t.Fatalf("rendered line has width %d, want <= %d: %q", width, m.width, line)
+		}
+	}
+}
+
+func TestDecodeKeyEventsParsesArrowsAndText(t *testing.T) {
+	events := decodeKeyEvents([]byte("\x1b[A/x"))
+	if len(events) != 3 {
+		t.Fatalf("events len = %d, want 3", len(events))
+	}
+	if events[0].Kind != keyUp {
+		t.Fatalf("first event = %#v, want keyUp", events[0])
+	}
+	if events[1].Kind != keyRune || events[1].Rune != '/' {
+		t.Fatalf("second event = %#v, want slash rune", events[1])
+	}
+	if events[2].Kind != keyRune || events[2].Rune != 'x' {
+		t.Fatalf("third event = %#v, want x rune", events[2])
 	}
 }

@@ -351,17 +351,7 @@ func resolve(cmd *cobra.Command, flags *flagState, prompt string) (tagteam.RunOp
 	if err != nil {
 		return tagteam.RunOptions{}, tagteam.Config{}, err
 	}
-	changed := map[string]bool{}
-	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
-		if flag.Changed {
-			changed[flag.Name] = true
-		}
-	})
-	cmd.InheritedFlags().VisitAll(func(flag *pflag.Flag) {
-		if flag.Changed {
-			changed[flag.Name] = true
-		}
-	})
+	changed := collectChangedFlags(cmd)
 	cfg, sources, err := tagteam.LoadConfigWithOptions(workdir, tagteam.LoadConfigOptions{
 		TrustRepoConfig: flags.TrustRepoConfig && changed["trust-repo-config"],
 	})
@@ -373,6 +363,21 @@ func resolve(cmd *cobra.Command, flags *flagState, prompt string) (tagteam.RunOp
 		return tagteam.RunOptions{}, tagteam.Config{}, err
 	}
 	return opts, cfg, nil
+}
+
+func collectChangedFlags(cmd *cobra.Command) map[string]bool {
+	changed := map[string]bool{}
+	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
+		if flag.Changed {
+			changed[flag.Name] = true
+		}
+	})
+	cmd.InheritedFlags().VisitAll(func(flag *pflag.Flag) {
+		if flag.Changed {
+			changed[flag.Name] = true
+		}
+	})
+	return changed
 }
 
 func renderFinal(cmd *cobra.Command, final tagteam.FinalRun, opts tagteam.RunOptions) {

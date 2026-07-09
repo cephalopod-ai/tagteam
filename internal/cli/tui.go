@@ -15,10 +15,10 @@ import (
 func newTUICommand(shared *flagState) *cobra.Command {
 	return &cobra.Command{
 		Use:   "tui [RUN_ID]",
-		Short: "Read-only live view of a run's status, plan, findings, and artifacts",
-		Long: `tui polls the on-disk run artifacts (active.json/state.json/final.json/plan.json) and renders a read-only terminal view. It does not invoke agents and does not modify the run directory.
+		Short: "Interactive terminal dashboard for launching and inspecting tagteam runs",
+		Long: `tui opens an interactive dashboard with a compose-first home screen, an on-demand settings panel, a recent-runs picker, and a scrollable run-detail view.
 
-With no RUN_ID it prefers the currently active (running) run and falls back to the most recent completed run.`,
+With no RUN_ID it starts in compose mode, surfaces the active/latest run as context, and lets you open run details explicitly through recent runs or slash commands. Passing a RUN_ID opens that run immediately.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			workdir, err := filepath.Abs(shared.Workdir)
@@ -31,7 +31,14 @@ With no RUN_ID it prefers the currently active (running) run and falls back to t
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			defer stop()
-			return tui.Run(ctx, workdir, runDir, os.Stdout, os.Stdin)
+			return tui.Run(ctx, tui.RunOptions{
+				Workdir:         workdir,
+				InitialRunDir:   runDir,
+				InspectOnStart:  len(args) > 0,
+				Flags:           shared.FlagInputs,
+				Changed:         collectChangedFlags(cmd),
+				TrustRepoConfig: shared.TrustRepoConfig && collectChangedFlags(cmd)["trust-repo-config"],
+			}, os.Stdout, os.Stdin)
 		},
 	}
 }
@@ -54,7 +61,7 @@ func resolveTUIRunDir(workdir string, args []string) (string, error) {
 	}
 	latest, err := tagteam.ReadLatestForCLI(workdir)
 	if err != nil {
-		return "", fmt.Errorf("no active or previous tagteam run found in %s", workdir)
+		return "", nil
 	}
 	return latest.RunDir, nil
 }

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"strings"
@@ -13,148 +12,134 @@ import (
 )
 
 const pollInterval = time.Second
+const inputSequenceTimeout = 25 * time.Millisecond
 
-// Run drives the read-only polling view for the run at runDir until the run
-// stops being "running" or the user quits. It never invokes an adapter or
-// mutates the run directory -- each tick only re-reads the on-disk snapshot.
-func Run(ctx context.Context, workdir, runDir string, out *os.File, in *os.File) error {
-	toggles := DefaultToggles()
+// RunOptions controls TUI startup state.
+type RunOptions struct {
+	Workdir         string
+	InitialRunDir   string
+	InspectOnStart  bool
+	Flags           tagteam.FlagInputs
+	Changed         map[string]bool
+	TrustRepoConfig bool
+}
+
+// Run drives the interactive tagteam terminal UI. It can launch new runs via
+// the existing runner/config path and monitor saved or active runs without
+// invoking a separate CLI subprocess.
+func Run(ctx context.Context, opts RunOptions, out *os.File, in *os.File) error {
 	interactive := in != nil && out != nil && term.IsTerminal(int(in.Fd())) && term.IsTerminal(int(out.Fd()))
 
-	var restore func()
-	if interactive {
-		oldState, err := term.MakeRaw(int(in.Fd()))
-		if err == nil {
-			restore = func() { _ = term.Restore(int(in.Fd()), oldState) }
-			defer restore()
-		}
-	}
-
-	// One long-lived reader goroutine feeds every tick's key-wait from a
-	// shared channel for the life of Run. A fresh reader per tick would leave
-	// each timed-out tick's goroutine blocked on the next keypress forever
-	// (os.File reads cannot be canceled from another goroutine) -- and worse,
-	// a keypress landing on an abandoned prior-tick goroutine's private
-	// channel would never reach the tick actually waiting for it, making the
-	// keypress appear to do nothing.
-	var keyCh chan byte
-	var errCh chan error
-	if interactive {
-		keyCh = make(chan byte, 16)
-		errCh = make(chan error, 1)
-		go readKeys(in, keyCh, errCh)
-	}
-
-	for {
-		snapshot, err := tagteam.BuildRunSnapshot(workdir, runDir)
-		if err != nil {
-			return err
-		}
-		plan, hasPlan := readPlan(runDir)
-		var planPtr *tagteam.ExecutionPlan
-		if hasPlan {
-			planPtr = &plan
-		}
-
-		if interactive {
-			clearScreen(out)
-		}
-		var rendered bytes.Buffer
-		Render(&rendered, snapshot, planPtr, toggles)
-		output := rendered.String()
-		if interactive {
-			output = normalizeTerminalNewlines(output)
-		}
-		_, _ = out.WriteString(output)
-
-		running := snapshot.Status == "running"
-		if !interactive && !running {
-			return nil
-		}
-
-		key, timedOut, err := waitForKey(ctx, keyCh, errCh, interactive, running)
-		if err != nil {
-			return nil
-		}
-		if timedOut {
-			continue
-		}
-		switch key {
-		case 'q', 'Q', 3: // 3 = Ctrl-C, since raw mode disables signal generation
-			return nil
-		case 'r', 'R':
-			// fall through and re-render immediately
-		case 'p', 'P':
-			toggles.ShowPlan = !toggles.ShowPlan
-		case 'f', 'F':
-			toggles.ShowFindings = !toggles.ShowFindings
-		case 'd', 'D':
-			toggles.ShowArtifacts = !toggles.ShowArtifacts
-		}
-	}
-}
-
-func readPlan(runDir string) (tagteam.ExecutionPlan, bool) {
-	plan, err := tagteam.ReadPlanForCLI(runDir)
+	model, err := newModel(opts)
 	if err != nil {
-		return tagteam.ExecutionPlan{}, false
+		return err
 	}
-	return plan, true
+	model.refresh()
+
+	if !interactive {
+		_, _ = out.WriteString(renderDashboard(model))
+		return nil
+	}
+
+	loopCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	oldState, err := term.MakeRaw(int(in.Fd()))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = term.Restore(int(in.Fd()), oldState) }()
+
+	_, _ = out.WriteString("\x1b[?1049h\x1b[?25l")
+	defer func() { _, _ = out.WriteString("\x1b[?25h\x1b[?1049l") }()
+
+	inputCh := make(chan []byte, 16)
+	errCh := make(chan error, 1)
+	go readInputChunks(in, inputCh, errCh)
+	decoder := inputDecoder{}
+	var inputTimer *time.Timer
+	var inputTimerC <-chan time.Time
+	defer func() {
+		if inputTimer != nil {
+			inputTimer.Stop()
+		}
+	}()
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	renderFrame(out, model)
+	for {
+		select {
+		case <-loopCtx.Done():
+			return loopCtx.Err()
+		case <-ticker.C:
+			model.refresh()
+			renderFrame(out, model)
+		case <-inputTimerC:
+			inputTimerC = nil
+			for _, event := range decoder.Flush() {
+				if model.handleKey(loopCtx, event) == actionQuit {
+					return nil
+				}
+			}
+			renderFrame(out, model)
+		case result := <-model.runResultCh:
+			model.handleRunResult(result)
+			renderFrame(out, model)
+		case readErr := <-errCh:
+			if readErr == nil {
+				continue
+			}
+			return nil
+		case chunk := <-inputCh:
+			events := decoder.Feed(chunk)
+			for _, event := range events {
+				action := model.handleKey(loopCtx, event)
+				if action == actionQuit {
+					return nil
+				}
+			}
+			if decoder.HasPending() {
+				if inputTimer == nil {
+					inputTimer = time.NewTimer(inputSequenceTimeout)
+				} else {
+					if !inputTimer.Stop() {
+						select {
+						case <-inputTimer.C:
+						default:
+						}
+					}
+					inputTimer.Reset(inputSequenceTimeout)
+				}
+				inputTimerC = inputTimer.C
+			} else {
+				inputTimerC = nil
+			}
+			renderFrame(out, model)
+		}
+	}
 }
 
-func clearScreen(out *os.File) {
+func renderFrame(out *os.File, model *model) {
+	model.updateTerminalSize(out)
 	_, _ = out.WriteString("\x1b[H\x1b[2J")
+	_, _ = out.WriteString(normalizeTerminalNewlines(renderDashboard(model)))
 }
 
-// readKeys reads single bytes from in until it errors (EOF, closed fd, etc.),
-// pushing each byte onto keyCh. It runs for the lifetime of one Run call.
-func readKeys(in *os.File, keyCh chan<- byte, errCh chan<- error) {
-	buf := make([]byte, 1)
+func readInputChunks(in *os.File, inputCh chan<- []byte, errCh chan<- error) {
+	buf := make([]byte, 64)
 	for {
 		n, err := in.Read(buf)
 		if err != nil {
 			errCh <- err
 			return
 		}
-		if n > 0 {
-			keyCh <- buf[0]
+		if n == 0 {
+			continue
 		}
-	}
-}
-
-// waitForKey waits up to one poll interval for a single keypress from the
-// shared reader channels. On a non-TTY stdin (CI, piped input) there is no
-// interactive key to read, so it just sleeps out the tick.
-func waitForKey(ctx context.Context, keyCh <-chan byte, errCh <-chan error, isTTY, poll bool) (key byte, timedOut bool, err error) {
-	if !isTTY {
-		select {
-		case <-ctx.Done():
-			return 0, false, ctx.Err()
-		case <-time.After(pollInterval):
-			return 0, true, nil
-		}
-	}
-
-	if !poll {
-		select {
-		case <-ctx.Done():
-			return 0, false, ctx.Err()
-		case readErr := <-errCh:
-			return 0, false, readErr
-		case k := <-keyCh:
-			return k, false, nil
-		}
-	}
-
-	select {
-	case <-ctx.Done():
-		return 0, false, ctx.Err()
-	case readErr := <-errCh:
-		return 0, false, readErr
-	case k := <-keyCh:
-		return k, false, nil
-	case <-time.After(pollInterval):
-		return 0, true, nil
+		chunk := append([]byte(nil), buf[:n]...)
+		inputCh <- chunk
 	}
 }
 
