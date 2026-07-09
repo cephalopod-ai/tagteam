@@ -55,6 +55,7 @@ const (
 	ReasonArtifactMissing       ReasonCode = "artifact_missing"
 	ReasonFallbackUsed          ReasonCode = "fallback_used"
 	ReasonBudgetExceeded        ReasonCode = "budget_exceeded"
+	ReasonJSONRepairUsed        ReasonCode = "json_repair_used"
 )
 
 type LossPolicy string
@@ -557,6 +558,7 @@ type DefaultsConfig struct {
 	MaxOutputBytes          int64            `toml:"max_output_bytes"`
 	MaxWallTime             string           `toml:"max_wall_time"`
 	MaxRoleInvocations      int              `toml:"max_role_invocations"`
+	JSONRepair              string           `toml:"json_repair"`
 	Rounds                  int              `toml:"rounds"`
 	Test                    string           `toml:"test"`
 	GitSafety               string           `toml:"git_safety"`
@@ -587,6 +589,7 @@ type ProfileConfig struct {
 	MaxOutputBytes          int64            `toml:"max_output_bytes"`
 	MaxWallTime             string           `toml:"max_wall_time"`
 	MaxRoleInvocations      int              `toml:"max_role_invocations"`
+	JSONRepair              string           `toml:"json_repair"`
 	Rounds                  int              `toml:"rounds"`
 	Test                    string           `toml:"test"`
 }
@@ -670,6 +673,7 @@ type FlagInputs struct {
 	MaxOutputBytes          int64
 	MaxWallTime             time.Duration
 	MaxRoleInvocations      int
+	RepairJSONWithWorker    bool
 	Profile                 string
 	Workdir                 string
 	Rounds                  int
@@ -739,6 +743,7 @@ type RunOptions struct {
 	MaxOutputBytes            int64
 	MaxWallTime               time.Duration
 	MaxRoleInvocations        int
+	JSONRepair                string
 	Rounds                    int
 	TestCmd                   string
 	NoTest                    bool

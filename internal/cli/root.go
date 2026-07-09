@@ -56,6 +56,8 @@ Role flags by mode
 Operational behavior
 
   Supervisor and relay runs may make one host-controlled mode adjustment before implementation: relay can simplify to supervisor, and supervisor can escalate to relay when both worker and supervisor advisory signals agree. Runs persist final.json and state.json with degraded/blocking reason codes, role statuses, budgets, and artifact paths.
+
+  Claude supervisors have a known JSON-output rough edge. tagteam does not silently repair that output; use --repair-json-with-worker to explicitly allow the selected worker to act as a read-only parser for invalid JSON contract artifacts.
 `,
 		Example: `tagteam "add OAuth login"
 tagteam --worker codex:gpt-5-codex --supervisor claude:opus "refactor billing flow"
@@ -119,6 +121,7 @@ func bindSharedFlags(cmd *cobra.Command, flags *flagState) {
 	flagSet.Int64Var(&flags.MaxOutputBytes, "max-output-bytes", 0, "Maximum raw bytes accepted from one adapter call (default 2097152)")
 	flagSet.DurationVar(&flags.MaxWallTime, "max-wall-time", 0, "Maximum total run wall time recorded/enforced when non-zero")
 	flagSet.IntVar(&flags.MaxRoleInvocations, "max-role-invocations", 0, "Maximum adapter invocations for one run (0 means unlimited)")
+	flagSet.BoolVar(&flags.RepairJSONWithWorker, "repair-json-with-worker", false, "Explicitly allow the selected worker to repair invalid JSON contract output in read-only parser mode")
 	flagSet.StringVarP(&flags.Profile, "profile", "P", "", "Named profile")
 	flagSet.StringVarP(&flags.Workdir, "workdir", "C", ".", "Working directory")
 	flagSet.IntVarP(&flags.Rounds, "rounds", "r", 0, "Hard cap on implementation/review rounds before final no-edit reports")

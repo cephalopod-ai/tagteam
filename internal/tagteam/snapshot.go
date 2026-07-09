@@ -65,9 +65,15 @@ func BuildRunSnapshot(workdir, runDir string) (RunSnapshot, error) {
 		if snapshot.Mode == "" {
 			snapshot.Mode = final.Mode
 		}
-		snapshot.Status = string(final.Status)
-		snapshot.Phase = final.Phase
-		snapshot.Verdict = final.Verdict
+		if final.Status != "" {
+			snapshot.Status = string(final.Status)
+		}
+		if final.Phase != "" {
+			snapshot.Phase = final.Phase
+		}
+		if final.Verdict != "" {
+			snapshot.Verdict = final.Verdict
+		}
 		snapshot.ExitCode = final.ExitCode
 		snapshot.Degraded = final.Degraded
 		snapshot.DegradedReason = final.DegradedReason

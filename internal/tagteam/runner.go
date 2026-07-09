@@ -597,6 +597,7 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (final
 		_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: string(final.Status), Phase: "review", Degraded: final.Degraded, DegradedReason: final.DegradedReason, BlockingReason: final.BlockingReason, RoleStatuses: final.RoleStatuses, CurrentRound: 1, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode})
 		_ = a.persistFinal(opts.Workdir, final)
 	}()
+	logJSONRepairPolicy(opts)
 	if err = writeRedactedBytes(filepath.Join(runDir, "input.md"), []byte(prompt), opts.EnvOverlay); err != nil {
 		return final, err
 	}
@@ -619,7 +620,17 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (final
 	if err = writeJSON(filepath.Join(runDir, "meta.json"), meta); err != nil {
 		return final, err
 	}
-	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: "review", CurrentRound: 1})
+	setRoleStatus(&final, reviewerLabel, opts.Adversary, "running", "", "")
+	_ = writeRunState(runDir, RunState{
+		RunID:            runID,
+		Mode:             opts.Mode,
+		Status:           "running",
+		Phase:            "review",
+		RoleStatuses:     final.RoleStatuses,
+		CurrentRound:     1,
+		LatestDiffPath:   final.LatestDiffPath,
+		LatestReviewPath: final.LatestReviewPath,
+	})
 	schemaPath := filepath.Join(runDir, "review-schema.json")
 	if err = os.WriteFile(schemaPath, []byte(ReviewSchema), 0o644); err != nil {
 		return final, err
@@ -982,7 +993,6 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	if err := writeJSON(filepath.Join(runDir, "meta.json"), meta); err != nil {
 		return FinalRun{}, err
 	}
-	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: "solo", CurrentRound: 1})
 	logProgress(opts, "run %s started mode=%s baseline=%s run-dir=%s", runID, opts.Mode, baseline, runDir)
 
 	registry := Registry(a.Config, opts)
@@ -1013,6 +1023,15 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	initFinalState(&final, opts)
 	budget := &InvocationBudget{Max: opts.MaxRoleInvocations}
 	opts.InvocationBudget = budget
+	setRoleStatus(&final, editorLabel, opts.Coder, "running", "", "")
+	_ = writeRunState(runDir, RunState{
+		RunID:        runID,
+		Mode:         opts.Mode,
+		Status:       "running",
+		Phase:        "solo",
+		RoleStatuses: final.RoleStatuses,
+		CurrentRound: 1,
+	})
 
 	logProgress(opts, "solo implementation started adapter=%s", editor.ID())
 	outputPath := filepath.Join(runDir, "solo-round-1.md")
@@ -1032,11 +1051,31 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 		Budget:       opts.InvocationBudget,
 	}, opts.DryRun)
 	if err != nil {
+		reason := classifyRoleFailure(editorLabel, err)
+		setRoleStatus(&final, editorLabel, opts.Coder, "failed", reason, err.Error())
+		_ = writeRunState(runDir, RunState{
+			RunID:          runID,
+			Mode:           opts.Mode,
+			Status:         "failed",
+			Phase:          "solo",
+			BlockingReason: string(reason),
+			RoleStatuses:   final.RoleStatuses,
+			CurrentRound:   1,
+		})
 		return final, err
 	}
+	setRoleStatus(&final, editorLabel, opts.Coder, "completed", "", "")
 	final.Costs[editorLabel] += editorResult.CostUSD
 	final.Summary = strings.TrimSpace(editorResult.Text)
 	final.RoundsCompleted = 1
+	_ = writeRunState(runDir, RunState{
+		RunID:        runID,
+		Mode:         opts.Mode,
+		Status:       "running",
+		Phase:        "diff",
+		RoleStatuses: final.RoleStatuses,
+		CurrentRound: 1,
+	})
 	logProgress(opts, "solo implementation completed output=%s", outputPath)
 
 	diffArtifact, err := captureDiffArtifact(ctx, opts.Workdir, baseline, runDir, 1)
@@ -1164,7 +1203,19 @@ func (a *App) collectOrchestrationAdvisory(ctx context.Context, opts RunOptions,
 	}
 	advisory, err := parseOrchestrationAdvisory([]byte(result.Text), source)
 	if err != nil {
-		return OrchestrationAdvisory{}, err
+		if repaired, _, attempted, repairErr := a.repairJSONWithWorker(ctx, opts, Registry(a.Config, opts), runDir, outputPath, "orchestration advisory", OrchestrationAdvisorySchema, []byte(result.Text), err); repairErr != nil {
+			_ = writeRedactedBytes(outputPath+".repair-failed.txt", []byte(repairErr.Error()+"\n"), opts.EnvOverlay)
+		} else if attempted {
+			repairedAdvisory, parseErr := parseOrchestrationAdvisory(repaired, source)
+			if parseErr == nil {
+				advisory = repairedAdvisory
+			} else {
+				_ = writeRedactedBytes(outputPath+".repair-validation-error.txt", []byte(parseErr.Error()+"\n"), opts.EnvOverlay)
+				return OrchestrationAdvisory{}, err
+			}
+		} else {
+			return OrchestrationAdvisory{}, err
+		}
 	}
 	if err := writeJSONWithNewline(outputPath, advisory); err != nil {
 		return OrchestrationAdvisory{}, err
@@ -1285,6 +1336,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	}()
 	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: "preflight"})
 	logProgress(opts, "run %s started mode=%s baseline=%s run-dir=%s", runID, opts.Mode, baseline, runDir)
+	logJSONRepairPolicy(opts)
 
 	registry := Registry(a.Config, opts)
 	editor, ok := registry[opts.Coder.Adapter]
@@ -1402,8 +1454,10 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			planSchemaPath := filepath.Join(runDir, "work-plan-schema.json")
 			var plan WorkPlan
 			var planCost float64
+			planParsed := false
 			if opts.DryRun {
 				plan = syntheticWorkPlan(opts.Prompt, opts.Package)
+				planParsed = true
 			} else {
 				if err := os.WriteFile(planSchemaPath, []byte(WorkPlanSchema), 0o644); err != nil {
 					return final, err
@@ -1428,14 +1482,44 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 					Budget:     opts.InvocationBudget,
 				}, false)
 				if err != nil {
+					if repaired, repairCost, attempted, repairErr := a.repairJSONWithWorker(ctx, opts, registry, runDir, planOutputPath, "supervisor work plan", WorkPlanSchema, readRepairSource(planOutputPath, nil), err); repairErr != nil {
+						_ = writeRedactedBytes(planOutputPath+".repair-failed.txt", []byte(repairErr.Error()+"\n"), opts.EnvOverlay)
+					} else if attempted {
+						repairedPlan, parseErr := parseWorkPlan(repaired, opts.Package, opts.MaxPackages)
+						if parseErr == nil {
+							setFinalDegraded(&final, ReasonJSONRepairUsed, "supervisor work-plan JSON repaired by worker")
+							appendRoleLoss(&final, reviewerLabel, lossPolicyForRole(opts, reviewerLabel), "json-repair", "repaired", ReasonJSONRepairUsed, "worker repaired invalid work-plan JSON")
+							plan = repairedPlan
+							planCost += repairCost
+							planParsed = true
+						}
+						_ = writeRedactedBytes(planOutputPath+".repair-validation-error.txt", []byte(parseErr.Error()+"\n"), opts.EnvOverlay)
+					}
 					return final, err
 				}
-				parsed, err := parseWorkPlan([]byte(planResult.Text), opts.Package, opts.MaxPackages)
-				if err != nil {
-					return final, err
+				if !planParsed {
+					parsed, err := parseWorkPlan([]byte(planResult.Text), opts.Package, opts.MaxPackages)
+					if err != nil {
+						if repaired, repairCost, attempted, repairErr := a.repairJSONWithWorker(ctx, opts, registry, runDir, planOutputPath, "supervisor work plan", WorkPlanSchema, []byte(planResult.Text), err); repairErr != nil {
+							_ = writeRedactedBytes(planOutputPath+".repair-failed.txt", []byte(repairErr.Error()+"\n"), opts.EnvOverlay)
+						} else if attempted {
+							repairedPlan, parseErr := parseWorkPlan(repaired, opts.Package, opts.MaxPackages)
+							if parseErr == nil {
+								setFinalDegraded(&final, ReasonJSONRepairUsed, "supervisor work-plan JSON repaired by worker")
+								appendRoleLoss(&final, reviewerLabel, lossPolicyForRole(opts, reviewerLabel), "json-repair", "repaired", ReasonJSONRepairUsed, "worker repaired invalid work-plan JSON")
+								parsed = repairedPlan
+								planCost += repairCost
+							} else {
+								_ = writeRedactedBytes(planOutputPath+".repair-validation-error.txt", []byte(parseErr.Error()+"\n"), opts.EnvOverlay)
+								return final, err
+							}
+						} else {
+							return final, err
+						}
+					}
+					plan = parsed
+					planCost += planResult.CostUSD
 				}
-				plan = parsed
-				planCost = planResult.CostUSD
 			}
 			pkg, ok := plan.Selected()
 			if !ok {
@@ -1591,6 +1675,21 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				Verbose:    opts.Verbose,
 				Budget:     opts.InvocationBudget,
 			}, opts.DryRun)
+			if err != nil && IsOutputContractError(err) {
+				if repaired, repairCost, attempted, repairErr := a.repairJSONWithWorker(ctx, opts, registry, runDir, scoutOutputPath, "scout", ScoutSchemaForRepair(), readRepairSource(scoutOutputPath, nil), err); repairErr != nil {
+					_ = writeRedactedBytes(scoutOutputPath+".repair-failed.txt", []byte(repairErr.Error()+"\n"), opts.EnvOverlay)
+				} else if attempted {
+					repairedScout, parseErr := parseScout(repaired)
+					if parseErr == nil {
+						setFinalDegraded(&final, ReasonJSONRepairUsed, "scout JSON repaired by worker")
+						appendRoleLoss(&final, "scout", opts.LossPolicy.Scout, "json-repair", "repaired", ReasonJSONRepairUsed, "worker repaired invalid scout JSON")
+						scoutResult = Result{Scout: repairedScout, Text: repairedScout.Summary, CostUSD: repairCost}
+						err = nil
+					} else {
+						_ = writeRedactedBytes(scoutOutputPath+".repair-validation-error.txt", []byte(parseErr.Error()+"\n"), opts.EnvOverlay)
+					}
+				}
+			}
 			if err != nil {
 				scoutStatus.FailureClass = classifyScoutFailure(err)
 				scoutStatus.Failure = err.Error()
@@ -1685,7 +1784,16 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		final.Phase = editorLabel
 		currentRole = editorLabel
 		setRoleStatus(&final, editorLabel, opts.Coder, "running", "", "")
-		_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: editorLabel, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath})
+		_ = writeRunState(runDir, RunState{
+			RunID:            runID,
+			Mode:             opts.Mode,
+			Status:           "running",
+			Phase:            editorLabel,
+			RoleStatuses:     final.RoleStatuses,
+			CurrentRound:     round,
+			LatestDiffPath:   final.LatestDiffPath,
+			LatestReviewPath: final.LatestReviewPath,
+		})
 		var editorPrompt string
 		switch {
 		case round == 1 && initialReview == nil && opts.Mode == ModeRelay:
@@ -1768,7 +1876,16 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		final.LatestFilesPath = diffArtifact.FilesPath
 		final.LatestSHA256Path = diffArtifact.SHA256Path
 		final.LatestDiffSHA256 = diffArtifact.Metadata.DiffSHA256
-		_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: "diff", CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath})
+		_ = writeRunState(runDir, RunState{
+			RunID:            runID,
+			Mode:             opts.Mode,
+			Status:           "running",
+			Phase:            "diff",
+			RoleStatuses:     final.RoleStatuses,
+			CurrentRound:     round,
+			LatestDiffPath:   final.LatestDiffPath,
+			LatestReviewPath: final.LatestReviewPath,
+		})
 		logProgress(opts, "round %d diff captured bytes=%d path=%s", round, len(diff), diffArtifact.PatchPath)
 
 		testOutput := ""
@@ -1808,6 +1925,21 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				Verbose:    opts.Verbose,
 				Budget:     opts.InvocationBudget,
 			}, opts.DryRun)
+			if err != nil && IsOutputContractError(err) {
+				if repaired, repairCost, attempted, repairErr := a.repairJSONWithWorker(ctx, opts, registry, runDir, postScoutPath, "post-scout", ScoutSchemaForRepair(), readRepairSource(postScoutPath, nil), err); repairErr != nil {
+					_ = writeRedactedBytes(postScoutPath+".repair-failed.txt", []byte(repairErr.Error()+"\n"), opts.EnvOverlay)
+				} else if attempted {
+					repairedScout, parseErr := parseScout(repaired)
+					if parseErr == nil {
+						setFinalDegraded(&final, ReasonJSONRepairUsed, "post-scout JSON repaired by worker")
+						appendRoleLoss(&final, "scout", opts.LossPolicy.Scout, "json-repair", "repaired", ReasonJSONRepairUsed, "worker repaired invalid post-scout JSON")
+						postScoutResult = Result{Scout: repairedScout, Text: repairedScout.Summary, CostUSD: repairCost}
+						err = nil
+					} else {
+						_ = writeRedactedBytes(postScoutPath+".repair-validation-error.txt", []byte(parseErr.Error()+"\n"), opts.EnvOverlay)
+					}
+				}
+			}
 			if err != nil {
 				postScoutStatus.FailureClass = classifyScoutFailure(err)
 				postScoutStatus.Failure = err.Error()
@@ -1836,7 +1968,16 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		final.Phase = reviewerLabel
 		currentRole = reviewerLabel
 		setRoleStatus(&final, reviewerLabel, opts.Adversary, "running", "", "")
-		_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: reviewerLabel, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath})
+		_ = writeRunState(runDir, RunState{
+			RunID:            runID,
+			Mode:             opts.Mode,
+			Status:           "running",
+			Phase:            reviewerLabel,
+			RoleStatuses:     final.RoleStatuses,
+			CurrentRound:     round,
+			LatestDiffPath:   final.LatestDiffPath,
+			LatestReviewPath: final.LatestReviewPath,
+		})
 		var priorReview *Review
 		if latestReview.Verdict != "" {
 			priorReview = &latestReview
@@ -1855,7 +1996,16 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		final.RoundsCompleted = round
 		final.Review = review
 		final.LatestReviewPath = reviewPath
-		_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: "review-complete", CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath})
+		_ = writeRunState(runDir, RunState{
+			RunID:            runID,
+			Mode:             opts.Mode,
+			Status:           "running",
+			Phase:            "review-complete",
+			RoleStatuses:     final.RoleStatuses,
+			CurrentRound:     round,
+			LatestDiffPath:   final.LatestDiffPath,
+			LatestReviewPath: final.LatestReviewPath,
+		})
 		latestReview = *review
 
 		if review.Verdict == "pass" {
@@ -2172,6 +2322,95 @@ func appendRemainingPackagesSummary(summary string, remaining []string) string {
 	return strings.TrimSpace(summary) + "\n\nRemaining packages not run: " + strings.Join(remaining, "; ")
 }
 
+func (a *App) repairJSONWithWorker(ctx context.Context, opts RunOptions, registry map[string]Adapter, runDir, artifactBase, contractName, schema string, raw []byte, validationErr error) ([]byte, float64, bool, error) {
+	if opts.JSONRepair != "worker" {
+		return nil, 0, false, nil
+	}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil, 0, false, nil
+	}
+	worker, ok := registry[opts.Coder.Adapter]
+	if !ok {
+		return nil, 0, true, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown worker adapter %q for JSON repair", opts.Coder.Adapter)}
+	}
+	if err := checkAdapters(ctx, worker); err != nil {
+		return nil, 0, true, err
+	}
+	if err := os.MkdirAll(filepath.Dir(artifactBase), 0o755); err != nil {
+		return nil, 0, true, err
+	}
+	promptPath := artifactBase + ".repair-prompt.md"
+	outputPath := artifactBase + ".repaired.json"
+	prompt := BuildWorkerJSONRepairPrompt(contractName, schema, errString(validationErr), raw)
+	if err := writeRedactedBytes(promptPath, []byte(prompt), opts.EnvOverlay); err != nil {
+		return nil, 0, true, err
+	}
+	logProgress(opts, "worker JSON repair started contract=%s adapter=%s output=%s", contractName, worker.ID(), outputPath)
+	result, err := a.runAdapter(ctx, worker, RoleReporter, Request{
+		Context:        ctx,
+		Prompt:         prompt,
+		EnvOverlay:     opts.EnvOverlay,
+		Model:          opts.Coder.Model,
+		Workdir:        opts.Workdir,
+		RunDir:         runDir,
+		OutputPath:     outputPath,
+		Timeout:        opts.Timeout,
+		MaxOutputBytes: opts.MaxOutputBytes,
+		Phase:          fmt.Sprintf("worker JSON repair %s %s", contractName, worker.ID()),
+		Quiet:          opts.Quiet,
+		Verbose:        opts.Verbose,
+		Budget:         opts.InvocationBudget,
+	}, opts.DryRun)
+	if err != nil {
+		_ = writeRedactedBytes(artifactBase+".repair-failed.txt", []byte(err.Error()+"\n"), opts.EnvOverlay)
+		return nil, 0, true, err
+	}
+	repaired := bytes.TrimSpace(result.Raw)
+	if len(repaired) == 0 {
+		repaired = []byte(strings.TrimSpace(result.Text))
+	}
+	if len(repaired) == 0 && fileExists(outputPath) {
+		fileBytes, readErr := os.ReadFile(outputPath)
+		if readErr != nil {
+			return nil, result.CostUSD, true, readErr
+		}
+		repaired = bytes.TrimSpace(fileBytes)
+	}
+	if err := writeRedactedBytes(outputPath, repaired, opts.EnvOverlay); err != nil {
+		return nil, result.CostUSD, true, err
+	}
+	logProgress(opts, "worker JSON repair completed contract=%s output=%s", contractName, outputPath)
+	return repaired, result.CostUSD, true, nil
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func logJSONRepairPolicy(opts RunOptions) {
+	_, reviewerLabel := roleLabels(opts.Mode)
+	if opts.JSONRepair == "worker" {
+		logProgress(opts, "worker JSON repair enabled explicitly; invalid JSON contract output may be parsed by worker=%s", roleTargetString(opts.Coder))
+		return
+	}
+	if reviewerLabel == "supervisor" && opts.Adversary.Adapter == "claude" {
+		logProgress(opts, "warning: Claude supervisor has a known JSON-output rough edge; rerun with --repair-json-with-worker to explicitly allow the worker parser workaround")
+	}
+}
+
+func readRepairSource(outputPath string, fallback []byte) []byte {
+	if strings.TrimSpace(outputPath) != "" && fileExists(outputPath) {
+		if raw, err := os.ReadFile(outputPath); err == nil && len(bytes.TrimSpace(raw)) > 0 {
+			return raw
+		}
+	}
+	return fallback
+}
+
 func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runDir, schemaPath, prompt, baseline, diff, diffPath, testOutput, coderOutputPath string, priorReview *Review, relay RelayContext, repoInstructions string, final *FinalRun) (*Review, float64, string, error) {
 	_, reviewerLabel := roleLabels(opts.Mode)
 	outputLabel := reviewerLabel
@@ -2243,6 +2482,22 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 			result, err = a.runAdapter(ctx, adapter, RoleAdversary, req, opts.DryRun)
 			if err != nil {
 				if IsOutputContractError(err) {
+					if repaired, repairCost, attempted, repairErr := a.repairJSONWithWorker(ctx, opts, Registry(a.Config, opts), runDir, req.OutputPath, "review", ReviewSchema, readRepairSource(req.OutputPath, result.Raw), err); repairErr != nil {
+						_ = writeRedactedBytes(req.OutputPath+".repair-failed.txt", []byte(repairErr.Error()+"\n"), req.EnvOverlay)
+					} else if attempted {
+						review, parseErr := parseReviewPayload(repaired)
+						if parseErr == nil {
+							if final != nil {
+								setFinalDegraded(final, ReasonJSONRepairUsed, "review JSON repaired by worker")
+								appendRoleLoss(final, reviewerLabel, lossPolicyForRole(opts, reviewerLabel), "json-repair", "repaired", ReasonJSONRepairUsed, "worker repaired invalid review JSON")
+							}
+							if req.OutputPath != "" {
+								_ = writeJSONWithNewline(req.OutputPath+".parsed.json", review)
+							}
+							return review, repairCost, outputPath, nil
+						}
+						_ = writeRedactedBytes(req.OutputPath+".repair-validation-error.txt", []byte(parseErr.Error()+"\n"), req.EnvOverlay)
+					}
 					if req.OutputPath != "" {
 						_ = writeJSONWithNewline(req.OutputPath+".invalid.json", map[string]any{
 							"schema_version": ArtifactSchemaVersion,

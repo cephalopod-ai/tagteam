@@ -125,6 +125,26 @@ func TestResolveOptions_ClaudeFailoverProfile(t *testing.T) {
 	}
 }
 
+func TestResolveOptions_JSONRepairWithWorker(t *testing.T) {
+	opts, err := ResolveOptions(DefaultConfig(), nil, FlagInputs{
+		RepairJSONWithWorker: true,
+		Timeout:              15 * time.Minute,
+	}, map[string]bool{"repair-json-with-worker": true}, "ship it")
+	if err != nil {
+		t.Fatalf("ResolveOptions() error = %v", err)
+	}
+	if opts.JSONRepair != "worker" {
+		t.Fatalf("json repair = %q", opts.JSONRepair)
+	}
+
+	cfg := DefaultConfig()
+	cfg.Defaults.JSONRepair = "explode"
+	_, err = ResolveOptions(cfg, nil, FlagInputs{Timeout: 15 * time.Minute}, nil, "ship it")
+	if err == nil || !strings.Contains(err.Error(), "invalid json_repair") {
+		t.Fatalf("expected invalid json_repair error, got %v", err)
+	}
+}
+
 func TestResolveOptions_InvalidLossAndContextPolicies(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Defaults.LossPolicy.Scout = "maybe"

@@ -17,10 +17,10 @@ const pollInterval = time.Second
 // mutates the run directory -- each tick only re-reads the on-disk snapshot.
 func Run(ctx context.Context, workdir, runDir string, out *os.File, in *os.File) error {
 	toggles := DefaultToggles()
-	isTTY := in != nil && term.IsTerminal(int(in.Fd()))
+	interactive := in != nil && out != nil && term.IsTerminal(int(in.Fd())) && term.IsTerminal(int(out.Fd()))
 
 	var restore func()
-	if isTTY {
+	if interactive {
 		oldState, err := term.MakeRaw(int(in.Fd()))
 		if err == nil {
 			restore = func() { _ = term.Restore(int(in.Fd()), oldState) }
@@ -37,7 +37,7 @@ func Run(ctx context.Context, workdir, runDir string, out *os.File, in *os.File)
 	// keypress appear to do nothing.
 	var keyCh chan byte
 	var errCh chan error
-	if isTTY {
+	if interactive {
 		keyCh = make(chan byte, 16)
 		errCh = make(chan error, 1)
 		go readKeys(in, keyCh, errCh)
@@ -54,14 +54,16 @@ func Run(ctx context.Context, workdir, runDir string, out *os.File, in *os.File)
 			planPtr = &plan
 		}
 
-		clearScreen(out)
+		if interactive {
+			clearScreen(out)
+		}
 		Render(out, snapshot, planPtr, toggles)
 
 		if snapshot.Status != "running" {
 			return nil
 		}
 
-		key, timedOut, err := waitForKey(ctx, keyCh, errCh, isTTY)
+		key, timedOut, err := waitForKey(ctx, keyCh, errCh, interactive)
 		if err != nil {
 			return nil
 		}

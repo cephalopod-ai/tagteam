@@ -641,6 +641,61 @@ func TestRunAdversaryUsesConfiguredFallbackAfterPrimaryFailure(t *testing.T) {
 	}
 }
 
+func TestRunAdversaryRepairsReviewJSONWithWorker(t *testing.T) {
+	installFakeBinaries(t, map[string]string{
+		"claude": fakeClaudeInvalidReviewScript,
+		"codex":  fakeCodexPassingReviewScript,
+	})
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	app := NewApp(DefaultConfig())
+	runDir := filepath.Join(repo, ".tagteam", "runs", "repair-test")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	schemaPath := filepath.Join(runDir, "review-schema.json")
+	if err := os.WriteFile(schemaPath, []byte(ReviewSchema), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diffPath := filepath.Join(runDir, "diff.patch")
+	if err := os.WriteFile(diffPath, []byte("diff --git a/README.md b/README.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	final := FinalRun{Adapters: map[string]string{"worker": "codex", "supervisor": "claude"}, Models: map[string]string{"worker": "gpt-5.4-mini", "supervisor": "sonnet"}}
+	initFinalState(&final, RunOptions{EnvOverlay: map[string]string{}})
+	opts := RunOptions{
+		Prompt:         "review",
+		Workdir:        repo,
+		Mode:           ModeSupervisor,
+		Coder:          RoleTarget{Adapter: "codex", Model: "gpt-5.4-mini"},
+		Adversary:      RoleTarget{Adapter: "claude", Model: "sonnet"},
+		JSONRepair:     "worker",
+		Timeout:        5 * time.Second,
+		MaxOutputBytes: 2 * 1024 * 1024,
+	}
+
+	review, _, outputPath, err := app.runAdversary(context.Background(), opts, 1, runDir, schemaPath, opts.Prompt, "HEAD", "diff --git a/README.md b/README.md\n", diffPath, "", "", nil, RelayContext{}, "", &final)
+	if err != nil {
+		t.Fatalf("runAdversary() error = %v", err)
+	}
+	if review == nil || review.Verdict != "pass" {
+		t.Fatalf("review = %#v", review)
+	}
+	if !final.Degraded || final.DegradedReason != string(ReasonJSONRepairUsed) {
+		t.Fatalf("final degradation = degraded=%v reason=%q", final.Degraded, final.DegradedReason)
+	}
+	if !fileExists(outputPath + ".repaired.json") {
+		t.Fatalf("expected repaired artifact for %s", outputPath)
+	}
+}
+
 func TestEnsureGitignoreEntry_AppendsOnce(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules/\n"), 0o644); err != nil {
@@ -1866,6 +1921,14 @@ if [ "$1" = "--version" ]; then
 fi
 echo "reviewer exploded" >&2
 exit 7
+`
+
+const fakeClaudeInvalidReviewScript = `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "1.0.0"
+  exit 0
+fi
+printf '%s' '{"result":"not-json","session_id":"","total_cost_usd":0}'
 `
 
 const fakeCodexPassingReviewScript = `#!/bin/sh

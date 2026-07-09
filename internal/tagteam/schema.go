@@ -145,3 +145,24 @@ const OrchestrationAdvisorySchema = `{
   },
   "additionalProperties": false
 }`
+
+func ScoutSchemaForRepair() string {
+	return `{
+  "type": "object",
+  "required": ["relevant_files", "likely_entry_points", "existing_patterns", "risks", "suggested_tests"],
+  "properties": {
+    "schema_version": {"type": "integer"},
+    "mode": {"type": "string"},
+    "summary": {"type": "string"},
+    "relevant_files": {"type": "array", "items": {"type": "string"}},
+    "likely_entry_points": {"type": "array", "items": {"type": "string"}},
+    "existing_patterns": {"type": "array", "items": {"type": "string"}},
+    "risks": {"type": "array", "items": {"type": "string"}},
+    "suggested_tests": {"type": "array", "items": {"type": "string"}},
+    "retrieval_queries": {"type": "array", "items": {"type": "string"}},
+    "evidence": {"type": "array"},
+    "items": {"type": "array"},
+    "do_not_block": {"type": "boolean"}
+  }
+}`
+}

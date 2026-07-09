@@ -150,7 +150,7 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - Vendor CLI flag drift can break adapters. `codex`, `codex-oss`, `claude`, `agy`, `gosling`, and similar tools may rename flags, change output formats, or alter auth behavior between releases.
 - Authentication is adapter-specific. CLI-backed adapters usually rely on the vendor's own login/session flow; `openai-compatible` / `oai` relies on explicit environment/config values.
 - Supervisor slicing is more format-sensitive than the final review pass. The final review path is schema-validated, but some supervisor planning/instruction steps still depend on adapter output being reasonably well-formed.
-- Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and can recover when a valid review JSON object is embedded in the prose; if no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection.
+- Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and can recover when a valid review JSON object is embedded in the prose; if no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection. If you intentionally want the already-selected worker to act as a read-only parser workaround, pass `--repair-json-with-worker` or set `json_repair = "worker"`; repaired runs are marked degraded with `json_repair_used`.
 - Different adapters do not expose identical capabilities. Some support schema-constrained output, stdin, or session resume; others do not. `tagteam` degrades where possible, but behavior is not perfectly uniform.
 - Local `.env` loading is a convenience feature, not a secret-management system. It helps with local runs, but shell-exported environment variables still take precedence.
 - Repo-local `.tagteam.toml` is partially trusted by default: low-authority defaults such as roles/models can be read, but shell tests, adapter passthrough args, Claude permission/tool widening, and `openai-compatible` endpoints/headers are ignored unless you pass `--trust-repo-config`.
@@ -452,11 +452,12 @@ tagteam init
 | `respect_repo_instructions` | load explicit repo instruction files and append them to role prompts |
 | `rounds` | hard cap on implementation/review cycles; exhausted runs stop and collect final reports from both agents |
 | `max_role_invocations` | optional hard cap on adapter calls in one run; `--max-role-invocations` overrides it |
+| `json_repair` | explicit JSON contract repair mode: `off` (default) or `worker`; `--repair-json-with-worker` enables the selected worker as a read-only parser for invalid JSON artifacts |
 | `test`, `git_safety` | test command and git safety settings |
 
 </details>
 
-Profiles may override `mode`, `scout`, `scout_mode`, `scout_retrieval`, `scout_failure_policy`, `scout_context_policy`, `loss_policy`, `fallbacks`, `fallbacks_by_target`, `post_scout_mode`, `worker`, `supervisor`, `coder`, `adversary`, `rounds`, and `test`. A profile that sets `coder`/`adversary` but omits `mode` resolves as an adversarial-mode profile, so profiles written before `mode` existed keep working unchanged:
+Profiles may override `mode`, `scout`, `scout_mode`, `scout_retrieval`, `scout_failure_policy`, `scout_context_policy`, `loss_policy`, `fallbacks`, `fallbacks_by_target`, `json_repair`, `post_scout_mode`, `worker`, `supervisor`, `coder`, `adversary`, `rounds`, and `test`. A profile that sets `coder`/`adversary` but omits `mode` resolves as an adversarial-mode profile, so profiles written before `mode` existed keep working unchanged:
 
 ```toml
 [defaults]
@@ -466,6 +467,7 @@ supervisor = "claude:opus"
 supervisor_slicing = true
 max_packages = 5
 rounds = 2
+json_repair = "off"
 
 [profiles.relay.loss_policy]
 scout = "replace_then_degrade"

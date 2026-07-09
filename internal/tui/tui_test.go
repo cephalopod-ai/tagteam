@@ -3,8 +3,10 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +66,13 @@ func TestRunNonTTYCompletedRunRendersOnceAndReturns(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run() did not return promptly for a completed run in a non-TTY environment")
+	}
+	rendered, err := io.ReadAll(outRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rendered), "\x1b[H\x1b[2J") {
+		t.Fatalf("expected non-interactive output to omit clear-screen escape codes, got:\n%s", string(rendered))
 	}
 }
 

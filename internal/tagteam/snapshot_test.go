@@ -104,6 +104,42 @@ func TestBuildRunSnapshot_CompletedFinalRun(t *testing.T) {
 	}
 }
 
+func TestBuildRunSnapshot_PreservesStateStatusWhenOlderFinalOmitsIt(t *testing.T) {
+	workdir, runDir, runID := newRunDirForSnapshotTest(t)
+	state := RunState{RunID: runID, Mode: ModeSupervisor, Status: "finished", Phase: "final", CurrentRound: 1}
+	if err := writeJSONWithNewline(filepath.Join(runDir, "state.json"), state); err != nil {
+		t.Fatal(err)
+	}
+	final := FinalRun{
+		SchemaVersion:   ArtifactSchemaVersion,
+		RunID:           runID,
+		RunDir:          runDir,
+		Mode:            ModeSupervisor,
+		Verdict:         "needs_changes",
+		ExitCode:        ExitBlockingFindings,
+		RoundsCompleted: 1,
+		RoundsRequested: 1,
+		FinishedAt:      time.Now().UTC(),
+	}
+	if err := writeJSONWithNewline(filepath.Join(runDir, "final.json"), final); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := BuildRunSnapshot(workdir, runDir)
+	if err != nil {
+		t.Fatalf("BuildRunSnapshot() error = %v", err)
+	}
+	if snapshot.Status != "finished" {
+		t.Fatalf("status = %q, want state.json fallback when final.json omits status", snapshot.Status)
+	}
+	if snapshot.Phase != "final" {
+		t.Fatalf("phase = %q, want state.json fallback when final.json omits phase", snapshot.Phase)
+	}
+	if snapshot.Verdict != "needs_changes" {
+		t.Fatalf("verdict = %q, want final.json verdict", snapshot.Verdict)
+	}
+}
+
 func TestBuildRunSnapshot_IncludesPlanSummaryWhenPresent(t *testing.T) {
 	workdir, runDir, runID := newRunDirForSnapshotTest(t)
 	now := time.Now().UTC()

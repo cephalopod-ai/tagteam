@@ -43,6 +43,7 @@ func DefaultConfig() Config {
 			MaxOutputBytes:          2 * 1024 * 1024,
 			MaxWallTime:             "0s",
 			MaxRoleInvocations:      0,
+			JSONRepair:              "off",
 			Rounds:                  2,
 			GitSafety:               "clean",
 		},
@@ -327,6 +328,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 	src.Defaults.MaxOutputBytes = 0
 	src.Defaults.MaxWallTime = ""
 	src.Defaults.MaxRoleInvocations = 0
+	src.Defaults.JSONRepair = ""
 	src.Defaults.LossPolicy = RoleLossPolicies{}
 	src.Defaults.Fallbacks = RoleFallbacks{}
 	src.Defaults.FallbacksByTarget = nil
@@ -336,6 +338,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 		profile.MaxOutputBytes = 0
 		profile.MaxWallTime = ""
 		profile.MaxRoleInvocations = 0
+		profile.JSONRepair = ""
 		profile.LossPolicy = RoleLossPolicies{}
 		profile.Fallbacks = RoleFallbacks{}
 		profile.FallbacksByTarget = nil
@@ -430,6 +433,9 @@ func mergeConfig(dst *Config, src Config) {
 	if src.Defaults.MaxRoleInvocations != 0 {
 		dst.Defaults.MaxRoleInvocations = src.Defaults.MaxRoleInvocations
 	}
+	if src.Defaults.JSONRepair != "" {
+		dst.Defaults.JSONRepair = src.Defaults.JSONRepair
+	}
 	if src.Defaults.Rounds != 0 {
 		dst.Defaults.Rounds = src.Defaults.Rounds
 	}
@@ -510,6 +516,9 @@ func mergeConfig(dst *Config, src Config) {
 			}
 			if profile.MaxRoleInvocations != 0 {
 				current.MaxRoleInvocations = profile.MaxRoleInvocations
+			}
+			if profile.JSONRepair != "" {
+				current.JSONRepair = profile.JSONRepair
 			}
 			if profile.Rounds != 0 {
 				current.Rounds = profile.Rounds
@@ -658,6 +667,7 @@ func hasTagteamEnv(overlay map[string]string) bool {
 		"TAGTEAM_MAX_OUTPUT_BYTES",
 		"TAGTEAM_MAX_WALL_TIME",
 		"TAGTEAM_MAX_ROLE_INVOCATIONS",
+		"TAGTEAM_JSON_REPAIR",
 		"TAGTEAM_ROUNDS",
 		"TAGTEAM_TEST",
 		"TAGTEAM_GIT_SAFETY",
@@ -776,6 +786,9 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
 			cfg.Defaults.MaxRoleInvocations = parsed
 		}
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_JSON_REPAIR"); ok {
+		cfg.Defaults.JSONRepair = value
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MODE"); ok {
 		cfg.Defaults.Mode = value
@@ -942,6 +955,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	maxFindings := cfg.Defaults.MaxFindings
 	maxOutputBytes := cfg.Defaults.MaxOutputBytes
 	maxRoleInvocations := cfg.Defaults.MaxRoleInvocations
+	jsonRepair := cfg.Defaults.JSONRepair
 	var maxWallTime time.Duration
 	if strings.TrimSpace(cfg.Defaults.MaxWallTime) != "" {
 		parsed, err := time.ParseDuration(cfg.Defaults.MaxWallTime)
@@ -1028,6 +1042,9 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		}
 		if profile.MaxRoleInvocations != 0 {
 			maxRoleInvocations = profile.MaxRoleInvocations
+		}
+		if profile.JSONRepair != "" {
+			jsonRepair = profile.JSONRepair
 		}
 		if strings.TrimSpace(profile.MaxWallTime) != "" {
 			parsed, err := time.ParseDuration(profile.MaxWallTime)
@@ -1277,6 +1294,9 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	if changed["max-role-invocations"] {
 		maxRoleInvocations = flags.MaxRoleInvocations
 	}
+	if changed["repair-json-with-worker"] {
+		jsonRepair = "worker"
+	}
 
 	if changed["rounds"] {
 		rounds = flags.Rounds
@@ -1355,6 +1375,12 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	}
 	if maxRoleInvocations < 0 {
 		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("max-role-invocations must be >= 0")}
+	}
+	if jsonRepair == "" {
+		jsonRepair = "off"
+	}
+	if jsonRepair != "off" && jsonRepair != "worker" {
+		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("invalid json_repair %q (want off or worker)", jsonRepair)}
 	}
 
 	editorLabel, reviewerLabel := roleLabels(mode)
@@ -1446,6 +1472,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		MaxOutputBytes:            maxOutputBytes,
 		MaxWallTime:               maxWallTime,
 		MaxRoleInvocations:        maxRoleInvocations,
+		JSONRepair:                jsonRepair,
 		Rounds:                    rounds,
 		TestCmd:                   testCmd,
 		NoTest:                    flags.NoTest,
