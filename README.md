@@ -609,7 +609,7 @@ Diff artifacts are captured through a temporary Git index, not the real staging 
 > [!CAUTION]
 > Diagnostic output, delivery records, copied prompts, and raw/validation-error artifacts redact values from sensitive shell environment keys and the scoped `.env` overlay. Prompts, diffs, and model outputs are still persisted for inspectability, so do not paste secrets into task prompts or source files.
 
-## TUI
+## TUI (not yet human tested)
 
 ```bash
 tagteam tui [RUN_ID]
