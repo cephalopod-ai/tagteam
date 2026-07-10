@@ -1,7 +1,9 @@
 package tagteam
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,8 +23,8 @@ type ResumeRecord struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-// Resume verifies an interrupted run and continues it in a linked run. The
-// source run remains immutable evidence and the continuation names its source.
+// Resume verifies an interrupted run and continues the first incomplete phase
+// in the same authoritative run directory.
 func (a *App) Resume(ctx context.Context, opts RunOptions, runID string) (FinalRun, error) {
 	locator, err := resolveStateLocator(opts.Workdir, opts.StateRoot)
 	if err != nil {
@@ -70,6 +72,9 @@ func (a *App) Resume(ctx context.Context, opts RunOptions, runID string) (FinalR
 	if state.DiffHash != "" && state.DiffHash != currentDiffHash && phase != PhaseImplementing && phase != PhaseRepairing {
 		return quarantineResume(runDir, state, fmt.Errorf("worktree diff hash changed after completed %s phase", phase))
 	}
+	if err := verifyResumeArtifacts(runDir, state); err != nil {
+		return quarantineResume(runDir, state, err)
+	}
 	prompt, err := readRunPrompt(runDir, opts.Prompt)
 	if err != nil {
 		return FinalRun{}, err
@@ -109,22 +114,77 @@ func (a *App) Resume(ctx context.Context, opts RunOptions, runID string) (FinalR
 			prior = &review
 		}
 	}
-	var continued FinalRun
-	if opts.Mode == ModeSolo {
-		continued, err = a.runSolo(ctx, opts)
-	} else {
-		continued, err = a.runLoop(ctx, opts, prior)
-	}
-	record.ContinuedRunID = continued.RunID
-	record.Status = "continued"
+	continued, err := a.resumeExistingRun(ctx, opts, runDir, meta, state, saved, prior, currentDiffHash)
+	record.ContinuedRunID = runID
+	record.Status = "resumed"
 	if err != nil {
-		record.Status = "continuation_failed"
+		if continued.FinishedAt.IsZero() {
+			record.Status = "resume_failed"
+		}
 		record.Message = err.Error()
 	}
 	_ = writeJSONWithNewline(filepath.Join(runDir, "resume.json"), record)
-	state.RecoveryStatus = "continued_as:" + continued.RunID
-	_ = writeRunState(runDir, state)
 	return continued, err
+}
+
+func verifyResumeArtifacts(runDir string, state RunState) error {
+	if state.LatestDiffPath != "" {
+		if err := verifyResumeArtifactPath(runDir, state.LatestDiffPath); err != nil {
+			return err
+		}
+		patch, err := os.ReadFile(state.LatestDiffPath)
+		if err != nil {
+			return fmt.Errorf("read latest diff artifact: %w", err)
+		}
+		if state.DiffHash != "" && sha256Sum(patch) != state.DiffHash {
+			return fmt.Errorf("latest diff artifact hash does not match state")
+		}
+	}
+	if state.LatestReviewPath != "" {
+		if err := verifyResumeArtifactPath(runDir, state.LatestReviewPath); err != nil {
+			return err
+		}
+		if _, err := readReviewArtifact(state.LatestReviewPath); err != nil {
+			return fmt.Errorf("latest review artifact is invalid: %w", err)
+		}
+	}
+	events, err := os.ReadFile(filepath.Join(runDir, "events.jsonl"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read state journal: %w", err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(events), []byte{'\n'})
+	if len(lines) == 0 || len(lines[0]) == 0 {
+		return fmt.Errorf("state journal is empty")
+	}
+	var last StateEvent
+	if err := json.Unmarshal(lines[len(lines)-1], &last); err != nil {
+		return fmt.Errorf("decode final state journal event: %w", err)
+	}
+	if last.RunID != state.RunID || last.ToPhase != normalizeRunPhase(state.Phase) || last.Status != state.Status || last.Round != state.CurrentRound {
+		return fmt.Errorf("state journal does not match the latest state transition")
+	}
+	if last.DiffHash != "" && state.DiffHash != "" && last.DiffHash != state.DiffHash {
+		return fmt.Errorf("state journal diff hash does not match state")
+	}
+	return nil
+}
+
+func verifyResumeArtifactPath(runDir, path string) error {
+	root, err := canonicalPath(runDir, true)
+	if err != nil {
+		return err
+	}
+	artifact, err := canonicalPath(path, true)
+	if err != nil {
+		return err
+	}
+	if !pathWithin(root, artifact) {
+		return fmt.Errorf("resume artifact escapes run directory: %s", path)
+	}
+	return nil
 }
 
 func quarantineResume(runDir string, state RunState, cause error) (FinalRun, error) {

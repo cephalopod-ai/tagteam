@@ -24,7 +24,7 @@ orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`
 | Types | `internal/tagteam/types.go` | `Mode`, `Role`, `ReasonCode`, `RunOptions`, `FinalRun`, `RunState`, exit codes, JSON contracts. |
 | Artifact store | `internal/tagteam/artifact_store.go`, `durable_io.go` | Derives repository identity, maintains `.tagteam/repo.json`, migrates legacy state, and atomically persists external artifacts. |
 | Active run pointer | `internal/tagteam/active_run.go` | Persists external `active.json` for in-flight run discovery and failure cleanup. |
-| Resilience | `state_machine.go`, `run_lock.go`, `recovery.go`, `resume.go`, `timeout_calibration.go`, `invocation_stream.go` | Phase journaling, locks/cancellation, partial-diff recovery, continuation, calibrated deadlines, and durable subprocess streams. |
+| Resilience | `state_machine.go`, `run_lock.go`, `recovery.go`, `resume.go`, `resume_execution.go`, `resume_phases.go`, `timeout_calibration.go`, `invocation_stream.go` | Phase journaling, locks/cancellation, partial-diff recovery, same-run phase continuation, calibrated deadlines, and durable subprocess streams. |
 | Quality / transfer | `quality_gates.go`, `findings.go`, `test_hardening.go`, `transfer.go`, `integrity.go` | Scope/churn/data-loss/findings/regression gates, isolated tests, structural integrity, and explicit patch transfer. |
 | Snapshot / live status | `internal/tagteam/snapshot.go` | Builds `RunSnapshot` from `active.json`, `state.json`, `final.json`, and `plan.json`. |
 | Run state / reasons | `internal/tagteam/run_state.go` | Failure classification, exit→reason mapping, role status/loss records, budget state, redacted persistence helpers. |

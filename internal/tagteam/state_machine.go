@@ -1,6 +1,7 @@
 package tagteam
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -50,6 +51,12 @@ func normalizeRunPhase(raw string) RunPhase {
 }
 
 func completedPhaseForTransition(previous RunState, next RunState) RunPhase {
+	if next.Status == string(RunStatusPassed) || next.Status == string(RunStatusDegraded) || next.Status == string(RunStatusBlocked) {
+		current := normalizeRunPhase(next.Phase)
+		if phaseOrder(current) > phaseOrder(previous.CompletedPhase) {
+			return current
+		}
+	}
 	if previous.Phase == "" || previous.Phase == next.Phase {
 		return previous.CompletedPhase
 	}
@@ -178,7 +185,20 @@ func recordInvocationState(req Request, record DeliveryRecord) {
 	state.Adapter = record.Adapter
 	state.Model = record.Model
 	state.InvocationID = record.InvocationID
+	if state.BaselineSHA != "" && req.Workdir != "" {
+		indexPath := filepath.Join(req.RunDir, "invocation-state.index")
+		if patch, diffErr := deterministicDiffPatch(contextOrBackground(req.Context), req.Workdir, state.BaselineSHA, indexPath); diffErr == nil {
+			state.DiffHash = sha256Sum(patch)
+		}
+	}
 	_ = persistRunState(req.RunDir, state)
+}
+
+func contextOrBackground(ctx context.Context) context.Context {
+	if ctx != nil {
+		return ctx
+	}
+	return context.Background()
 }
 
 func invocationPhase(role Role, description string) RunPhase {

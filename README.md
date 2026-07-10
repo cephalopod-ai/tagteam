@@ -595,7 +595,7 @@ Override the root with `--state-root`, `TAGTEAM_STATE_ROOT`, or `state_root` in 
 
 `active.json`, `latest.json`, locks, and all run artifacts are authoritative only in the external repository state directory. On first use, legacy `.tagteam/runs`, `.tagteam/active.json`, and `.tagteam/latest.json` are checksum-copied, verified, and only then removed. Unmigrated legacy artifacts remain readable but are not resumable.
 
-State changes are atomic and journaled through `state.json` plus `events.jsonl`. `tagteam resume [RUN_ID]` verifies repository identity, baseline, diff hash, and lock ownership before continuing an interrupted run. Timeouts, stalls, cancellation, and invalid worker output preserve streams and partial diffs; changed work enters a supervisor recovery decision (`repair`, `continue_with_fallback`, or `quarantine`) instead of being discarded.
+State changes are atomic and journaled through `state.json` plus `events.jsonl`. `tagteam resume [RUN_ID]` verifies repository identity, baseline, artifact hashes, the final journal transition, current diff, and lock ownership before continuing the first incomplete phase in the same authoritative run. Completed implementation and test phases are not repeated. Timeouts, stalls, cancellation, and invalid worker output preserve streams and partial diffs; changed work enters a supervisor recovery decision (`repair`, `continue_with_fallback`, or `quarantine`) instead of being discarded.
 
 <details>
 <summary><strong>Typical contents</strong></summary>

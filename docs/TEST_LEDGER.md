@@ -1,7 +1,7 @@
 # Test Ledger
 
 Derived from the current test files and a local validation run on 2026-07-10.
-303 test functions across 30 files (large suites are mechanically split to
+305 test functions across 30 files (large suites are mechanically split to
 keep every Go source file within the 800-line gate).
 
 | Test Area | Command / Evidence | Last Known Result | Source | Coverage Meaning | Gaps |

@@ -78,6 +78,114 @@ func TestResumeQuarantinesBaselineMismatch(t *testing.T) {
 	}
 }
 
+func TestResumeContinuesSameRunFromFirstIncompletePhase(t *testing.T) {
+	installFakeClaudeBinary(t)
+	for _, phase := range []RunPhase{PhasePlanning, PhaseImplementing, PhaseTesting, PhaseReviewing, PhaseRepairing} {
+		t.Run(string(phase), func(t *testing.T) {
+			repo, baseline := createResumeFixtureRepo(t)
+			runID := "resume-" + string(phase)
+			runDir, err := createRunDir(repo, "", runID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			meta := Meta{
+				SchemaVersion: ArtifactSchemaVersion,
+				RunID:         runID,
+				Workdir:       repo,
+				Baseline:      baseline,
+				Command:       "run",
+				Prompt:        "fixture",
+				StartedAt:     time.Now().UTC(),
+				Adapters:      map[string]string{"coder": "claude", "adversary": "claude"},
+				Models:        map[string]string{},
+			}
+			if err := writeJSONWithNewline(filepath.Join(runDir, "meta.json"), meta); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeFileDurable(filepath.Join(runDir, "input.md"), []byte("fixture\n"), 0o600, false); err != nil {
+				t.Fatal(err)
+			}
+			diff, err := captureDiffArtifact(context.Background(), repo, baseline, runDir, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := RunState{RunID: runID, Workdir: repo, BaselineSHA: baseline, Mode: ModeAdversarial, Status: string(RunStatusRunning), Phase: string(phase), CurrentRound: 1, DiffHash: diff.Metadata.DiffSHA256, LatestDiffPath: diff.PatchPath}
+			if err := persistRunState(runDir, state); err != nil {
+				t.Fatal(err)
+			}
+			final := FinalRun{SchemaVersion: ArtifactSchemaVersion, RunID: runID, RunDir: runDir, Workdir: repo, Baseline: baseline, Mode: ModeAdversarial, Coder: RoleTarget{Adapter: "claude"}, Adversary: RoleTarget{Adapter: "claude"}, Status: RunStatusRunning, RoundsRequested: 1, BaselineTest: &TestRun{Command: "true", Passed: true}, Costs: map[string]float64{}, StartedAt: meta.StartedAt}
+			if err := writeJSONWithNewline(filepath.Join(runDir, "final.json"), final); err != nil {
+				t.Fatal(err)
+			}
+
+			resumed, resumeErr := NewApp(DefaultConfig()).Resume(context.Background(), RunOptions{Workdir: repo, Mode: ModeAdversarial, Rounds: 1, TestCmd: "true", Timeout: 10 * time.Second, AllowedPaths: []string{"README.md"}}, runID)
+			if resumeErr == nil || ExitCode(resumeErr) != ExitBlockingFindings {
+				t.Fatalf("Resume() error = %v, want blocking review result", resumeErr)
+			}
+			if resumed.RunID != runID || resumed.RunDir != runDir {
+				t.Fatalf("resume created a replacement run: %#v", resumed)
+			}
+			coderOutput := filepath.Join(runDir, "coder-round-1.md")
+			_, coderErr := os.Stat(coderOutput)
+			shouldRunCoder := phase == PhasePlanning || phase == PhaseImplementing || phase == PhaseRepairing
+			if shouldRunCoder && coderErr != nil {
+				t.Fatalf("coder should run from %s: %v", phase, coderErr)
+			}
+			if !shouldRunCoder && !os.IsNotExist(coderErr) {
+				t.Fatalf("coder reran after completed implementation in %s", phase)
+			}
+			var record ResumeRecord
+			readJSONFile(t, filepath.Join(runDir, "resume.json"), &record)
+			if record.Status != "resumed" || record.ContinuedRunID != runID {
+				t.Fatalf("resume record = %#v", record)
+			}
+		})
+	}
+}
+
+func TestResumeRoutesInterruptedPartialDiffThroughRecovery(t *testing.T) {
+	installFakeClaudeBinary(t)
+	repo, baseline := createResumeFixtureRepo(t)
+	runID := "resume-partial"
+	runDir, err := createRunDir(repo, "", runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := Meta{SchemaVersion: ArtifactSchemaVersion, RunID: runID, Workdir: repo, Baseline: baseline, Command: "run", Prompt: "fixture", StartedAt: time.Now().UTC(), Adapters: map[string]string{"coder": "claude", "adversary": "claude"}, Models: map[string]string{}}
+	if err := writeJSONWithNewline(filepath.Join(runDir, "meta.json"), meta); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileDurable(filepath.Join(runDir, "input.md"), []byte("fixture\n"), 0o600, false); err != nil {
+		t.Fatal(err)
+	}
+	before, err := captureDiffArtifact(context.Background(), repo, baseline, runDir, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := RunState{RunID: runID, Workdir: repo, BaselineSHA: baseline, Mode: ModeAdversarial, Status: string(RunStatusRunning), Phase: string(PhaseImplementing), CurrentRound: 1, DiffHash: before.Metadata.DiffSHA256, LatestDiffPath: before.PatchPath, InvocationID: "interrupted-invocation"}
+	if err := persistRunState(runDir, state); err != nil {
+		t.Fatal(err)
+	}
+	final := FinalRun{SchemaVersion: ArtifactSchemaVersion, RunID: runID, RunDir: runDir, Workdir: repo, Baseline: baseline, Mode: ModeAdversarial, Coder: RoleTarget{Adapter: "claude"}, Adversary: RoleTarget{Adapter: "claude"}, Status: RunStatusRunning, RoundsRequested: 1, BaselineTest: &TestRun{Command: "true", Passed: true}, Costs: map[string]float64{}, StartedAt: meta.StartedAt}
+	if err := writeJSONWithNewline(filepath.Join(runDir, "final.json"), final); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("partial worker edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed, resumeErr := NewApp(DefaultConfig()).Resume(context.Background(), RunOptions{Workdir: repo, Mode: ModeAdversarial, Rounds: 1, TestCmd: "true", Timeout: 10 * time.Second, AllowedPaths: []string{"README.md"}}, runID)
+	if resumeErr == nil || resumed.Status != RunStatusQuarantined {
+		t.Fatalf("final=%#v err=%v, want quarantined recovery", resumed, resumeErr)
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "recovery-round-1.json")); err != nil {
+		t.Fatalf("missing recovery artifact: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(repo, "README.md")); err != nil || string(data) != "partial worker edit\n" {
+		t.Fatalf("partial work was not preserved: %q err=%v", data, err)
+	}
+}
+
 func createResumeFixtureRepo(t *testing.T) (string, string) {
 	t.Helper()
 	repo := t.TempDir()

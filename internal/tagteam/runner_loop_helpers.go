@@ -196,6 +196,6 @@ func (a *App) finalizeReviewedRun(opts RunOptions, runDir string, budget *Invoca
 		final.Plan = summarizeExecutionPlan(runDir, executionPlan)
 	}
 	logProgress(opts, "run %s finished verdict=%s exit=%d rounds=%d/%d", final.RunID, final.Verdict, final.ExitCode, final.RoundsCompleted, final.RoundsRequested)
-	_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: string(final.Status), Phase: "final", Degraded: final.Degraded, DegradedReason: final.DegradedReason, BlockingReason: final.BlockingReason, RoleStatuses: final.RoleStatuses, CurrentRound: final.RoundsCompleted, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode})
+	_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: string(final.Status), Phase: string(PhaseReviewing), Degraded: final.Degraded, DegradedReason: final.DegradedReason, BlockingReason: final.BlockingReason, RoleStatuses: final.RoleStatuses, CurrentRound: final.RoundsCompleted, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode})
 	return a.persistFinal(opts.Workdir, *final)
 }
