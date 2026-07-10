@@ -2,6 +2,7 @@ package tagteam
 
 import (
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -39,6 +40,9 @@ func redactStringSlice(values []string, overlay map[string]string) []string {
 }
 
 func writeRedactedBytes(path string, data []byte, overlay map[string]string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(path, []byte(redactSecretsWithOverlay(string(data), overlay)), 0o644)
 }
 

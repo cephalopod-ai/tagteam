@@ -14,6 +14,7 @@ Rules:
 - Follow the repository's existing style and architecture.
 - Add or update tests when behavior changes.
 - Leave unrelated files alone.
+- Never modify or delete .tagteam; it contains host-owned run state and artifacts.
 
 Finish with a concise summary: files changed, behavior changed, checks run, known remaining risk.`
 
@@ -25,6 +26,7 @@ Rules:
 - Follow the repository's existing style and architecture.
 - Add or update tests when behavior changes.
 - Leave unrelated files alone.
+- Never modify or delete .tagteam; it contains host-owned run state and artifacts.
 
 Finish with a concise summary: files changed, behavior changed, checks run, known remaining risk.`
 
@@ -36,6 +38,7 @@ Rules:
 - Follow the repository's existing style and architecture.
 - Add or update tests when behavior changes.
 - Leave unrelated files alone.
+- Never modify or delete .tagteam; it contains host-owned run state and artifacts.
 
 Finish with a concise summary: files changed, behavior changed, checks run, known remaining risk.`
 
@@ -73,6 +76,7 @@ Rules:
 - Follow the repository's existing style and architecture.
 - Add or update tests when behavior changes.
 - Leave unrelated files alone.
+- Never modify or delete .tagteam; it contains host-owned run state and artifacts.
 
 Finish with a concise summary: files changed, behavior changed,
 checks run, known remaining risk.`, workdir, userPrompt)
@@ -124,7 +128,8 @@ Current diff vs baseline:
 %s
 
 Fix the findings, keep the original request satisfied, avoid unrelated
-changes, update tests as needed. Finish with: fixes made, checks run,
+changes, update tests as needed. Never modify or delete .tagteam; it contains
+host-owned run state and artifacts. Finish with: fixes made, checks run,
 any finding you dispute and why.`, round, userPrompt, string(findingsJSON), diff, untrustedArtifactNotice)
 }
 
@@ -299,6 +304,7 @@ Rules:
 - Follow the repository's existing style and architecture.
 - Add or update tests when behavior changes.
 - Leave unrelated files alone.
+- Never modify or delete .tagteam; it contains host-owned run state and artifacts.
 
 Finish with a concise summary: files changed, behavior changed,
 checks run, known remaining risk.`, workdir, userPrompt, brief)
@@ -329,7 +335,8 @@ Current diff vs baseline:
 %s
 
 Fix the findings, keep the original request satisfied, avoid unrelated
-changes, update tests as needed. Finish with: fixes made, checks run,
+changes, update tests as needed. Never modify or delete .tagteam; it contains
+host-owned run state and artifacts. Finish with: fixes made, checks run,
 any finding you dispute and why.`, round, userPrompt, string(findingsJSON), diff, untrustedArtifactNotice)
 }
 
@@ -356,7 +363,8 @@ Current diff vs baseline:
 Fix the findings, keep the selected package satisfied, avoid unrelated
 changes, and do not implement deferred packages unless strictly necessary
 for this package to compile or pass its acceptance criteria. Update tests as
-needed. Finish with: fixes made, checks run, any finding you dispute and why.`, round, userPrompt, string(pkgJSON), string(findingsJSON), diff, untrustedArtifactNotice)
+needed. Never modify or delete .tagteam; it contains host-owned run state and
+artifacts. Finish with: fixes made, checks run, any finding you dispute and why.`, round, userPrompt, string(pkgJSON), string(findingsJSON), diff, untrustedArtifactNotice)
 }
 
 func BuildSupervisorReviewPrompt(userPrompt, baseline, diffRef, testOutput string, diffViaStdin bool) string {

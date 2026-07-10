@@ -236,11 +236,21 @@ func TestCommandPaletteCompletesModelArgumentAndAppliesSelection(t *testing.T) {
 		t.Fatalf("role completion = %q", m.commandBuffer)
 	}
 	matches = m.matchingSlashCommands()
-	if len(matches) != 2 {
+	if len(matches) != 3 {
 		t.Fatalf("worker target suggestions = %#v", matches)
 	}
-	m.commandSelection = 1
 	want := "codex:gpt-5.6-terra"
+	found := false
+	for i, match := range matches {
+		if match.Name == "/model worker "+want {
+			m.commandSelection = i
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("worker target %q missing from suggestions: %#v", want, matches)
+	}
 	m.handleCommandKey(nil, keyEvent{Kind: keyEnter})
 	if m.compose.EditorTarget != want {
 		t.Fatalf("editor target = %q, want %q", m.compose.EditorTarget, want)

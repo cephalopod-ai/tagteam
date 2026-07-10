@@ -169,7 +169,7 @@ func TestResolveOptions_ClaudeFailoverProfile(t *testing.T) {
 		primary RoleTarget
 		want    string
 	}{
-		{RoleTarget{Adapter: "claude", Model: "opus-4.8"}, "codex:gpt-5.6-sol"},
+		{RoleTarget{Adapter: "claude", Model: "opus-4.8"}, defaultSupervisorTarget},
 		{RoleTarget{Adapter: "claude", Model: "sonnet-5"}, "codex:gpt-5.6-terra"},
 		{RoleTarget{Adapter: "claude", Model: "haiku"}, "codex:gpt-5.6-terra"},
 	} {
@@ -1322,7 +1322,7 @@ extra_args = ["--future"]
 		t.Fatalf("claude tools should not be widened: %#v", cfg.Adapters.Claude.CoderAllowedTools)
 	}
 	got := cfg.Adapters.OpenAICompatible
-	if got.BaseURL != "" {
+	if got.BaseURL != DefaultConfig().Adapters.OpenAICompatible.BaseURL {
 		t.Fatalf("base_url = %q", got.BaseURL)
 	}
 	if got.APIKeyEnv != "" {

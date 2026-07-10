@@ -1646,7 +1646,7 @@ func (m *model) buildRunOptions() (tagteam.RunOptions, tagteam.Config, error) {
 	flags.Verbose = false
 	flags.RepairJSONWithWorker = m.compose.RepairJSONWorker
 	flags.StrictScout = m.compose.StrictScout
-	flags.NoScoutRetrieval = !m.compose.ScoutRetrieval
+	flags.NoScoutRetrieval = m.compose.Mode == tagteam.ModeRelay && !m.compose.ScoutRetrieval
 	flags.ScoutContextPolicy = m.compose.ScoutContextPolicy
 	flags.ScoutMode = m.compose.ScoutMode
 	flags.PostScoutMode = m.compose.PostScoutMode
@@ -1674,7 +1674,7 @@ func (m *model) buildRunOptions() (tagteam.RunOptions, tagteam.Config, error) {
 	if m.compose.StrictScout {
 		changed["strict-scout"] = true
 	}
-	if !m.compose.ScoutRetrieval {
+	if m.compose.Mode == tagteam.ModeRelay && !m.compose.ScoutRetrieval {
 		changed["no-scout-retrieval"] = true
 	}
 	if strings.TrimSpace(m.compose.ScoutContextPolicy) != "" {

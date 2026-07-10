@@ -2924,23 +2924,39 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	cmd.Stderr = stderr
 	started := time.Now()
 	logRequestProgress(req, "%s process starting output=%s", phase, spec.Output)
+	_, _ = writeLiveProgress(runCtx, req, role, phase, started, "running")
 	done := make(chan struct{})
-	if !req.Quiet {
-		go func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					logRequestProgress(req, "%s still running elapsed=%s", phase, shortDuration(time.Since(started)))
-				case <-done:
-					return
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				progress, err := writeLiveProgress(runCtx, req, role, phase, started, "running")
+				if !req.Quiet {
+					if err != nil {
+						logRequestProgress(req, "%s still running elapsed=%s progress_error=%q", phase, shortDuration(time.Since(started)), err.Error())
+					} else {
+						logRequestProgress(
+							req,
+							"%s still running elapsed=%s files=%d +%d -%d progress=%s",
+							phase,
+							shortDuration(time.Since(started)),
+							progress.FilesChanged,
+							progress.Additions,
+							progress.Deletions,
+							filepath.Join(req.RunDir, liveProgressArtifact),
+						)
+					}
 				}
+			case <-done:
+				return
 			}
-		}()
-	}
+		}
+	}()
 	if err := cmd.Run(); err != nil {
 		close(done)
+		_, _ = writeLiveProgress(context.Background(), req, role, phase, started, "failed")
 		if stdout.Exceeded() || stderr.Exceeded() {
 			limitErr := &ExitError{Code: ExitAdapterFailure, Err: outputLimitError(adapter.ID(), maxOutputBytes(req))}
 			finishDeliveryRecord(recordPath, record, "failed", limitErr)
@@ -2956,6 +2972,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		return Result{}, runErr
 	}
 	close(done)
+	_, _ = writeLiveProgress(context.Background(), req, role, phase, started, "completed")
 	logRequestProgress(req, "%s process completed elapsed=%s", phase, shortDuration(time.Since(started)))
 	raw := stdout.Bytes()
 	if req.OutputPath != "" && fileExists(req.OutputPath) {
@@ -3660,6 +3677,9 @@ func writeJSONWithNewline(path string, value any) error {
 		return err
 	}
 	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(path, data, 0o644)
 }
 

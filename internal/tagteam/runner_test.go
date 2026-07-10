@@ -2166,7 +2166,11 @@ func TestRunLoop_SupervisorEscalatesToRelayWhenBothAgentsAgree(t *testing.T) {
 	runGit(t, repo, "add", "README.md")
 	runGit(t, repo, "commit", "-m", "init")
 
-	app := NewApp(DefaultConfig())
+	cfg := DefaultConfig()
+	// Keep this orchestration transition test hermetic; the built-in relay scout
+	// may use a local HTTP adapter that is covered separately.
+	cfg.Defaults.Scout = defaultWorkerTarget
+	app := NewApp(cfg)
 	final, err := app.Run(context.Background(), RunOptions{
 		Prompt:             "map this unfamiliar repo and fix the bug",
 		Workdir:            repo,
@@ -2187,7 +2191,7 @@ func TestRunLoop_SupervisorEscalatesToRelayWhenBothAgentsAgree(t *testing.T) {
 	if final.Mode != ModeRelay {
 		t.Fatalf("mode = %q", final.Mode)
 	}
-	if got := roleTargetString(final.Scout); got != defaultRelayScoutTarget {
+	if got := roleTargetString(final.Scout); got != cfg.Defaults.Scout {
 		t.Fatalf("escalated scout = %q", got)
 	}
 	if _, ok := final.RoleStatuses["worker"]; ok {
