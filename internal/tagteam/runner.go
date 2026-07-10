@@ -150,6 +150,16 @@ func loadRepoInstructions(ctx context.Context, workdir string, maxBytes int) (re
 				continue
 			}
 			seen[absPath] = true
+			parentInfo, err := os.Stat(filepath.Dir(absPath))
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return repoInstructionsBundle{}, err
+			}
+			if !parentInfo.IsDir() {
+				continue
+			}
 			info, err := os.Stat(absPath)
 			if err != nil {
 				if os.IsNotExist(err) {

@@ -1,7 +1,7 @@
 package tagteam
 
 const ReviewSchema = `{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "required": ["schema_version", "verdict", "summary", "findings", "test_suggestions"],
   "properties": {
@@ -53,7 +53,7 @@ const ReviewSchema = `{
 }`
 
 const WorkPlanSchema = `{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "required": ["schema_version", "summary", "packages", "selected_package"],
   "properties": {
@@ -118,7 +118,7 @@ const WorkPlanSchema = `{
 }`
 
 const OrchestrationAdvisorySchema = `{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "required": ["schema_version", "recommendation", "target_mode", "reason", "confidence"],
   "properties": {

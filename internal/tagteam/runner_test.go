@@ -92,6 +92,22 @@ func TestReviewSchemaRequiresAllFindingProperties(t *testing.T) {
 	}
 }
 
+func TestStructuredSchemasUseClaudeCompatibleDraft(t *testing.T) {
+	for name, raw := range map[string]string{
+		"review":                 ReviewSchema,
+		"work plan":              WorkPlanSchema,
+		"orchestration advisory": OrchestrationAdvisorySchema,
+	} {
+		var schema map[string]any
+		if err := json.Unmarshal([]byte(raw), &schema); err != nil {
+			t.Fatalf("decode %s schema: %v", name, err)
+		}
+		if got := schema["$schema"]; got != "http://json-schema.org/draft-07/schema#" {
+			t.Fatalf("%s schema draft = %v", name, got)
+		}
+	}
+}
+
 func TestWorkPlanSchemaRequiresCoreFields(t *testing.T) {
 	var schema struct {
 		Required   []string `json:"required"`
@@ -282,6 +298,29 @@ func TestLoadRepoInstructions_MissingFilesEmpty(t *testing.T) {
 	}
 	if bundle.Metadata.SourceCount != 0 || len(bundle.Metadata.Sources) != 0 {
 		t.Fatalf("metadata = %#v", bundle.Metadata)
+	}
+}
+
+func TestLoadRepoInstructions_SkipsAdapterMarkerFiles(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte("root instructions\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{".codex", ".claude", ".agy", ".tagteam"} {
+		if err := os.WriteFile(filepath.Join(repo, marker), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	bundle, err := loadRepoInstructions(context.Background(), repo, maxRepoInstructionBytes)
+	if err != nil {
+		t.Fatalf("loadRepoInstructions() error = %v", err)
+	}
+	if !strings.Contains(bundle.Text, "root instructions") {
+		t.Fatalf("bundle missing root instructions: %q", bundle.Text)
+	}
+	if bundle.Metadata.SourceCount != 1 {
+		t.Fatalf("source count = %d, want 1", bundle.Metadata.SourceCount)
 	}
 }
 
