@@ -19,7 +19,7 @@ func DefaultConfig() Config {
 	autoNextPackage := false
 	respectRepoInstructions := true
 	decisionMemory := false
-	scoutRetrieval := true
+	scoutRetrieval := false
 	return Config{
 		Defaults: DefaultsConfig{
 			Mode:                    "supervisor",
@@ -95,7 +95,7 @@ func DefaultConfig() Config {
 		},
 		Adapters: AdapterConfigSet{
 			Codex: CodexConfig{
-				DefaultModel:    "gpt-5.6-sol",
+				DefaultModel:    "gpt-5.6-terra",
 				ReasoningEffort: "high",
 			},
 			Claude: ClaudeConfig{
@@ -116,6 +116,8 @@ func DefaultConfig() Config {
 				ExtraArgs:    []string{},
 			},
 			OpenAICompatible: OpenAICompatibleConfig{
+				BaseURL:      "http://127.0.0.1:11434/v1",
+				DefaultModel: "gemma4:latest",
 				ExtraHeaders: map[string]string{},
 				ExtraArgs:    []string{},
 			},
@@ -986,7 +988,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	lossPolicy := cfg.Defaults.LossPolicy
 	fallbacks := cfg.Defaults.Fallbacks
 	fallbacksByTarget := cloneTargetFallbacks(cfg.Defaults.FallbacksByTarget)
-	scoutRetrieval := true
+	scoutRetrieval := false
 	if cfg.Defaults.ScoutRetrieval != nil {
 		scoutRetrieval = *cfg.Defaults.ScoutRetrieval
 	}

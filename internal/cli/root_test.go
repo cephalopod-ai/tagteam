@@ -35,8 +35,8 @@ func TestNewRootCommandHelpIncludesModeModelAndFlags(t *testing.T) {
 		"--scout",
 		"--no-scout-retrieval",
 		"tagteam --solo codex:gpt-5.6-terra",
-		"tagteam run -m claude:claude-sonnet-5",
-		"tagteam --relay --no-scout-retrieval",
+		"tagteam run -m 'agy:Gemini 3.5 Flash (Medium)'",
+		"tagteam --relay --scout openai-compatible:gemma4:latest",
 		"tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma claude:claude-opus-4-8",
 	}
 	for _, want := range checks {

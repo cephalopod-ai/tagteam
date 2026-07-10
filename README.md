@@ -146,7 +146,7 @@ Supported adapters in this repo today:
 |---|---|
 | `codex` | full |
 | `codex-oss` | full |
-| `claude` | full |
+| `claude` / Claude Code | full, but currently questionable for unattended or concurrent relay roles |
 | `agy` | full |
 | `gosling` | coder-only |
 | `openai-compatible` / `oai` | read-only reviewer/scout (first cut) |
@@ -172,6 +172,8 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - Authentication is adapter-specific. CLI-backed adapters usually rely on the vendor's own login/session flow; `openai-compatible` / `oai` relies on explicit environment/config values.
 - Supervisor slicing is more format-sensitive than the final review pass. The final review path is schema-validated, but some supervisor planning/instruction steps still depend on adapter output being reasonably well-formed.
 - Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and can recover when a valid review JSON object is embedded in the prose; if no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection. If you intentionally want the already-selected worker to act as a read-only parser workaround, pass `--repair-json-with-worker` or set `json_repair = "worker"`; repaired runs are marked degraded with `json_repair_used`.
+- Claude Code is currently questionable for unattended relay roles when another Claude process is active. A relay can complete its non-Claude stages, then remain pending for an extended period before a Claude scout, supervisor, or coder starts or returns. `tagteam doctor` only confirms that the binary is present; it cannot detect this contention. Avoid assigning Claude to multiple simultaneous runs or roles until this is hardened.
+- A stalled or externally interrupted adapter process may leave `state.json` at `status=running` / an early phase without writing `final.json`. Treat that run as interrupted, inspect the persisted artifacts, and start a new run with a different role assignment; do not rely on the stale `active.json` or TUI alone to infer success.
 - Different adapters do not expose identical capabilities. Some support schema-constrained output, stdin, or session resume; others do not. `tagteam` degrades where possible, but behavior is not perfectly uniform.
 - Local `.env` loading is a convenience feature, not a secret-management system. It helps with local runs, but shell-exported environment variables still take precedence.
 - Repo-local `.tagteam.toml` is partially trusted by default: low-authority defaults such as roles/models can be read, but shell tests, adapter passthrough args, Claude permission/tool widening, and `openai-compatible` endpoints/headers are ignored unless you pass `--trust-repo-config`.
@@ -220,12 +222,12 @@ go run . "add OAuth login"
 
 ## Quick start
 
-Default run (supervisor mode, Claude Sonnet 5 worker at high effort and GPT-5.6 Sol supervisor at high reasoning effort):
+Default run (supervisor mode, Gemini 3.5 Flash Medium worker and GPT-5.6 Terra supervisor at high reasoning effort):
 
 ```bash
 tagteam "add OAuth login"
 # Equivalent explicit one-shot spelling:
-tagteam run -m claude:claude-sonnet-5 "add OAuth login"
+tagteam run -m 'agy:Gemini 3.5 Flash (Medium)' "add OAuth login"
 ```
 
 That's the whole thing — no flags, no config. From your repo root you just describe the change:
@@ -235,7 +237,7 @@ cd my-project
 tagteam "add a --json flag to the export command and cover it with a test"
 ```
 
-With no other options, `tagteam` uses the default supervisor mode: `codex:gpt-5.6-sol` writes a brief and reviews, `claude:claude-sonnet-5` implements, and findings loop back until the change passes review, tests fail, or the round limit is hit. Every brief, diff, review, and test run is written under `.tagteam/runs/<run-id>/`, and the final verdict prints to the terminal. Run `tagteam status` afterward to see the latest run, or `tagteam doctor` first if you're not sure your agent CLIs are set up.
+With no other options, `tagteam` uses the default supervisor mode: `codex:gpt-5.6-terra` writes a brief and reviews, `agy:Gemini 3.5 Flash (Medium)` implements, and findings loop back until the change passes review, tests fail, or the round limit is hit. Every brief, diff, review, and test run is written under `.tagteam/runs/<run-id>/`, and the final verdict prints to the terminal. Run `tagteam status` afterward to see the latest run, or `tagteam doctor` first if you're not sure your agent CLIs are set up.
 
 Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
 
@@ -243,12 +245,12 @@ Supervisor mode slices work by default before the worker edits. The supervisor w
 tagteam --slice --max-packages 5 --package P1 "add OAuth login"
 ```
 
-Choose explicit worker/supervisor adapters, rounds, and a test command:
+For a Claude-free supervisor run, choose explicit worker/supervisor adapters, rounds, and a test command:
 
 ```bash
 tagteam \
-  --worker claude:claude-sonnet-5 \
-  --supervisor codex:gpt-5.6-sol \
+  --worker 'agy:Gemini 3.5 Flash (Medium)' \
+  --supervisor codex:gpt-5.6-terra \
   -r 3 \
   -t "go test ./..." \
   "refactor billing flow"
@@ -285,16 +287,16 @@ For small tasks, relay can simplify to supervisor mode before scout runs when th
 
 Relay mode is a full-run workflow. It does not currently have a review-only variant: `tagteam review` remains adversary-only and does not run scout or supervisor relay steps.
 
-The built-in relay profile uses:
+The built-in relay profile uses a local Ollama Gemma scout through its OpenAI-compatible `/v1` endpoint. Ensure Ollama is running on `127.0.0.1:11434`; otherwise the default non-strict scout policy records the failure and continues without scout context.
 
 ```toml
 [profiles.relay]
 mode = "relay"
-scout = "agy:Gemini 3.5 Flash (Medium)"
-coder = "claude:claude-sonnet-5"
-supervisor = "codex:gpt-5.6-sol"
+scout = "openai-compatible:gemma4:latest"
+coder = "agy:gemini-5.3-medium"
+supervisor = "codex:gpt-5.6-terra"
 scout_mode = "recon"
-scout_retrieval = true
+scout_retrieval = false
 scout_failure_policy = "continue"
 post_scout_mode = "polish"
 rounds = 2
@@ -305,23 +307,37 @@ Override relay roles explicitly:
 ```bash
 tagteam \
   --mode relay \
-  --scout 'agy:Gemini 3.5 Flash (Medium)' \
+  --scout openai-compatible:gemma4:latest \
   --scout-mode recon \
   --post-scout-mode polish \
-  --coder claude:claude-sonnet-5 \
-  --supervisor codex:gpt-5.6-sol \
+  --coder agy:gemini-5.3-medium \
+  --supervisor codex:gpt-5.6-terra \
   "refactor billing flow"
 ```
 
 In relay mode, legacy `-mc` selects the coder and `-ma` selects the supervisor. Scout modes are task-typed: `recon`, `lint`, `polish`, `tests`, or `risk`. Scout findings are advisory context only; only the supervisor review can fail a run with blocker/major findings.
 
+If Claude Code is already busy, use a non-Claude relay assignment rather than waiting on a contested role. With Ollama serving its OpenAI-compatible endpoint locally, use Gemma as the read-only scout, Gemini as the coder, and GPT-5.6 Terra as the supervisor:
+
+```bash
+TAGTEAM_OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:11434/v1 \
+tagteam --relay --no-scout-retrieval \
+  --scout openai-compatible:gemma4:latest \
+  --coder agy:gemini-5.3-medium \
+  --supervisor codex:gpt-5.6-terra \
+  -t 'git diff --check' \
+  "make a scoped documentation change"
+```
+
+`openai-compatible` is read-only in this release, so Gemma is valid as a scout but not as a coder. This is an operational workaround, not a runtime-verified guarantee for those exact models. Keep role failures visible in the saved run artifacts and configure fallbacks for any unattended workflow.
+
 > [!TIP]
-> For relay mode, the scout should have a strong context window — a practical recommendation is `256k` or more, and ideally at least as much context as the relay coder and supervisor. Small-context scouts tend to lose most of the benefit of relay reconnaissance once repo instructions, retrieval evidence, and task context are included.
+> The built-in local Gemma scout runs without retrieval. If you enable retrieval or replace it for a large repository, use a scout with a strong context window — a practical recommendation is `256k` or more, and ideally at least as much context as the relay coder and supervisor. Small-context scouts tend to lose most of the benefit of relay reconnaissance once repo instructions, retrieval evidence, and task context are included.
 
 <details>
 <summary><strong>Advanced relay configuration: retrieval, context budgets, failure policy, fallbacks</strong></summary>
 
-Relay pre-scout `recon` uses bounded local retrieval by default before the scout model runs. Retrieval is host-owned, local-only, advisory, and does not use embeddings, network search, persistent indexes, daemons, or background caches. It writes `retrieval-round-1.json` with status/evidence metadata, then passes only a compact bounded summary into the scout prompt. Disable this layer with `--no-scout-retrieval`:
+Relay pre-scout `recon` has bounded local retrieval disabled by default because the built-in Gemma scout is local and typically has a smaller context window. Retrieval is host-owned, local-only, advisory, and does not use embeddings, network search, persistent indexes, daemons, or background caches. Enable it only in a profile/configuration with a sufficiently large scout context; disable it explicitly with `--no-scout-retrieval`:
 
 ```bash
 tagteam --relay --no-scout-retrieval "add OAuth login"
@@ -486,12 +502,13 @@ Profiles may override `mode`, `scout`, `scout_mode`, `scout_retrieval`, `scout_f
 ```toml
 [defaults]
 mode = "supervisor"
-worker = "claude:claude-sonnet-5"
-supervisor = "codex:gpt-5.6-sol"
+worker = "agy:Gemini 3.5 Flash (Medium)"
+supervisor = "codex:gpt-5.6-terra"
 coder = "codex:gpt-5.6-terra"
-relay_coder = "claude:claude-sonnet-5"
+relay_coder = "agy:gemini-5.3-medium"
 adversary = "claude:claude-opus-4-8"
-scout = "agy:Gemini 3.5 Flash (Medium)"
+scout = "openai-compatible:gemma4:latest"
+scout_retrieval = false
 supervisor_slicing = true
 max_packages = 5
 rounds = 2

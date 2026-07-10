@@ -56,7 +56,7 @@ Role flags by mode
   --reviewer
     Adversarial-mode review-slot name; alias for --ma.
   --scout
-    Relay-mode scout slot only. Prefer a large-context scout; 256k+ is recommended, ideally at least as large as the coder/supervisor context.
+    Relay-mode scout slot only. The built-in local Gemma scout runs without retrieval; prefer a 256k+ scout when enabling retrieval or handling large repository context.
 
 Operational behavior
 
@@ -65,10 +65,10 @@ Operational behavior
   Claude supervisors have a known JSON-output rough edge. tagteam does not silently repair that output; use --repair-json-with-worker to explicitly allow the selected worker to act as a read-only parser for invalid JSON contract artifacts.
 `,
 		Example: `tagteam "add OAuth login"
-tagteam run -m claude:claude-sonnet-5 "add OAuth login"
-tagteam --worker claude:claude-sonnet-5 --supervisor codex:gpt-5.6-sol "refactor billing flow"
+tagteam run -m 'agy:Gemini 3.5 Flash (Medium)' "add OAuth login"
+tagteam --worker 'agy:Gemini 3.5 Flash (Medium)' --supervisor codex:gpt-5.6-terra "refactor billing flow"
 tagteam --solo codex:gpt-5.6-terra "rename UserSvc to UserService"
-tagteam --relay --no-scout-retrieval --scout 'agy:Gemini 3.5 Flash (Medium)' --worker claude:claude-sonnet-5 --supervisor codex:gpt-5.6-sol "add OAuth login"
+tagteam --relay --scout openai-compatible:gemma4:latest --worker agy:gemini-5.3-medium --supervisor codex:gpt-5.6-terra "add OAuth login"
 tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma claude:claude-opus-4-8 "refactor billing flow"`,
 		SilenceUsage:  true,
 		SilenceErrors: true,

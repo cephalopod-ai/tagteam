@@ -21,8 +21,8 @@ func TestResolveOptions_ProfileAndFlags(t *testing.T) {
 	if opts.Coder.Adapter != "codex" {
 		t.Fatalf("coder adapter = %q", opts.Coder.Adapter)
 	}
-	if opts.Adversary.Model != "claude-sonnet-5" {
-		t.Fatalf("adversary model = %q", opts.Adversary.Model)
+	if opts.Adversary.Adapter != "agy" || opts.Adversary.Model != "Gemini 3.5 Flash (Medium)" {
+		t.Fatalf("adversary target = %#v", opts.Adversary)
 	}
 	if opts.Rounds != 3 {
 		t.Fatalf("rounds = %d", opts.Rounds)
@@ -42,6 +42,9 @@ func TestDefaultConfig_SupervisorDefaults(t *testing.T) {
 	}
 	if cfg.Defaults.RelayCoder != defaultRelayCoderTarget || cfg.Defaults.Scout != defaultRelayScoutTarget {
 		t.Fatalf("relay defaults = coder=%q scout=%q", cfg.Defaults.RelayCoder, cfg.Defaults.Scout)
+	}
+	if cfg.Adapters.OpenAICompatible.BaseURL != "http://127.0.0.1:11434/v1" || cfg.Adapters.OpenAICompatible.DefaultModel != "gemma4:latest" {
+		t.Fatalf("ollama defaults = %#v", cfg.Adapters.OpenAICompatible)
 	}
 	if cfg.Defaults.Rounds != 2 {
 		t.Fatalf("rounds = %d", cfg.Defaults.Rounds)
@@ -67,6 +70,9 @@ func TestDefaultConfig_SupervisorDefaults(t *testing.T) {
 	}
 	if cfg.Defaults.ScoutContextPolicy != "warn" {
 		t.Fatalf("scout context policy = %q", cfg.Defaults.ScoutContextPolicy)
+	}
+	if cfg.Defaults.ScoutRetrieval == nil || *cfg.Defaults.ScoutRetrieval {
+		t.Fatal("expected relay scout retrieval to default to false")
 	}
 }
 
@@ -348,10 +354,10 @@ func TestResolveOptions_DefaultsToSupervisorMode(t *testing.T) {
 	if opts.Mode != ModeSupervisor {
 		t.Fatalf("mode = %q", opts.Mode)
 	}
-	if opts.Coder.Adapter != "claude" || opts.Coder.Model != "claude-sonnet-5" {
+	if opts.Coder.Adapter != "agy" || opts.Coder.Model != "Gemini 3.5 Flash (Medium)" {
 		t.Fatalf("worker target = %#v", opts.Coder)
 	}
-	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-sol" {
+	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-terra" {
 		t.Fatalf("supervisor target = %#v", opts.Adversary)
 	}
 	if opts.Rounds != 2 {
@@ -530,20 +536,20 @@ func TestResolveOptions_RelayFlagSelectsRelayDefaults(t *testing.T) {
 	if opts.Mode != ModeRelay || !opts.ModeExplicit {
 		t.Fatalf("mode = %q explicit=%t", opts.Mode, opts.ModeExplicit)
 	}
-	if opts.Scout.Adapter != "agy" || opts.Scout.Model != "Gemini 3.5 Flash (Medium)" {
+	if opts.Scout.Adapter != "openai-compatible" || opts.Scout.Model != "gemma4:latest" {
 		t.Fatalf("scout = %#v", opts.Scout)
 	}
-	if opts.Coder.Adapter != "claude" || opts.Coder.Model != "claude-sonnet-5" {
+	if opts.Coder.Adapter != "agy" || opts.Coder.Model != "gemini-5.3-medium" {
 		t.Fatalf("coder = %#v", opts.Coder)
 	}
-	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-sol" {
+	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-terra" {
 		t.Fatalf("supervisor = %#v", opts.Adversary)
 	}
 	if opts.ScoutMode != "recon" || opts.PostScoutMode != "polish" {
 		t.Fatalf("scout modes = %q/%q", opts.ScoutMode, opts.PostScoutMode)
 	}
-	if !opts.ScoutRetrieval {
-		t.Fatal("relay should enable scout retrieval by default")
+	if opts.ScoutRetrieval {
+		t.Fatal("relay should disable scout retrieval by default")
 	}
 	if opts.ScoutFailurePolicy != "continue" {
 		t.Fatalf("scout failure policy = %q", opts.ScoutFailurePolicy)
@@ -562,20 +568,20 @@ func TestResolveOptions_RelayProfileResolvesRoles(t *testing.T) {
 	if opts.Mode != ModeRelay {
 		t.Fatalf("mode = %q", opts.Mode)
 	}
-	if opts.Scout.Adapter != "agy" || opts.Scout.Model != "Gemini 3.5 Flash (Medium)" {
+	if opts.Scout.Adapter != "openai-compatible" || opts.Scout.Model != "gemma4:latest" {
 		t.Fatalf("scout = %#v", opts.Scout)
 	}
-	if opts.Coder.Adapter != "claude" || opts.Coder.Model != "claude-sonnet-5" {
+	if opts.Coder.Adapter != "agy" || opts.Coder.Model != "gemini-5.3-medium" {
 		t.Fatalf("coder = %#v", opts.Coder)
 	}
-	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-sol" {
+	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-terra" {
 		t.Fatalf("supervisor = %#v", opts.Adversary)
 	}
 	if opts.ScoutMode != "recon" || opts.PostScoutMode != "polish" {
 		t.Fatalf("scout modes = %q/%q", opts.ScoutMode, opts.PostScoutMode)
 	}
-	if !opts.ScoutRetrieval {
-		t.Fatal("relay profile should enable scout retrieval by default")
+	if opts.ScoutRetrieval {
+		t.Fatal("relay profile should disable scout retrieval by default")
 	}
 }
 
