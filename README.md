@@ -23,7 +23,7 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 ## Contents
 
 - [Highlights](#highlights)
-- [What's New In v1.0.0](#whats-new-in-v100)
+- [What's New In v1.1.0](#whats-new-in-v110)
 - [Modes](#modes)
 - [Architecture at a glance](#architecture-at-a-glance)
 - [Status](#status)
@@ -51,19 +51,21 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 >
 > **Why it's simple:** if you're a serious coder who wants fine-grained control over every agent, `tagteam` is probably too simple for you — and that's fine.
 
-## What's New In v1.0.0
+## What's New In v1.1.0
 
-`v1.0.0` is the first stable release. The documented command surface, config keys, run-artifact JSON contracts (versioned via `schema_version`), and exit codes are now treated as stable: breaking changes to them will bump the major version. Adapter-specific rough edges remain documented in [Compatibility issues & rough edges](#compatibility-issues--rough-edges).
+`v1.1.0` builds on the stable command, configuration, artifact-schema, and exit-code contracts introduced in `v1.0.0`. This release tightens Git safety and vendor-adapter behavior while preserving all four orchestration modes. Adapter-specific rough edges remain documented in [Compatibility issues & rough edges](#compatibility-issues--rough-edges).
 
-Highlights since the `v0.1.x` line:
+Highlights in `v1.1.0`:
 
-- **Interactive TUI dashboard.** `tagteam tui [RUN_ID]` can now launch runs, switch modes/targets, and inspect recent runs from one terminal UI.
+- **New default team.** Supervisor and relay flows now default to Claude Opus 4.8 for read-only supervision, GPT-5.6 Terra for implementation, and local Ollama `gemma4:latest` for relay scouting. Agy and Codex Sol remain bounded fallback targets.
+- **Evidence-based Claude roles.** Claude is supported as a read-only supervisor or adversary. Worker/coder assignments are rejected because substantive Sonnet and Opus implementation runs did not reliably complete Tagteam's edit/output lifecycle; Claude scout assignments remain disabled pending a dedicated trial.
+- **Safer dirty-worktree execution.** `--allow-dirty` checkpoints existing work on a new `tagteam/<run-id>` branch, producing a clean baseline instead of treating an uncontrolled dirty tree as the run baseline.
+- **Clearer Claude failures.** Structured Claude error envelopes are preserved even when the Claude process exits nonzero, so errors such as `error_max_structured_output_retries` remain visible and configured fallback ladders can respond to the real cause.
+- **Interactive TUI continuity.** Supervisor, relay, solo, and adversarial workflows remain available without leaving the TUI; solo supports focused implementation or planning, while adversarial mode supports independent audits.
 - **Better live-state observability.** In-progress runs publish external `active.json`, richer phase/progress state, and a shared run snapshot surface that powers both the TUI and status-style views.
 - **Opt-in JSON repair for malformed contract output.** `--repair-json-with-worker` and `json_repair = "worker"` explicitly allow the selected worker to act as a read-only parser workaround for invalid JSON artifacts; repaired runs are marked degraded with `json_repair_used`.
 - **More resilient Claude-heavy setups.** Contract-aware embedded-JSON recovery absorbs fenced/prose Claude responses, self-reported Claude envelope errors enter the existing fallback ladder, cross-process Claude invocations are serialized by default with a fail-closed lock (queued invocations surface as `waiting` in `tagteam status` and the TUI), and the built-in `claude-failover` profile adds target-specific Codex replacements.
 - **Persistent findings and safer continuation.** `tagteam findings` exposes unresolved findings across historical runs, while `resume` and `transfer` preserve integrity, baseline, and acceptance gates instead of silently treating the latest run as authoritative.
-- **Observable budgets and progress.** Final artifacts account for role invocations even when no limit is configured, review-only runs retain their actual phase, and live status includes role, elapsed/idle time, and diff statistics.
-- **Documentation and release hardening.** The user manual, architecture docs, diagrams, and test ledger now describe the current command surface and run-state model.
 
 ## Modes
 
@@ -101,9 +103,9 @@ Full documentation — architecture, more diagrams, and the test ledger — is i
 
 ## Status
 
-This repository reflects the `v1.0.0` release surface: the core run loop, adapter abstraction, persisted run artifacts, live status plumbing, and the full command set are implemented and covered by the test ledger. The remaining rough edges are adapter-behavior issues and general ergonomics rather than missing core workflow support.
+This repository reflects the `v1.1.0` release surface: the core run loop, adapter abstraction, persisted run artifacts, live status plumbing, role policy, dirty-worktree checkpointing, and the full command set are implemented and covered by the test ledger. The remaining rough edges are adapter-behavior issues and general ergonomics rather than missing core workflow support.
 
-Included in the `v1.0.0` surface:
+Included in the `v1.1.0` surface:
 
 - supervisor/worker mode is now the default flow
 - relay scout/coder/supervisor mode is available with `--relay`
@@ -231,7 +233,7 @@ Binary releases are published for:
 > [!NOTE]
 > Windows is not validated. The test suite relies on POSIX shell adapters, so `tagteam` is only exercised and released on macOS and Linux. It may well build and run on Windows — if you get it working and verify it, open an issue or PR and I'm more than happy to add Windows back to CI and releases.
 
-Create a release by pushing a tag such as `v1.0.0`; GitHub Actions runs Go checks on macOS and Linux, then GoReleaser attaches archives plus `checksums.txt` to the release.
+Create the release by pushing the `v1.1.0` tag; GitHub Actions runs Go checks on macOS and Linux, then GoReleaser attaches archives plus `checksums.txt` to the release.
 
 Build from source (development builds must be explicitly allowed for commands that edit a worktree):
 
