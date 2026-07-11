@@ -138,6 +138,30 @@ func TestRunAdversaryRepairsReviewJSONWithWorker(t *testing.T) {
 	}
 }
 
+func TestRunAdapterSurfacesClaudeErrorEnvelopeOnNonzeroExit(t *testing.T) {
+	installFakeBinaries(t, map[string]string{
+		"claude": `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.0.0"; exit 0; fi
+printf '%s' '{"type":"result","subtype":"error_max_structured_output_retries","is_error":true,"result":"","errors":["Failed to provide valid structured output after 5 attempts"]}'
+exit 1
+`,
+	})
+
+	runDir := t.TempDir()
+	workdir := t.TempDir()
+	runGit(t, workdir, "init")
+	_, err := NewApp(DefaultConfig()).runAdapter(context.Background(), &ClaudeAdapter{}, RoleAdversary, Request{
+		Prompt:     "review",
+		Workdir:    workdir,
+		RunDir:     runDir,
+		Timeout:    5 * time.Second,
+		OutputPath: filepath.Join(runDir, "review.json"),
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "claude reported error_max_structured_output_retries") {
+		t.Fatalf("runAdapter() error = %v, want Claude envelope subtype", err)
+	}
+}
+
 func TestEnsureGitignoreEntry_AppendsOnce(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules/\n"), 0o644); err != nil {

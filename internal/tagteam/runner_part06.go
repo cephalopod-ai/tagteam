@@ -444,7 +444,16 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			progressStatus = "stalled"
 		}
 		_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, started, progressStatus)
+		var reportedEnvelopeErr error
+		if adapter.ID() == "claude" && len(stdout.Bytes()) > 0 {
+			if _, parseErr := adapter.ParseResult(role, stdout.Bytes()); parseErr != nil && strings.Contains(parseErr.Error(), "claude reported ") {
+				reportedEnvelopeErr = parseErr
+			}
+		}
 		msg := redactSecretsWithOverlay(strings.TrimSpace(stderr.String()), req.EnvOverlay)
+		if reportedEnvelopeErr != nil {
+			msg = redactSecretsWithOverlay(reportedEnvelopeErr.Error(), req.EnvOverlay)
+		}
 		if msg == "" {
 			msg = redactSecretsWithOverlay(err.Error(), req.EnvOverlay)
 		}
