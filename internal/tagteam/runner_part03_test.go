@@ -202,6 +202,9 @@ func TestReviewRunsConfiguredTestAndIncludesEvidence(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected fake reviewer blocking finding")
 	}
+	if final.Phase != "review" {
+		t.Fatalf("final phase = %q, want review", final.Phase)
+	}
 	if len(final.Tests) != 1 || !final.Tests[0].Passed {
 		t.Fatalf("tests = %#v", final.Tests)
 	}

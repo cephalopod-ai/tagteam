@@ -125,6 +125,7 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (final
 		return final, err
 	}
 	setRoleStatus(&final, reviewerLabel, opts.Adversary, "running", "", "")
+	final.Phase = "review"
 	_ = writeRunState(runDir, RunState{
 		RunID:            runID,
 		Mode:             opts.Mode,

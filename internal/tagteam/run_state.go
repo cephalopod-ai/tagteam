@@ -209,10 +209,10 @@ var errInvocationBudgetExceeded = errors.New("role invocation budget exceeded")
 var errInvocationStalled = errors.New("invocation stalled without Git or output progress")
 
 func (b *InvocationBudget) Before(role, phase string) error {
-	if b == nil || b.Max <= 0 {
+	if b == nil {
 		return nil
 	}
-	if b.Used >= b.Max {
+	if b.Max > 0 && b.Used >= b.Max {
 		return fmt.Errorf("%w: max_role_invocations=%d before %s (%s)", errInvocationBudgetExceeded, b.Max, role, phase)
 	}
 	b.Used++

@@ -44,6 +44,67 @@ type FindingsSummary struct {
 	OpenTotal          int    `json:"open_total"`
 }
 
+type PersistedFinding struct {
+	RunID      string       `json:"run_id"`
+	LedgerPath string       `json:"ledger_path"`
+	Finding    FindingEntry `json:"finding"`
+}
+
+type FindingsReport struct {
+	SchemaVersion int                `json:"schema_version"`
+	RunsRoot      string             `json:"runs_root"`
+	OpenTotal     int                `json:"open_total"`
+	Entries       []PersistedFinding `json:"entries"`
+}
+
+// ListFindings returns findings from every persisted run for a repository.
+func ListFindings(workdir string, includeAll bool) (FindingsReport, error) {
+	runsRoot := RunsRootForCLI(workdir)
+	report := FindingsReport{SchemaVersion: ArtifactSchemaVersion, RunsRoot: runsRoot, Entries: []PersistedFinding{}}
+	runs, err := os.ReadDir(runsRoot)
+	if os.IsNotExist(err) {
+		return report, nil
+	}
+	if err != nil {
+		return FindingsReport{}, fmt.Errorf("read runs root: %w", err)
+	}
+	for _, run := range runs {
+		if !run.IsDir() {
+			continue
+		}
+		runDir := filepath.Join(runsRoot, run.Name())
+		ledgerPath := filepath.Join(runDir, findingsLedgerFilename)
+		if _, err := os.Stat(ledgerPath); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return FindingsReport{}, fmt.Errorf("inspect findings ledger %s: %w", ledgerPath, err)
+		}
+		ledger, err := loadFindingsLedger(runDir)
+		if err != nil {
+			return FindingsReport{}, fmt.Errorf("load findings ledger %s: %w", ledgerPath, err)
+		}
+		for _, entry := range ledger.Entries {
+			if entry.Status == "open" {
+				report.OpenTotal++
+			}
+			if !includeAll && entry.Status != "open" {
+				continue
+			}
+			report.Entries = append(report.Entries, PersistedFinding{RunID: run.Name(), LedgerPath: ledgerPath, Finding: entry})
+		}
+	}
+	sort.Slice(report.Entries, func(i, j int) bool {
+		if report.Entries[i].Finding.UpdatedAt.Equal(report.Entries[j].Finding.UpdatedAt) {
+			if report.Entries[i].RunID == report.Entries[j].RunID {
+				return report.Entries[i].Finding.ID < report.Entries[j].Finding.ID
+			}
+			return report.Entries[i].RunID < report.Entries[j].RunID
+		}
+		return report.Entries[i].Finding.UpdatedAt.After(report.Entries[j].Finding.UpdatedAt)
+	})
+	return report, nil
+}
+
 func stableFindingID(finding Finding) string {
 	canonical := strings.Join([]string{
 		strings.ToLower(strings.TrimSpace(finding.Severity)),

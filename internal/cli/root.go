@@ -323,7 +323,40 @@ func newResumeCommand(shared *flagState) *cobra.Command {
 }
 
 func newFindingsCommand(shared *flagState) *cobra.Command {
-	findings := &cobra.Command{Use: "findings", Short: "Inspect or disposition persisted findings"}
+	var includeAll bool
+	runList := func(cmd *cobra.Command, _ []string) error {
+		workdir, err := filepath.Abs(shared.Workdir)
+		if err != nil {
+			return err
+		}
+		report, err := tagteam.ListFindings(workdir, includeAll)
+		if err != nil {
+			return err
+		}
+		if shared.JSON {
+			payload, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(cmd.OutOrStdout(), string(payload))
+			return nil
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "open=%d shown=%d runs=%s\n", report.OpenTotal, len(report.Entries), report.RunsRoot)
+		for _, item := range report.Entries {
+			finding := item.Finding
+			location := finding.File
+			if finding.Line > 0 {
+				location = fmt.Sprintf("%s:%d", location, finding.Line)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s %s", item.RunID, finding.ID, finding.Status, finding.Severity)
+			if location != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), " %s", location)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), " %s\n", finding.Issue)
+		}
+		return nil
+	}
+	findings := &cobra.Command{Use: "findings", Short: "Inspect or disposition persisted findings", Args: cobra.NoArgs, RunE: runList}
+	findings.Flags().BoolVar(&includeAll, "all", false, "Include resolved, deferred, and disputed findings")
+	listCommand := &cobra.Command{Use: "list", Short: "List findings across all persisted runs", Args: cobra.NoArgs, RunE: runList}
+	listCommand.Flags().BoolVar(&includeAll, "all", false, "Include resolved, deferred, and disputed findings")
 	var reason string
 	deferCommand := &cobra.Command{
 		Use:          "defer RUN_ID FINDING_ID",
@@ -352,7 +385,7 @@ func newFindingsCommand(shared *flagState) *cobra.Command {
 	}
 	deferCommand.Flags().StringVar(&reason, "reason", "", "Required operator justification")
 	_ = deferCommand.MarkFlagRequired("reason")
-	findings.AddCommand(deferCommand)
+	findings.AddCommand(listCommand, deferCommand)
 	return findings
 }
 

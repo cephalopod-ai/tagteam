@@ -43,6 +43,16 @@ func TestReasonForExitBlockingFindings(t *testing.T) {
 	}
 }
 
+func TestUnlimitedInvocationBudgetStillAccountsUsage(t *testing.T) {
+	budget := &InvocationBudget{}
+	if err := budget.Before("worker", "implementation"); err != nil {
+		t.Fatalf("unlimited budget rejected invocation: %v", err)
+	}
+	if budget.Used != 1 {
+		t.Fatalf("budget used = %d, want 1", budget.Used)
+	}
+}
+
 func TestFinalizeRunStateWiresBudgetExhausted(t *testing.T) {
 	final := &FinalRun{ExitCode: ExitPreflightFailed, BlockingReason: string(ReasonBudgetExceeded)}
 	finalizeRunState(final)

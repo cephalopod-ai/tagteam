@@ -1,6 +1,7 @@
 package tagteam
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -52,6 +53,63 @@ func TestDeferFindingRequiresOperatorReason(t *testing.T) {
 	summary, err := DeferFinding(runDir, review.Findings[0].ID, "accepted operational risk")
 	if err != nil || summary.OpenBlockerOrMajor != 0 {
 		t.Fatalf("summary=%#v err=%v", summary, err)
+	}
+}
+
+func TestListFindingsAggregatesRunsAndFiltersResolved(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runsRoot := RunsRootForCLI(repo)
+	openDir := filepath.Join(runsRoot, "run-open")
+	resolvedDir := filepath.Join(runsRoot, "run-resolved")
+	if err := os.MkdirAll(openDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(resolvedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	openReview := currentReviewForTest()
+	normalizeReview(openReview)
+	if _, err := updateFindingsLedger(openDir, 1, openReview, nil); err != nil {
+		t.Fatal(err)
+	}
+	resolvedReview := currentReviewForTest()
+	normalizeReview(resolvedReview)
+	if _, err := updateFindingsLedger(resolvedDir, 1, resolvedReview, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DeferFinding(resolvedDir, resolvedReview.Findings[0].ID, "accepted risk"); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := ListFindings(repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.OpenTotal != 1 || len(report.Entries) != 1 || report.Entries[0].RunID != "run-open" {
+		t.Fatalf("open report = %#v", report)
+	}
+	all, err := ListFindings(repo, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.OpenTotal != 1 || len(all.Entries) != 2 {
+		t.Fatalf("all report = %#v", all)
+	}
+}
+
+func TestListFindingsRejectsMalformedLedger(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runDir := filepath.Join(RunsRootForCLI(repo), "bad-run")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, findingsLedgerFilename), []byte("{bad"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ListFindings(repo, false); err == nil {
+		t.Fatal("expected malformed ledger error")
 	}
 }
 

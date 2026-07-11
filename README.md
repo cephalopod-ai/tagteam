@@ -641,7 +641,7 @@ Diff artifacts are captured through a temporary Git index, not the real staging 
 
 Every live implementation response must match the worker-result JSON contract and name exactly the files changed during that invocation. Reviewer schema v2 requires evidence for malformed-input preservation, annotation/history retention, ambiguous identity handling, and read-only non-mutation. Scope, churn, regression, and unresolved independent-review findings remain blocking even when tests are green.
 
-Transfer is never automatic. Use `tagteam transfer RUN_ID --test '...' --lint '...' [--to PATH]`; Tagteam rechecks the patch hash, repository identity, target baseline/cleanliness, bounded scope, lint, focused tests, regression identities, findings ledger, and final review before applying the patch without staging or committing. Approve an explicit risk deferral with `tagteam findings defer RUN_ID FINDING_ID --reason '...'`.
+Transfer is never automatic. Use `tagteam transfer RUN_ID --test '...' --lint '...' [--to PATH]`; Tagteam rechecks the patch hash, repository identity, target baseline/cleanliness, bounded scope, lint, focused tests, regression identities, findings ledger, and final review before applying the patch without staging or committing. Run `tagteam findings` to list unresolved findings across all persisted runs (`--all` includes disposition history). Approve an explicit risk deferral with `tagteam findings defer RUN_ID FINDING_ID --reason '...'`.
 
 <details>
 <summary><strong><code>blocking_reason</code> vocabulary</strong></summary>
