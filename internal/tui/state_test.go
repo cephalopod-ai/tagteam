@@ -341,7 +341,7 @@ func TestModeSwitchLoadsDefaultsAndRestoresEachModesTeam(t *testing.T) {
 	if err := m.setMode("adversarial"); err != nil {
 		t.Fatal(err)
 	}
-	if m.compose.EditorTarget != "codex:gpt-5.6-terra" || m.compose.ReviewerTarget != "claude:claude-opus-4-8" {
+	if m.compose.EditorTarget != "codex:gpt-5.6-terra" || m.compose.ReviewerTarget != "codex:gpt-5.6-sol" {
 		t.Fatalf("adversarial defaults = coder:%q reviewer:%q", m.compose.EditorTarget, m.compose.ReviewerTarget)
 	}
 	m.compose.EditorTarget = "codex:custom-coder"

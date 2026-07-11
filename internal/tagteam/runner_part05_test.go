@@ -316,7 +316,19 @@ func TestFix_ExplicitModeOverridesSavedRun(t *testing.T) {
 }
 
 func TestFix_ProfileSelectedModeNotOverwrittenBySavedRun(t *testing.T) {
-	installFakeClaudeBinary(t)
+	installFakeBinaries(t, map[string]string{
+		"claude": fakeClaudeScript,
+		"codex": `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex 1.0"; exit 0; fi
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then output="$2"; shift 2; continue; fi
+  shift
+done
+payload='{"schema_version":1,"status":"completed","summary":"profile coder completed","files_changed":[],"checks_run":[],"remaining_risks":[]}'
+if [ -n "$output" ]; then printf '%s' "$payload" > "$output"; else printf '%s' "$payload"; fi
+`,
+	})
 
 	repo := t.TempDir()
 	runGit(t, repo, "init")
@@ -352,7 +364,7 @@ func TestFix_ProfileSelectedModeNotOverwrittenBySavedRun(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Profiles["legacy"] = ProfileConfig{
 		Mode:      "adversarial",
-		Coder:     "claude:sonnet",
+		Coder:     "codex:gpt-5.6-terra",
 		Adversary: "claude:haiku",
 	}
 	fixOpts, err := ResolveOptions(cfg, nil, FlagInputs{
@@ -374,7 +386,7 @@ func TestFix_ProfileSelectedModeNotOverwrittenBySavedRun(t *testing.T) {
 	if fixed.Mode != ModeAdversarial {
 		t.Fatalf("fix should have kept the profile-resolved adversarial mode, got %q", fixed.Mode)
 	}
-	if fixed.Coder.Adapter != "claude" || fixed.Coder.Model != "sonnet" {
+	if fixed.Coder.Adapter != "codex" || fixed.Coder.Model != "gpt-5.6-terra" {
 		t.Fatalf("fix should have kept the profile-resolved coder target, got %#v", fixed.Coder)
 	}
 	if fixed.Adversary.Adapter != "claude" || fixed.Adversary.Model != "haiku" {

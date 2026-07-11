@@ -426,6 +426,26 @@ func validateReviewRoles(opts RunOptions) error {
 	return validateRoleTarget(RoleAdversary, opts.Adversary)
 }
 
+func validateClaudeRoleAssignments(opts RunOptions) error {
+	editorLabel, _ := roleLabels(opts.Mode)
+	if opts.Coder.Adapter == "claude" {
+		return unsupportedClaudeRoleError(editorLabel)
+	}
+	if opts.Mode != ModeSolo && opts.Adversary.Adapter == "claude" {
+		if opts.Mode != ModeAdversarial && opts.SupervisorCanEdit {
+			return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("claude supervisors are read-only; --supervisor-can-edit is not supported")}
+		}
+	}
+	if opts.Mode == ModeRelay && opts.Scout.Adapter == "claude" {
+		return unsupportedClaudeRoleError("scout")
+	}
+	return nil
+}
+
+func unsupportedClaudeRoleError(role string) error {
+	return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("claude is supported only as a supervisor; %s role is not supported", role)}
+}
+
 func validateRoleTarget(role Role, target RoleTarget) error {
 	if role != RoleAdversary && role != RoleScout && (target.Adapter == "openai-compatible" || target.Adapter == "oai") {
 		return &ExitError{Code: ExitInvalidArguments, Err: unsupportedOpenAICompatibleRoleError()}

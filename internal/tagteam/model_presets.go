@@ -6,7 +6,7 @@ const (
 	defaultRelayCoderTarget       = defaultWorkerTarget
 	defaultRelayScoutTarget       = "openai-compatible:gemma4:latest"
 	defaultAdversarialCoderTarget = "codex:gpt-5.6-terra"
-	defaultAdversaryTarget        = "claude:claude-opus-4-8"
+	defaultAdversaryTarget        = defaultSupervisorTarget
 )
 
 type modeRoleTargets struct {

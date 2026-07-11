@@ -71,8 +71,8 @@ Highlights since the `v0.1.x` line:
 |---|---|---|---|
 | **Supervisor** *(default)* | *(none needed)* | `supervisor` writes a brief + reviews (read-only by default) → `worker` implements | Zero-config default with a strong review loop |
 | **Relay** | `--relay` / `--mode relay` | cheap read-only `scout` recon → write-enabled `coder` → stronger read-only `supervisor` reviews/arbitrates | Cost-aware pipeline with reconnaissance before editing |
-| **Solo** | `--solo <adapter[:model]>` / `--mode solo` | one implementation agent, nothing else | Quick baselines — output explicitly reports `review=none` |
-| **Adversarial** | `--mode adversarial` | `coder` implements → `adversary` reviews | Original mode, kept for backward compatibility |
+| **Solo** | `--solo <adapter[:model]>` / `--mode solo` | one implementation or planning agent, nothing else | Focused work without leaving Tagteam or the TUI; output explicitly reports `review=none` |
+| **Adversarial** | `--mode adversarial` | `coder` implements → independent `adversary` reviews | Audits and intentionally independent review loops |
 
 > [!TIP]
 > In every reviewed mode (supervisor, relay, adversarial), findings loop back into the editor role until the change passes review, tests fail, or the round limit is reached. When the limit hits with unresolved blocker/major findings, `tagteam` stops asking for edits and instead asks both agents for final "what remains incomplete / what do you dispute" reports. Solo mode runs once and never pretends to be reviewed.
@@ -107,8 +107,8 @@ Included in the `v1.0.0` surface:
 
 - supervisor/worker mode is now the default flow
 - relay scout/coder/supervisor mode is available with `--relay`
-- solo mode is available with `--solo <adapter[:model]>`
-- adversarial coder/adversary mode remains available for backward compatibility
+- solo mode keeps focused planning or implementation inside Tagteam and the TUI
+- adversarial coder/adversary mode supports audits and independent review
 - saved run artifacts include briefs, diffs, reviews, tests, and final summaries
 - active runs publish external `active.json` so live views can discover in-flight work without exposing host state to workers
 - command surface now includes `run`, `review`, `fix`, `resume`, `status`, `plan`, `transcript`, `findings`, `transfer`, `tui`, `doctor`, and `init`
@@ -157,7 +157,7 @@ Supported adapters in this repo today:
 |---|---|
 | `codex` | full |
 | `codex-oss` | full |
-| `claude` / Claude Code | full; malformed structured output and Tagteam-managed concurrency are hardened, with the cautions below |
+| `claude` / Claude Code | read-only supervisor or adversary; worker/coder and scout assignments are rejected |
 | `agy` | full |
 | `gosling` | coder-only |
 | `openai-compatible` / `oai` | read-only reviewer/scout (first cut) |
@@ -183,6 +183,7 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - Authentication is adapter-specific. CLI-backed adapters usually rely on the vendor's own login/session flow; `openai-compatible` / `oai` relies on explicit environment/config values.
 - Supervisor slicing is more format-sensitive than the final review pass. The final review path is schema-validated, but some supervisor planning/instruction steps still depend on adapter output being reasonably well-formed.
 - Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and searches a bounded set of contract candidates embedded in the prose: fenced ```json blocks are tried first, followed by balanced JSON objects, so an unrelated or unmatched brace snippet earlier in the prose no longer masks the real payload. Claude envelopes that self-report failure (`is_error` / `error_*` subtypes such as `error_max_turns`) are surfaced as clear adapter errors (`claude reported error_max_turns: ...`) instead of misleading `decode ... JSON` contract failures, which lets the fallback ladder engage. If no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection. If you intentionally want the already-selected worker to act as a read-only parser workaround, pass `--repair-json-with-worker` or set `json_repair = "worker"`; repaired runs are marked degraded with `json_repair_used`.
+- Claude is supported as a read-only `supervisor` or `adversary`. Tagteam rejects Claude targets selected as worker/coder because repeated substantive Sonnet and Opus runs did not complete the editing/output-contract lifecycle reliably; Claude scout assignments remain unsupported pending a real scout trial. Sonnet 5 and Opus 4.8 completed schema-validated supervisor reviews, and a real Haiku adversary run completed a schema-valid review. Use Codex or Agy for implementation roles.
 - Concurrent Claude Code processes can stall or remain pending, especially in relay/multi-role configurations. `tagteam` now serializes Claude invocations across its own processes by default with an OS-specific cross-process lock under the resolved state root (`adapters.claude.serialize`, `TAGTEAM_CLAUDE_SERIALIZE`); Unix/macOS use `flock`, while Windows uses a PID-file fallback. Waiting runs log `waiting for concurrent claude invocation`, and a crashed Unix/macOS holder releases the lock automatically. Serialization is fail-closed: a run that cannot acquire the lock within its invocation timeout fails that invocation with a classified adapter error (so configured fallbacks such as `claude-failover` can engage) instead of running unlocked.
 - Claude serialization is scoped to a state root, not the whole machine. Tagteam processes configured with different `--state-root` values use different locks and can still overlap; use one shared state root for concurrent Claude-backed runs. The lock also cannot see Claude processes started outside Tagteam. `tagteam doctor` confirms binary availability but cannot detect either form of contention.
 - Unix/macOS Claude locking is runtime-tested with real multi-process contention. The Windows PID-file fallback is compile-checked but not runtime-tested in CI; ownership-record write failures and same-process concurrent invocations remain residual risks there. Prefer one Claude-backed Tagteam run at a time on Windows until that path has equivalent runtime coverage.
@@ -293,7 +294,7 @@ Solo mode runs exactly one implementation agent and no reviewer. It is useful as
 
 ```bash
 tagteam --solo codex:gpt-5.6-terra "rename UserSvc to UserService"
-tagteam --mode solo --worker claude:claude-sonnet-5 -t "go test ./..." "make a small README edit"
+tagteam --mode solo --worker codex:gpt-5.6-terra -t "go test ./..." "make a small README edit"
 ```
 
 > [!IMPORTANT]
@@ -378,7 +379,7 @@ For finer control, `loss_policy` can be configured per non-primary role: `block`
 The built-in `claude-failover` profile enables a small Claude-to-Codex fallback ladder for review/supervision failures:
 
 ```bash
-tagteam -P claude-failover --mode adversarial --reviewer claude:claude-opus-4-8 "fix the bug"
+tagteam -P claude-failover --mode supervisor --worker codex:gpt-5.6-terra --supervisor claude:claude-opus-4-8 "fix the bug"
 ```
 
 It maps the current Opus target to `codex:gpt-5.6-sol` and the current Sonnet target to `codex:gpt-5.6-terra`; compatibility aliases for older Claude CLI model names remain available. Target-specific fallbacks run before role-level fallback lists.
@@ -392,7 +393,7 @@ The original coder/adversary loop is still available via `--mode adversarial`. T
 ```bash
 tagteam --mode adversarial \
   -mc codex:gpt-5.6-terra \
-  -ma claude:claude-opus-4-8 \
+  -ma codex:gpt-5.6-sol \
   -r 3 \
   -t "go test ./..." \
   "refactor billing flow"
@@ -401,7 +402,7 @@ tagteam --mode adversarial \
 `--reviewer` is an adversarial-mode-flavored alias for `-ma`/`--supervisor`:
 
 ```bash
-tagteam --mode adversarial -mc agy --reviewer claude:claude-sonnet-5 "clean up the CLI help"
+tagteam --mode supervisor --worker agy --supervisor claude:claude-sonnet-5 "clean up the CLI help"
 ```
 
 Use Agy with its configured default Gemini model:
@@ -443,7 +444,7 @@ FEATHERLESS_API_KEY=your-key-here
 ```bash
 tagteam \
   --mode adversarial \
-  -mc claude:claude-sonnet-5 \
+  -mc codex:gpt-5.6-terra \
   -ma openai-compatible:openai/gpt-oss-120b \
   --show-review \
   "make a tiny README wording cleanup"
@@ -532,7 +533,7 @@ worker = "agy:Gemini 3.5 Flash (Medium)"
 supervisor = "codex:gpt-5.6-sol"
 coder = "codex:gpt-5.6-terra"
 relay_coder = "agy:Gemini 3.5 Flash (Medium)"
-adversary = "claude:claude-opus-4-8"
+adversary = "codex:gpt-5.6-sol"
 scout = "openai-compatible:gemma4:latest"
 scout_retrieval = false
 supervisor_slicing = true
@@ -559,7 +560,7 @@ supervisor = "replace_then_block"
 
 [profiles.fast]
 coder = "codex:gpt-5.6-terra"
-adversary = "claude:claude-sonnet-5"
+adversary = "codex:gpt-5.6-sol"
 rounds = 1
 ```
 

@@ -27,8 +27,8 @@ func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:     "tagteam [flags] <prompt>",
 		Version: Version,
-		Short:   "Run supervisor/worker, relay, or coder/adversary agent loops over a repository",
-		Long: `tagteam runs a repository-local loop of explicit coding roles. Instead of hiding the edit/review cycle inside a vendor UI, the CLI keeps the supervisor, worker, coder, adversary, and scout roles visible, saves the artifacts for each run, and makes the handoff between brief, implementation, and review inspectable from the terminal.
+		Short:   "Run supervisor/worker, relay, solo, or coder/adversary agent workflows over a repository",
+		Long: `tagteam runs a repository-local loop of explicit coding roles. Instead of hiding the edit/review cycle inside a vendor UI, the CLI keeps the supervisor, worker, coder, adversary, and scout roles visible, saves the artifacts for each run, and makes the handoff between planning, implementation, audit, and review inspectable from the terminal.
 
 Modes
 
@@ -37,9 +37,9 @@ Modes
   relay
     --relay / --mode relay adds a scout recon pass before implementation, then runs coder implementation and supervisor review/arbitration.
   solo
-    --solo / --mode solo runs one implementation agent with no reviewer, supervisor, adversary, or scout. The run reports review=none.
+    --solo / --mode solo runs one agent without requiring the operator to leave Tagteam or the TUI; useful for focused implementation or planning.
   adversarial
-    --mode adversarial keeps the original coder/adversary loop for backward compatibility.
+    --mode adversarial runs an independent coder/adversary loop; useful for implementation audits and deliberately independent review.
 
 Role flags by mode
 
@@ -67,9 +67,9 @@ Operational behavior
 		Example: `tagteam "add OAuth login"
 tagteam run -m 'agy:Gemini 3.5 Flash (Medium)' "add OAuth login"
 tagteam --worker 'agy:Gemini 3.5 Flash (Medium)' --supervisor codex:gpt-5.6-sol "refactor billing flow"
-tagteam --solo codex:gpt-5.6-terra "rename UserSvc to UserService"
+tagteam --solo codex:gpt-5.6-terra "plan a migration and record the result"
 tagteam --relay --scout openai-compatible:gemma4:latest --worker 'agy:Gemini 3.5 Flash (Medium)' --supervisor codex:gpt-5.6-sol "add OAuth login"
-tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma claude:claude-opus-4-8 "refactor billing flow"`,
+tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma codex:gpt-5.6-sol "audit the billing refactor"`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -140,10 +140,10 @@ func bindSharedFlags(cmd *cobra.Command, flags *flagState) {
 	flagSet.StringVar(&flags.Mode, "mode", "", "Select orchestration mode: supervisor, relay, solo, or adversarial")
 	flagSet.StringVar(&flags.Solo, "solo", "", "Shortcut for solo mode (one editor, no reviewer)")
 	flagSet.BoolVar(&flags.Relay, "relay", false, "Shortcut for relay mode (scout, coder, supervisor)")
-	flagSet.StringVar(&flags.Coder, "mc", "", "Legacy implementation slot: worker in supervisor/solo, coder in relay/adversarial")
+	flagSet.StringVar(&flags.Coder, "mc", "", "Implementation slot: worker in supervisor/solo, coder in relay/adversarial")
 	flagSet.StringVar(&flags.CoderRole, "coder", "", "Coder adapter[:model] (adversarial or relay mode)")
 	flagSet.StringVarP(&flags.Model, "model", "m", "", "Primary implementation role adapter[:model] (worker, coder, or solo model for the selected mode)")
-	flagSet.StringVar(&flags.Adversary, "ma", "", "Legacy review slot: supervisor in supervisor/relay, adversary in adversarial")
+	flagSet.StringVar(&flags.Adversary, "ma", "", "Review slot: supervisor in supervisor/relay, adversary in adversarial")
 	flagSet.StringVar(&flags.Worker, "worker", "", "Preferred implementation slot in supervisor/relay/solo; alias for --mc")
 	flagSet.StringVar(&flags.Scout, "scout", "", "Relay-mode scout adapter[:model] for pre-scout recon")
 	flagSet.StringVar(&flags.ScoutMode, "scout-mode", "", "Pre-scout task mode: recon, lint, polish, tests, or risk")

@@ -570,7 +570,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("rounds must be > 0")}
 	}
 
-	return RunOptions{
+	opts := RunOptions{
 		Prompt:                    strings.TrimSpace(prompt),
 		Workdir:                   workdir,
 		StateRoot:                 strings.TrimSpace(stateRoot),
@@ -633,7 +633,11 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		OpenAICompatibleArgs:      openAICompatibleArgs,
 		EnvOverlay:                cloneStringMap(cfg.EnvOverlay),
 		ConfigSources:             sources,
-	}, nil
+	}
+	if err := validateClaudeRoleAssignments(opts); err != nil {
+		return RunOptions{}, err
+	}
+	return opts, nil
 }
 
 func cloneStringMap(src map[string]string) map[string]string {

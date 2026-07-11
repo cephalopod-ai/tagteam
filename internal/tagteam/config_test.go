@@ -305,7 +305,7 @@ func TestResolveOptions_SoloModeWorkerAndMc(t *testing.T) {
 	cfg := DefaultConfig()
 	opts, err := ResolveOptions(cfg, nil, FlagInputs{
 		Mode:    "solo",
-		Worker:  "claude:sonnet",
+		Worker:  "codex:gpt-5.6-terra",
 		Timeout: 15 * time.Minute,
 	}, map[string]bool{"mode": true, "worker": true}, "ship it")
 	if err != nil {
@@ -314,7 +314,7 @@ func TestResolveOptions_SoloModeWorkerAndMc(t *testing.T) {
 	if opts.Mode != ModeSolo {
 		t.Fatalf("mode = %q", opts.Mode)
 	}
-	if opts.Coder.Adapter != "claude" || opts.Coder.Model != "sonnet" {
+	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "gpt-5.6-terra" {
 		t.Fatalf("--worker target = %#v", opts.Coder)
 	}
 
@@ -375,7 +375,7 @@ func TestResolveOptions_DefaultsToSupervisorMode(t *testing.T) {
 	}
 }
 
-func TestResolveOptions_AdversarialModeUsesLegacyDefaults(t *testing.T) {
+func TestResolveOptions_AdversarialModeUsesDefaults(t *testing.T) {
 	cfg := DefaultConfig()
 	opts, err := ResolveOptions(cfg, []string{"defaults"}, FlagInputs{
 		Mode:    "adversarial",
@@ -390,7 +390,7 @@ func TestResolveOptions_AdversarialModeUsesLegacyDefaults(t *testing.T) {
 	if opts.Coder.Adapter != "codex" {
 		t.Fatalf("coder adapter = %q", opts.Coder.Adapter)
 	}
-	if opts.Adversary.Adapter != "claude" {
+	if opts.Adversary.Adapter != "codex" {
 		t.Fatalf("adversary adapter = %q", opts.Adversary.Adapter)
 	}
 }
@@ -406,10 +406,48 @@ func TestResolveOptions_InvalidMode(t *testing.T) {
 	}
 }
 
+func TestValidateClaudeRoleAssignmentsRejectsImplementationAndScout(t *testing.T) {
+	tests := []struct {
+		name string
+		opts RunOptions
+	}{
+		{name: "solo worker", opts: RunOptions{Mode: ModeSolo, Coder: RoleTarget{Adapter: "claude"}}},
+		{name: "supervisor worker", opts: RunOptions{Mode: ModeSupervisor, Coder: RoleTarget{Adapter: "claude"}, Adversary: RoleTarget{Adapter: "codex"}}},
+		{name: "relay scout", opts: RunOptions{Mode: ModeRelay, Coder: RoleTarget{Adapter: "agy"}, Adversary: RoleTarget{Adapter: "codex"}, Scout: RoleTarget{Adapter: "claude"}}},
+		{name: "editing supervisor", opts: RunOptions{Mode: ModeSupervisor, Coder: RoleTarget{Adapter: "agy"}, Adversary: RoleTarget{Adapter: "claude"}, SupervisorCanEdit: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateClaudeRoleAssignments(tt.opts)
+			if err == nil || !strings.Contains(err.Error(), "claude") {
+				t.Fatalf("validateClaudeRoleAssignments() error = %v, want Claude role rejection", err)
+			}
+		})
+	}
+}
+
+func TestValidateRunRolesAllowsReadOnlyClaudeSupervisor(t *testing.T) {
+	opts := RunOptions{
+		Mode:      ModeSupervisor,
+		Coder:     RoleTarget{Adapter: "agy"},
+		Adversary: RoleTarget{Adapter: "claude"},
+	}
+	if err := validateClaudeRoleAssignments(opts); err != nil {
+		t.Fatalf("validateClaudeRoleAssignments() error = %v", err)
+	}
+}
+
+func TestValidateClaudeRoleAssignmentsAllowsClaudeAdversary(t *testing.T) {
+	err := validateClaudeRoleAssignments(RunOptions{Mode: ModeAdversarial, Coder: RoleTarget{Adapter: "codex"}, Adversary: RoleTarget{Adapter: "claude"}})
+	if err != nil {
+		t.Fatalf("validateClaudeRoleAssignments() error = %v", err)
+	}
+}
+
 func TestResolveOptions_LegacyFlagsMapByMode(t *testing.T) {
 	cfg := DefaultConfig()
 	flags := FlagInputs{
-		Coder:     "claude:sonnet",
+		Coder:     "agy:gemini",
 		Adversary: "codex:o1",
 		Timeout:   15 * time.Minute,
 	}
@@ -419,7 +457,7 @@ func TestResolveOptions_LegacyFlagsMapByMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveOptions() error = %v", err)
 	}
-	if supervisorOpts.Coder.Adapter != "claude" || supervisorOpts.Coder.Model != "sonnet" {
+	if supervisorOpts.Coder.Adapter != "agy" || supervisorOpts.Coder.Model != "gemini" {
 		t.Fatalf("supervisor-mode worker target = %#v", supervisorOpts.Coder)
 	}
 	if supervisorOpts.Adversary.Adapter != "codex" || supervisorOpts.Adversary.Model != "o1" {
@@ -432,7 +470,7 @@ func TestResolveOptions_LegacyFlagsMapByMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveOptions() error = %v", err)
 	}
-	if adversarialOpts.Coder.Adapter != "claude" || adversarialOpts.Coder.Model != "sonnet" {
+	if adversarialOpts.Coder.Adapter != "agy" || adversarialOpts.Coder.Model != "gemini" {
 		t.Fatalf("adversarial-mode coder target = %#v", adversarialOpts.Coder)
 	}
 	if adversarialOpts.Adversary.Adapter != "codex" || adversarialOpts.Adversary.Model != "o1" {
@@ -484,13 +522,13 @@ func TestResolveOptions_ReviewerIsAdversarialAliasForMa(t *testing.T) {
 	cfg := DefaultConfig()
 	opts, err := ResolveOptions(cfg, nil, FlagInputs{
 		Mode:     "adversarial",
-		Reviewer: "claude:opus",
+		Reviewer: "codex:gpt-5.6-sol",
 		Timeout:  15 * time.Minute,
 	}, map[string]bool{"mode": true, "reviewer": true}, "ship it")
 	if err != nil {
 		t.Fatalf("ResolveOptions() error = %v", err)
 	}
-	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "opus" {
+	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-sol" {
 		t.Fatalf("--reviewer target = %#v", opts.Adversary)
 	}
 }

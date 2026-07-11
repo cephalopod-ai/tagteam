@@ -231,7 +231,7 @@ func TestResolveOptions_ProfileSetsMode(t *testing.T) {
 	cfg.Profiles["legacy"] = ProfileConfig{
 		Mode:      "adversarial",
 		Coder:     "codex:gpt-5",
-		Adversary: "claude:sonnet",
+		Adversary: "codex:gpt-5.6-sol",
 	}
 	opts, err := ResolveOptions(cfg, nil, FlagInputs{
 		Profile: "legacy",
@@ -256,7 +256,7 @@ func TestResolveOptions_ProfileWithLegacyKeysOnlyResolvesAdversarial(t *testing.
 	// default.
 	cfg.Profiles["oldschool"] = ProfileConfig{
 		Coder:     "codex:gpt-5",
-		Adversary: "claude:sonnet",
+		Adversary: "codex:gpt-5.6-sol",
 		Rounds:    3,
 	}
 	opts, err := ResolveOptions(cfg, nil, FlagInputs{
@@ -272,7 +272,7 @@ func TestResolveOptions_ProfileWithLegacyKeysOnlyResolvesAdversarial(t *testing.
 	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "gpt-5" {
 		t.Fatalf("coder target = %#v", opts.Coder)
 	}
-	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "sonnet" {
+	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-sol" {
 		t.Fatalf("adversary target = %#v", opts.Adversary)
 	}
 	if opts.Rounds != 3 {
@@ -412,7 +412,7 @@ func TestValidateConfig_RejectsInvalidEffort(t *testing.T) {
 
 func TestMergeEnvConfig_LegacyCoderAdversaryImpliesAdversarialMode(t *testing.T) {
 	t.Setenv("TAGTEAM_CODER", "codex:gpt-5")
-	t.Setenv("TAGTEAM_ADVERSARY", "claude:haiku")
+	t.Setenv("TAGTEAM_ADVERSARY", "codex:gpt-5.6-sol")
 
 	cfg := DefaultConfig()
 	mergeEnvConfig(&cfg, nil)
@@ -420,7 +420,7 @@ func TestMergeEnvConfig_LegacyCoderAdversaryImpliesAdversarialMode(t *testing.T)
 	if cfg.Defaults.Mode != string(ModeAdversarial) {
 		t.Fatalf("mode = %q, want adversarial", cfg.Defaults.Mode)
 	}
-	if cfg.Defaults.Coder != "codex:gpt-5" || cfg.Defaults.Adversary != "claude:haiku" {
+	if cfg.Defaults.Coder != "codex:gpt-5" || cfg.Defaults.Adversary != "codex:gpt-5.6-sol" {
 		t.Fatalf("coder/adversary = %q/%q", cfg.Defaults.Coder, cfg.Defaults.Adversary)
 	}
 }
