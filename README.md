@@ -173,7 +173,7 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - Supervisor slicing is more format-sensitive than the final review pass. The final review path is schema-validated, but some supervisor planning/instruction steps still depend on adapter output being reasonably well-formed.
 - Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and can recover when a valid review JSON object is embedded in the prose; if no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection. If you intentionally want the already-selected worker to act as a read-only parser workaround, pass `--repair-json-with-worker` or set `json_repair = "worker"`; repaired runs are marked degraded with `json_repair_used`.
 - Claude Code is currently questionable for unattended relay roles when another Claude process is active. A relay can complete its non-Claude stages, then remain pending for an extended period before a Claude scout, supervisor, or coder starts or returns. `tagteam doctor` only confirms that the binary is present; it cannot detect this contention. Avoid assigning Claude to multiple simultaneous runs or roles until this is hardened.
-- A stalled or externally interrupted adapter process may leave `state.json` at `status=running` / an early phase without writing `final.json`. Treat that run as interrupted, inspect the persisted artifacts, and start a new run with a different role assignment; do not rely on the stale `active.json` or TUI alone to infer success.
+- A stalled or externally interrupted adapter process may leave `state.json` at `status=running` / an early phase without writing `final.json`. Treat that run as interrupted and use `tagteam resume [RUN_ID]`; resume verifies the baseline, diff hash, and required artifacts, then continues the first incomplete phase or quarantines unsafe partial work. Do not treat `active.json` or the TUI alone as evidence of success.
 - Different adapters do not expose identical capabilities. Some support schema-constrained output, stdin, or session resume; others do not. `tagteam` degrades where possible, but behavior is not perfectly uniform.
 - Local `.env` loading is a convenience feature, not a secret-management system. It helps with local runs, but shell-exported environment variables still take precedence.
 - Repo-local `.tagteam.toml` is partially trusted by default: low-authority defaults such as roles/models can be read, but shell tests, adapter passthrough args, Claude permission/tool widening, and `openai-compatible` endpoints/headers are ignored unless you pass `--trust-repo-config`.
@@ -231,7 +231,7 @@ go run . --allow-dev-build "add OAuth login"
 
 ## Quick start
 
-Default run (supervisor mode, Gemini 3.5 Flash Medium worker and GPT-5.6 Terra supervisor at high reasoning effort):
+Default run (supervisor mode, Gemini 3.5 Flash Medium worker and GPT-5.6 Sol supervisor at high reasoning effort):
 
 ```bash
 tagteam "add OAuth login"
@@ -681,7 +681,7 @@ The dashboard has three main surfaces:
 
 - a compose surface for prompt entry and run launch
 - an on-demand Team builder for orchestration mode, profiles, provider effort, and role-aware model assignments
-- an execution Settings panel for rounds, tests, scout policy, slicing, worktree safety, and JSON repair
+- an execution Settings panel for write scope, lint/tests, invocation and no-progress timeouts, rounds, scout policy, slicing, worktree safety, and JSON repair
 - a scrollable run-detail view showing status, roles, plan items, findings, changed files, and artifact paths
 
 It polls the run directory once a second while a run is active and can also launch a new run directly through the same config/runner path as the normal CLI.
@@ -695,14 +695,14 @@ Core keyboard affordances:
 - `m` opens the Team builder, where each role states whether it writes code or acts read-only
 - `/` opens a mode-aware command palette; `/model ` first selects a role and then its model, while `/profile `, `/mode `, `/codex-effort `, and `/claude-effort ` show valid values
 - `/team` opens the same Team builder; direct role-first commands such as `/model supervisor codex:gpt-5.6-sol` are also accepted
-- direct commands remain available, including `/supervisor codex:gpt-5.6-sol`, `/scout agy:Gemini 3.5 Flash (Medium)`, `/rounds 3`, `/watch latest`, and `/scout-retrieval off`
+- direct commands remain available, including `/supervisor codex:gpt-5.6-sol`, `/scout agy:Gemini 3.5 Flash (Medium)`, `/allow-path internal/,README.md`, `/timeout 15m`, `/watchdog-timeout 5m`, `/lint go vet ./...`, `/watch latest`, and `/scout-retrieval off`
 - `s` opens execution Settings
 - `u` opens recent runs
 - `r` refreshes
 - `p`, `f`, `a`, and `t` toggle detail sections
 - `q` quits
 
-The run-detail surface still reads `active.json`, `state.json`, `final.json`, and `plan.json` from the run directory (the same sources `RunSnapshot` assembles for `tagteam status --json`), but the compose surface is intentionally primary and can invoke adapters through the normal runner path.
+The run-detail surface reads `active.json`, `state.json`, `live-progress.json`, `final.json`, and `plan.json` through the same `RunSnapshot` assembly used by status views. While an adapter is active it shows the logical team role, elapsed/idle time, and a tracked-plus-untracked working-diff summary; the compose surface remains primary and invokes adapters through the normal runner path.
 
 ## Development
 

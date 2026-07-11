@@ -3,6 +3,7 @@ package tagteam
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -373,5 +374,47 @@ func TestRunAdapterPersistsStalledStatusAfterWatchdogCancellation(t *testing.T) 
 	readJSONFile(t, filepath.Join(runDir, liveProgressArtifact), &progress)
 	if progress.Status != "stalled" {
 		t.Fatalf("live progress status = %q, want stalled", progress.Status)
+	}
+}
+
+func TestRunDirectAdapterUsesWatchdogAndPersistsLogicalProgress(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "baseline\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "baseline")
+
+	runDir := t.TempDir()
+	adapter := fakeDirectAdapter{
+		build: func(role Role, req Request) (*CommandSpec, error) {
+			return &CommandSpec{Argv: []string{"direct"}, Dir: repo}, nil
+		},
+		direct: func(role Role, req Request) (Result, error) {
+			<-req.Context.Done()
+			return Result{}, req.Context.Err()
+		},
+	}
+	started := time.Now()
+	_, err := NewApp(DefaultConfig()).runAdapter(context.Background(), adapter, RoleScout, Request{
+		Context:         context.Background(),
+		Workdir:         repo,
+		RunDir:          runDir,
+		Timeout:         2 * time.Second,
+		WatchdogTimeout: 50 * time.Millisecond,
+		Phase:           "relay scout",
+		ProgressRole:    RoleScout,
+	}, false)
+	if !errors.Is(err, errInvocationStalled) {
+		t.Fatalf("runAdapter() error = %v, want stalled", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("direct watchdog took %s", elapsed)
+	}
+	var progress LiveProgress
+	readJSONFile(t, filepath.Join(runDir, liveProgressArtifact), &progress)
+	if progress.Status != "stalled" || progress.Role != RoleScout {
+		t.Fatalf("direct progress = %#v", progress)
 	}
 }

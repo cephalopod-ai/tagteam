@@ -131,16 +131,6 @@ func (a *App) resumeEditor(ctx context.Context, opts RunOptions, state RunState,
 	if err != nil {
 		return Result{}, "", err
 	}
-	if partial {
-		before = worktreeSnapshot{}
-		recovered, selectedTarget, selectedAdapter, recoveryErr := a.recoverEditorFailure(ctx, opts, round, final.RunDir, final.Baseline, workerSchemaPath, "", Request{Context: ctx, Workdir: opts.Workdir, RunDir: final.RunDir, SchemaPath: workerSchemaPath, ProgressRole: Role(runtime.editorLabel)}, final.Coder, runtime.editor, runtime.reviewer, runtime.registry, fmt.Errorf("invocation %s was interrupted with an uncheckpointed diff", state.InvocationID), before, final)
-		if recoveryErr != nil {
-			return Result{}, "", recoveryErr
-		}
-		final.Coder = selectedTarget
-		runtime.editor = selectedAdapter
-		return recovered, filepath.Join(final.RunDir, fmt.Sprintf("worker-recovery-round-%d.json", round)), nil
-	}
 	prompt, err := buildRoundEditorPrompt(ctx, opts, round, final.RunDir, final.Baseline, "", latestReview, nil, runtime.relay, runtime.selectedPackage, runtime.workPlan, runtime.relay.Brief, round == 1 && latestReview.Verdict == "")
 	if err != nil {
 		return Result{}, "", err
@@ -149,13 +139,25 @@ func (a *App) resumeEditor(ctx context.Context, opts RunOptions, state RunState,
 	outputPath := resumeEditorOutputPath(final.RunDir, runtime.editorLabel, round)
 	setRoleStatus(final, runtime.editorLabel, final.Coder, "running", "", "")
 	editorRequest := Request{Context: ctx, Prompt: prompt, SystemPrompt: editorSystemPromptForMode(opts.Mode), EnvOverlay: opts.EnvOverlay, Model: final.Coder.Model, Workdir: opts.Workdir, RunDir: final.RunDir, OutputPath: outputPath, SchemaPath: workerSchemaPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: fmt.Sprintf("resumed round %d %s", round, runtime.editorLabel), ProgressRole: Role(runtime.editorLabel), Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, RequireWorkerContract: true}
-	result, err := a.runAdapter(ctx, runtime.editor, RoleCoder, editorRequest, opts.DryRun)
+	if partial {
+		before = worktreeSnapshot{}
+		recovered, selectedTarget, selectedAdapter, recoveryErr := a.recoverEditorFailure(ctx, opts, round, final.RunDir, final.Baseline, workerSchemaPath, "", editorRequest, final.Coder, runtime.editor, runtime.reviewer, runtime.registry, fmt.Errorf("invocation %s was interrupted with an uncheckpointed diff", state.InvocationID), before, final)
+		if recoveryErr != nil {
+			return Result{}, "", recoveryErr
+		}
+		final.Coder = selectedTarget
+		setFinalRoleTarget(final, runtime.editorLabel, selectedTarget)
+		runtime.editor = selectedAdapter
+		return recovered, filepath.Join(final.RunDir, fmt.Sprintf("worker-recovery-round-%d.json", round)), nil
+	}
+	result, err := a.runEditorWithContractRetry(ctx, opts, runtime.editor, editorRequest, before)
 	if err != nil {
 		recovered, selectedTarget, selectedAdapter, recoveryErr := a.recoverEditorFailure(ctx, opts, round, final.RunDir, final.Baseline, workerSchemaPath, result.SessionID, editorRequest, final.Coder, runtime.editor, runtime.reviewer, runtime.registry, err, before, final)
 		if recoveryErr != nil {
 			return Result{}, "", recoveryErr
 		}
 		final.Coder = selectedTarget
+		setFinalRoleTarget(final, runtime.editorLabel, selectedTarget)
 		runtime.editor = selectedAdapter
 		return recovered, filepath.Join(final.RunDir, fmt.Sprintf("worker-recovery-round-%d.json", round)), nil
 	}

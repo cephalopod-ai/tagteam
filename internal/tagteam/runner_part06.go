@@ -149,8 +149,55 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			finishDeliveryRecord(recordPath, record, "dry-run", nil)
 			return result, nil
 		}
+		req.InvocationID = record.InvocationID
+		phase := req.Phase
+		if phase == "" {
+			phase = fmt.Sprintf("%s %s", role, adapter.ID())
+		}
+		progressRole := role
+		if req.ProgressRole != "" {
+			progressRole = req.ProgressRole
+		}
+		started := time.Now()
+		lastActivity := started
+		req.ProgressLastActivity = &lastActivity
+		directCtx := req.Context
+		if directCtx == nil {
+			directCtx = ctx
+		}
+		directTimeout := req.Timeout
+		watchdogDeadline := time.Time{}
+		if req.WatchdogTimeout > 0 && (directTimeout <= 0 || req.WatchdogTimeout < directTimeout) {
+			directTimeout = req.WatchdogTimeout
+			watchdogDeadline = started.Add(req.WatchdogTimeout)
+		}
+		directCancel := func() {}
+		if directTimeout > 0 {
+			directCtx, directCancel = context.WithTimeout(directCtx, directTimeout)
+		}
+		defer directCancel()
+		req.Context = directCtx
+		// The host-owned context above is authoritative for both invocation and
+		// watchdog deadlines; avoid adding a second nested timer in the adapter.
+		req.Timeout = 0
+		_, _ = writeLiveProgress(directCtx, req, progressRole, phase, started, "running")
+		directProgressStatus := "completed"
+		defer func() {
+			status := directProgressStatus
+			if runErr != nil && status != "stalled" {
+				status = "failed"
+			}
+			_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, started, status)
+		}()
 		result, err := direct.RunDirect(role, req)
 		if err != nil {
+			if !watchdogDeadline.IsZero() && errors.Is(directCtx.Err(), context.DeadlineExceeded) && !time.Now().Before(watchdogDeadline) {
+				directProgressStatus = "stalled"
+				err = &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("%w: %v", errInvocationStalled, err)}
+				record.CancellationCause = string(ReasonStalled)
+			} else if directCtx.Err() != nil {
+				record.CancellationCause = directCtx.Err().Error()
+			}
 			if record.StderrPath != "" {
 				_ = writeRedactedBytes(record.StderrPath, []byte(err.Error()+"\n"), req.EnvOverlay)
 				record.StderrBytes = int64(len(err.Error()) + 1)

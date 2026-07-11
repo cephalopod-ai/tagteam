@@ -671,24 +671,10 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		}
 		editorResult, err := a.runEditorWithContractRetry(ctx, opts, editor, editorRequest, beforeEditor)
 		if err != nil {
-			setRoleStatus(&final, editorLabel, opts.Coder, "failed", classifyRoleFailure(editorLabel, err), err.Error())
-			if IsIntegrityViolation(err) {
-				final.Status = RunStatusQuarantined
-				final.BlockingReason = string(ReasonQuarantined)
+			editorResult, opts.Coder, editor, err = a.recoverRoundEditorFailure(ctx, opts, round, runDir, baseline, workerSchemaPath, sessionID, editorLabel, editorRequest, beforeEditor, editor, reviewer, registry, &meta, &final, err)
+			if err != nil {
 				return final, err
 			}
-			recovered, selectedTarget, selectedAdapter, recoveryErr := a.recoverEditorFailure(ctx, opts, round, runDir, baseline, workerSchemaPath, sessionID, editorRequest, opts.Coder, editor, reviewer, registry, err, beforeEditor, &final)
-			if recoveryErr != nil {
-				return final, recoveryErr
-			}
-			editorResult = recovered
-			if roleTargetString(selectedTarget) != roleTargetString(opts.Coder) {
-				setFinalDegraded(&final, ReasonFallbackUsed, fmt.Sprintf("%s runtime fallback selected", editorLabel))
-				appendRoleLoss(&final, editorLabel, opts.LossPolicy.Worker, "runtime_replace", "fallback_selected", ReasonFallbackUsed, fmt.Sprintf("%s -> %s", roleTargetString(opts.Coder), roleTargetString(selectedTarget)))
-			}
-			opts.Coder = selectedTarget
-			editor = selectedAdapter
-			final.Coder = selectedTarget
 		}
 		setRoleStatus(&final, editorLabel, opts.Coder, "completed", "", "")
 		logProgress(opts, "round %d %s completed output=%s", round, editorLabel, editorOutputPath)

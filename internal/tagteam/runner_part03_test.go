@@ -76,6 +76,66 @@ func TestRunLoop_PersistsFinalOnMidRunFailure(t *testing.T) {
 	}
 }
 
+func TestRunSoloContinuesAfterZeroDeltaWorkerFallback(t *testing.T) {
+	installFakeBinaries(t, map[string]string{
+		"claude": `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "claude 1.0"; exit 0; fi
+echo "primary worker failed" >&2
+exit 7
+`,
+		"codex": `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex 1.0"; exit 0; fi
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then output="$2"; shift 2; continue; fi
+  shift
+done
+printf 'after\n' > README.md
+payload='{"schema_version":1,"status":"completed","summary":"fallback completed","files_changed":["README.md"],"checks_run":[],"remaining_risks":[]}'
+if [ -n "$output" ]; then printf '%s' "$payload" > "$output"; else printf '%s' "$payload"; fi
+`,
+	})
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "before\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "baseline")
+
+	final, err := NewApp(DefaultConfig()).Run(context.Background(), RunOptions{
+		Prompt:       "update README",
+		Workdir:      repo,
+		Mode:         ModeSolo,
+		Coder:        RoleTarget{Adapter: "claude", Model: "primary-model"},
+		AllowedPaths: []string{"README.md"},
+		LossPolicy:   RoleLossPolicies{Worker: LossPolicyReplaceThenBlock},
+		Fallbacks:    RoleFallbacks{Worker: []string{"codex:fallback-model"}},
+		Rounds:       1,
+		Timeout:      10 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if final.Status != RunStatusDegraded || roleTargetString(final.Coder) != "codex:fallback-model" {
+		t.Fatalf("final fallback state = status:%q coder:%#v", final.Status, final.Coder)
+	}
+	if final.Phase != "solo" || final.RoundsRequested != 1 || final.Budgets.MaxRounds != 1 {
+		t.Fatalf("solo phase/budget = phase:%q requested:%d max:%d", final.Phase, final.RoundsRequested, final.Budgets.MaxRounds)
+	}
+	if final.Adapters["solo"] != "codex" || final.Models["solo"] != "fallback-model" {
+		t.Fatalf("final role maps were not updated: adapters=%#v models=%#v", final.Adapters, final.Models)
+	}
+	var meta Meta
+	readJSONFile(t, filepath.Join(final.RunDir, "meta.json"), &meta)
+	if meta.Adapters["solo"] != "codex" || meta.Models["solo"] != "fallback-model" {
+		t.Fatalf("meta role maps were not updated: adapters=%#v models=%#v", meta.Adapters, meta.Models)
+	}
+	if data, readErr := os.ReadFile(filepath.Join(repo, "README.md")); readErr != nil || string(data) != "after\n" {
+		t.Fatalf("fallback edit = %q err=%v", data, readErr)
+	}
+}
+
 func TestReview_PreflightsReviewerRunnable(t *testing.T) {
 	oldLookPath := execLookPath
 	oldCommandContext := execCommandContext

@@ -123,6 +123,17 @@ func setRoleStatus(final *FinalRun, role string, target RoleTarget, status strin
 	final.RoleStatuses[role] = current
 }
 
+func setFinalRoleTarget(final *FinalRun, role string, target RoleTarget) {
+	if final.Adapters == nil {
+		final.Adapters = map[string]string{}
+	}
+	if final.Models == nil {
+		final.Models = map[string]string{}
+	}
+	final.Adapters[role] = target.Adapter
+	final.Models[role] = target.Model
+}
+
 func renameRoleStatus(final *FinalRun, from, to string) {
 	if from == to || final.RoleStatuses == nil {
 		return

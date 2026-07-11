@@ -8,6 +8,43 @@ import (
 	"time"
 )
 
+func (a *App) recoverRoundEditorFailure(
+	ctx context.Context,
+	opts RunOptions,
+	round int,
+	runDir, baseline, workerSchemaPath, sessionID, editorLabel string,
+	editorRequest Request,
+	beforeEditor worktreeSnapshot,
+	editor, reviewer Adapter,
+	registry map[string]Adapter,
+	meta *Meta,
+	final *FinalRun,
+	cause error,
+) (Result, RoleTarget, Adapter, error) {
+	setRoleStatus(final, editorLabel, opts.Coder, "failed", classifyRoleFailure(editorLabel, cause), cause.Error())
+	if IsIntegrityViolation(cause) {
+		final.Status = RunStatusQuarantined
+		final.BlockingReason = string(ReasonQuarantined)
+		return Result{}, opts.Coder, editor, cause
+	}
+	recovered, selectedTarget, selectedAdapter, err := a.recoverEditorFailure(ctx, opts, round, runDir, baseline, workerSchemaPath, sessionID, editorRequest, opts.Coder, editor, reviewer, registry, cause, beforeEditor, final)
+	if err != nil {
+		return Result{}, opts.Coder, editor, err
+	}
+	if roleTargetString(selectedTarget) != roleTargetString(opts.Coder) {
+		setFinalDegraded(final, ReasonFallbackUsed, fmt.Sprintf("%s runtime fallback selected", editorLabel))
+		appendRoleLoss(final, editorLabel, opts.LossPolicy.Worker, "runtime_replace", "fallback_selected", ReasonFallbackUsed, fmt.Sprintf("%s -> %s", roleTargetString(opts.Coder), roleTargetString(selectedTarget)))
+	}
+	final.Coder = selectedTarget
+	meta.Adapters[editorLabel] = selectedTarget.Adapter
+	meta.Models[editorLabel] = selectedTarget.Model
+	setFinalRoleTarget(final, editorLabel, selectedTarget)
+	if err := writeJSON(filepath.Join(runDir, "meta.json"), *meta); err != nil {
+		return Result{}, opts.Coder, editor, err
+	}
+	return recovered, selectedTarget, selectedAdapter, nil
+}
+
 func (a *App) runEditorWithContractRetry(ctx context.Context, opts RunOptions, editor Adapter, req Request, before worktreeSnapshot) (Result, error) {
 	result, err := a.runAdapter(ctx, editor, RoleCoder, req, opts.DryRun)
 	if err == nil || !IsOutputContractError(err) || opts.DryRun {

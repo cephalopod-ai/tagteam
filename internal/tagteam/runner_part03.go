@@ -102,6 +102,8 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 		StartedAt:       meta.StartedAt,
 	}
 	initFinalState(&final, opts)
+	final.Phase = "solo"
+	final.Budgets.MaxRounds = 1
 	final.Degraded = selectionState.Degraded
 	final.DegradedReason = selectionState.DegradedReason
 	final.RoleStatuses = selectionState.RoleStatuses
@@ -152,36 +154,57 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	if err != nil {
 		reason := classifyRoleFailure(editorLabel, err)
 		setRoleStatus(&final, editorLabel, opts.Coder, "failed", reason, err.Error())
-		status := "failed"
 		if IsIntegrityViolation(err) {
-			status = string(RunStatusQuarantined)
 			final.Status = RunStatusQuarantined
 			final.BlockingReason = string(ReasonQuarantined)
 		} else {
-			_, _, _, err = a.recoverEditorFailure(ctx, opts, 1, runDir, baseline, workerSchemaPath, "", editorRequest, opts.Coder, editor, nil, registry, err, beforeEditor, &final)
+			originalTarget := opts.Coder
+			recovered, selectedTarget, selectedAdapter, recoveryErr := a.recoverEditorFailure(ctx, opts, 1, runDir, baseline, workerSchemaPath, "", editorRequest, opts.Coder, editor, nil, registry, err, beforeEditor, &final)
+			if recoveryErr == nil {
+				editorResult = recovered
+				if roleTargetString(selectedTarget) != roleTargetString(originalTarget) {
+					setFinalDegraded(&final, ReasonFallbackUsed, fmt.Sprintf("%s runtime fallback selected", editorLabel))
+					appendRoleLoss(&final, editorLabel, opts.LossPolicy.Worker, "runtime_replace", "fallback_selected", ReasonFallbackUsed, fmt.Sprintf("%s -> %s", roleTargetString(originalTarget), roleTargetString(selectedTarget)))
+				}
+				opts.Coder = selectedTarget
+				editor = selectedAdapter
+				final.Coder = selectedTarget
+				meta.Adapters[editorLabel] = selectedTarget.Adapter
+				meta.Models[editorLabel] = selectedTarget.Model
+				setFinalRoleTarget(&final, editorLabel, selectedTarget)
+				if writeErr := writeJSON(filepath.Join(runDir, "meta.json"), meta); writeErr != nil {
+					return final, writeErr
+				}
+				err = nil
+			} else {
+				err = recoveryErr
+			}
+		}
+		if err != nil {
+			status := "failed"
 			if final.Status == RunStatusQuarantined {
 				status = string(RunStatusQuarantined)
 			}
+			final.ExitCode = ExitCode(err)
+			final.Verdict = status
+			final.Summary = redactSecretsWithOverlay(err.Error(), opts.EnvOverlay)
+			final.FinishedAt = time.Now().UTC()
+			setFinalBlocking(&final, reason, err.Error())
+			applyInvocationBudget(&final, budget)
+			finalizeRunState(&final)
+			_ = writeRunState(runDir, RunState{
+				RunID:          runID,
+				Mode:           opts.Mode,
+				Status:         status,
+				Phase:          "solo",
+				BlockingReason: final.BlockingReason,
+				RoleStatuses:   final.RoleStatuses,
+				CurrentRound:   1,
+				ExitCode:       final.ExitCode,
+			})
+			_ = a.persistFinal(opts.Workdir, final)
+			return final, err
 		}
-		final.ExitCode = ExitCode(err)
-		final.Verdict = status
-		final.Summary = redactSecretsWithOverlay(err.Error(), opts.EnvOverlay)
-		final.FinishedAt = time.Now().UTC()
-		setFinalBlocking(&final, reason, err.Error())
-		applyInvocationBudget(&final, budget)
-		finalizeRunState(&final)
-		_ = writeRunState(runDir, RunState{
-			RunID:          runID,
-			Mode:           opts.Mode,
-			Status:         status,
-			Phase:          "solo",
-			BlockingReason: final.BlockingReason,
-			RoleStatuses:   final.RoleStatuses,
-			CurrentRound:   1,
-			ExitCode:       final.ExitCode,
-		})
-		_ = a.persistFinal(opts.Workdir, final)
-		return final, err
 	}
 	setRoleStatus(&final, editorLabel, opts.Coder, "completed", "", "")
 	final.Costs[editorLabel] += editorResult.CostUSD
