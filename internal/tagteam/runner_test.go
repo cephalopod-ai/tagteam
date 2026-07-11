@@ -538,6 +538,50 @@ func TestPreflightBranchModeCreatesBranch(t *testing.T) {
 	}
 }
 
+func TestPreflightAllowDirtyCreatesCheckpointBranch(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+	original := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "new.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	baseline, cleanup, err := preflight(RunOptions{Workdir: repo, AllowDirty: true}, "2026-07-11T120000Z")
+	if err != nil {
+		t.Fatalf("preflight() error = %v", err)
+	}
+	if cleanup != nil {
+		t.Fatalf("allow-dirty checkpoint must persist its branch")
+	}
+	branch := strings.TrimSpace(runGit(t, repo, "rev-parse", "--abbrev-ref", "HEAD"))
+	if branch != "tagteam/2026-07-11T120000Z" {
+		t.Fatalf("branch = %q", branch)
+	}
+	head := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	if baseline != head {
+		t.Fatalf("baseline = %q, HEAD = %q", baseline, head)
+	}
+	if parent := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD^")); parent != original {
+		t.Fatalf("checkpoint parent = %q, want %q", parent, original)
+	}
+	if status := strings.TrimSpace(runGit(t, repo, "status", "--porcelain")); status != "" {
+		t.Fatalf("checkpoint worktree is dirty: %q", status)
+	}
+	if got := strings.TrimSpace(runGit(t, repo, "show", "HEAD:new.txt")); got != "new" {
+		t.Fatalf("checkpoint omitted untracked file: %q", got)
+	}
+}
+
 func TestDeterministicDiffIgnoresTagteamRunDirButIncludesUntrackedFiles(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")

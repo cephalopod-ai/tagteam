@@ -530,6 +530,33 @@ func gitCreateBranch(workdir, branch string) error {
 	return nil
 }
 
+func gitCreateCheckpointBranch(workdir, branch, runID string) (string, error) {
+	if err := gitCreateBranch(workdir, branch); err != nil {
+		return "", err
+	}
+	dirty, err := gitDirty(workdir)
+	if err != nil {
+		return "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	if dirty {
+		if _, err := runCommand(context.Background(), workdir, "git", "add", "-A"); err != nil {
+			return "", &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("checkpoint dirty worktree: %w", err)}
+		}
+		message := "tagteam: checkpoint pre-existing worktree"
+		if strings.TrimSpace(runID) != "" {
+			message += " for " + runID
+		}
+		if _, err := runCommand(context.Background(), workdir, "git", "commit", "-m", message); err != nil {
+			return "", &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("commit dirty-worktree checkpoint: %w", err)}
+		}
+	}
+	head, err := ensureGitRepo(workdir)
+	if err != nil {
+		return "", err
+	}
+	return head, nil
+}
+
 func runCommand(ctx context.Context, workdir, binary string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = workdir

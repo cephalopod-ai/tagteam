@@ -636,7 +636,11 @@ func preflight(opts RunOptions, runID string) (string, func(), error) {
 		}
 	}
 	if opts.AllowDirty || opts.GitSafety == "allow-dirty" {
-		return baseline, nil, nil
+		checkpoint, err := gitCreateCheckpointBranch(opts.Workdir, "tagteam/"+runID, runID)
+		if err != nil {
+			return "", nil, err
+		}
+		return checkpoint, nil, nil
 	}
 	if opts.SkipDirtyCheck {
 		return baseline, nil, nil

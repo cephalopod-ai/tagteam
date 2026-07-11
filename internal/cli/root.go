@@ -181,7 +181,7 @@ func bindSharedFlags(cmd *cobra.Command, flags *flagState) {
 	flagSet.BoolVar(&flags.DryRun, "dry-run", false, "Print vendor invocations without executing")
 	flagSet.BoolVar(&flags.ShowReview, "show-review", false, "Include review findings in output")
 	flagSet.BoolVar(&flags.FailOnReview, "fail-on-review", false, "Exit non-zero on blocking review findings")
-	flagSet.BoolVar(&flags.AllowDirty, "allow-dirty", false, "Skip clean-worktree preflight")
+	flagSet.BoolVar(&flags.AllowDirty, "allow-dirty", false, "Checkpoint existing changes on a new tagteam/<run-id> branch")
 	flagSet.BoolVar(&flags.AllowDevBuild, "allow-dev-build", false, "Explicitly allow a development or unverified binary for mutating commands")
 	flagSet.BoolVar(&flags.Autostash, "autostash", false, "Stash local changes before run")
 	flagSet.DurationVar(&flags.Timeout, "timeout", 15*time.Minute, "Per-invocation timeout")
