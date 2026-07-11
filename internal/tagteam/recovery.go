@@ -59,13 +59,18 @@ func (d RecoveryDecision) Validate(allowed map[string]bool) error {
 
 func parseRecoveryDecision(raw []byte, allowed map[string]bool) (RecoveryDecision, error) {
 	var decision RecoveryDecision
-	if err := json.Unmarshal(raw, &decision); err != nil {
-		extracted, extractErr := extractJSONObject(raw)
-		if extractErr != nil || json.Unmarshal(extracted, &decision) != nil {
-			return RecoveryDecision{}, &OutputContractError{Err: fmt.Errorf("decode recovery decision: %w", err)}
+	err := decodeEmbeddedJSON(raw, func(candidate []byte) error {
+		var parsed RecoveryDecision
+		if err := json.Unmarshal(candidate, &parsed); err != nil {
+			return fmt.Errorf("decode recovery decision: %w", err)
 		}
-	}
-	if err := decision.Validate(allowed); err != nil {
+		if err := parsed.Validate(allowed); err != nil {
+			return err
+		}
+		decision = parsed
+		return nil
+	})
+	if err != nil {
 		return RecoveryDecision{}, &OutputContractError{Err: err}
 	}
 	return decision, nil

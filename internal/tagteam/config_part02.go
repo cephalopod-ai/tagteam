@@ -96,6 +96,7 @@ func hasTagteamEnv(overlay map[string]string) bool {
 		"TAGTEAM_CODEX_REASONING_EFFORT",
 		"TAGTEAM_CLAUDE_ARGS",
 		"TAGTEAM_CLAUDE_EFFORT",
+		"TAGTEAM_CLAUDE_SERIALIZE",
 		"TAGTEAM_AGY_ARGS",
 		"TAGTEAM_GOSLING_ARGS",
 		"TAGTEAM_OPENAI_COMPATIBLE_BASE_URL",
@@ -273,6 +274,11 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CLAUDE_EFFORT"); ok {
 		cfg.Adapters.Claude.Effort = value
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CLAUDE_SERIALIZE"); ok {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Adapters.Claude.Serialize = &parsed
+		}
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_AGY_ARGS"); ok {
 		if parsed, err := shlex.Split(value); err == nil {

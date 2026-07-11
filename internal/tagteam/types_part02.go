@@ -110,6 +110,9 @@ type ClaudeConfig struct {
 	CoderAllowedTools    []string `toml:"coder_allowed_tools"`
 	ExtraArgs            []string `toml:"extra_args"`
 	Bare                 bool     `toml:"bare"`
+	// Serialize gates the cross-process claude invocation lock; nil means
+	// enabled. Concurrent claude CLI processes can stall or remain pending.
+	Serialize *bool `toml:"serialize"`
 }
 
 type AgyConfig struct {

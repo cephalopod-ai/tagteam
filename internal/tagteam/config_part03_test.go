@@ -30,6 +30,7 @@ func TestLoadConfig_UntrustedRepoConfigIgnoresHighAuthorityKeys(t *testing.T) {
 [adapters.claude]
 coder_allowed_tools = ["Bash"]
 bare = true
+serialize = false
 extra_args = ["--danger"]
 
 [adapters.openai_compatible]
@@ -62,6 +63,9 @@ extra_args = ["--future"]
 	}
 	if cfg.Adapters.Claude.Bare {
 		t.Fatal("claude bare should be ignored")
+	}
+	if cfg.Adapters.Claude.Serialize != nil {
+		t.Fatal("claude serialize should be ignored in untrusted repo config")
 	}
 	if len(cfg.Adapters.Claude.ExtraArgs) != 0 {
 		t.Fatalf("claude extra_args should be ignored: %#v", cfg.Adapters.Claude.ExtraArgs)
@@ -302,5 +306,30 @@ func TestResolveOptions_OpenAICompatiblePassthrough(t *testing.T) {
 		if opts.OpenAICompatibleArgs[i] != want[i] {
 			t.Fatalf("openai-compatible args[%d] = %q, want %q", i, opts.OpenAICompatibleArgs[i], want[i])
 		}
+	}
+}
+
+func TestClaudeSerializeDefaultsOnAndConfigurable(t *testing.T) {
+	registry := Registry(DefaultConfig(), RunOptions{})
+	if !registry["claude"].Capabilities().SerializeInvocations {
+		t.Fatal("claude invocation serialization should default to enabled")
+	}
+	disabled := false
+	cfg := DefaultConfig()
+	cfg.Adapters.Claude.Serialize = &disabled
+	registry = Registry(cfg, RunOptions{})
+	if registry["claude"].Capabilities().SerializeInvocations {
+		t.Fatal("serialize = false should disable claude invocation serialization")
+	}
+	if registry["codex"].Capabilities().SerializeInvocations {
+		t.Fatal("other adapters should not request invocation serialization")
+	}
+}
+
+func TestClaudeSerializeEnvOverride(t *testing.T) {
+	cfg := DefaultConfig()
+	mergeEnvConfig(&cfg, map[string]string{"TAGTEAM_CLAUDE_SERIALIZE": "false"})
+	if cfg.Adapters.Claude.Serialize == nil || *cfg.Adapters.Claude.Serialize {
+		t.Fatalf("TAGTEAM_CLAUDE_SERIALIZE=false should disable serialization: %#v", cfg.Adapters.Claude.Serialize)
 	}
 }

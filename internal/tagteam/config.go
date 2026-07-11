@@ -390,6 +390,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 	src.Adapters.Claude.CoderAllowedTools = nil
 	src.Adapters.Claude.ExtraArgs = nil
 	src.Adapters.Claude.Bare = false
+	src.Adapters.Claude.Serialize = nil
 	src.Adapters.CodexOSS.ExtraArgs = nil
 	src.Adapters.Agy.ExtraArgs = nil
 	src.Adapters.Gosling.ExtraArgs = nil
@@ -627,6 +628,10 @@ func mergeConfig(dst *Config, src Config) {
 	}
 	if src.Adapters.Claude.Bare {
 		dst.Adapters.Claude.Bare = true
+	}
+	if src.Adapters.Claude.Serialize != nil {
+		value := *src.Adapters.Claude.Serialize
+		dst.Adapters.Claude.Serialize = &value
 	}
 	mergeContextBudget(&dst.Adapters.Claude.MaxContextTokens, &dst.Adapters.Claude.ReservedOutputTokens, src.Adapters.Claude.MaxContextTokens, src.Adapters.Claude.ReservedOutputTokens)
 	if src.Adapters.CodexOSS.DefaultModel != "" {

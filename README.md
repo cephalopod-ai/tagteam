@@ -171,8 +171,8 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - Vendor CLI flag drift can break adapters. `codex`, `codex-oss`, `claude`, `agy`, `gosling`, and similar tools may rename flags, change output formats, or alter auth behavior between releases.
 - Authentication is adapter-specific. CLI-backed adapters usually rely on the vendor's own login/session flow; `openai-compatible` / `oai` relies on explicit environment/config values.
 - Supervisor slicing is more format-sensitive than the final review pass. The final review path is schema-validated, but some supervisor planning/instruction steps still depend on adapter output being reasonably well-formed.
-- Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and can recover when a valid review JSON object is embedded in the prose; if no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection. If you intentionally want the already-selected worker to act as a read-only parser workaround, pass `--repair-json-with-worker` or set `json_repair = "worker"`; repaired runs are marked degraded with `json_repair_used`.
-- Claude Code is currently questionable for unattended relay roles when another Claude process is active. A relay can complete its non-Claude stages, then remain pending for an extended period before a Claude scout, supervisor, or coder starts or returns. `tagteam doctor` only confirms that the binary is present; it cannot detect this contention. Avoid assigning Claude to multiple simultaneous runs or roles until this is hardened.
+- Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and recovers when a valid contract JSON object is embedded anywhere in the prose: fenced ```json blocks are tried first, then every balanced JSON object in the reply, so an unrelated brace snippet earlier in the prose no longer masks the real payload. Claude envelopes that self-report failure (`is_error` / `error_*` subtypes such as `error_max_turns`) are surfaced as clear adapter errors (`claude reported error_max_turns: ...`) instead of misleading `decode ... JSON` contract failures, which lets the fallback ladder engage. If no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection. If you intentionally want the already-selected worker to act as a read-only parser workaround, pass `--repair-json-with-worker` or set `json_repair = "worker"`; repaired runs are marked degraded with `json_repair_used`.
+- Concurrent Claude Code processes can stall or remain pending, especially in relay/multi-role configurations. `tagteam` now serializes Claude invocations across its own processes by default with a cross-process lock under the state root (`adapters.claude.serialize`, `TAGTEAM_CLAUDE_SERIALIZE`); waiting runs log `waiting for concurrent claude invocation` and stale locks from dead processes are reclaimed automatically. This removes contention between concurrent tagteam runs, but cannot see Claude processes started outside tagteam — `tagteam doctor` only confirms that the binary is present and cannot detect that external contention.
 - A stalled or externally interrupted adapter process may leave `state.json` at `status=running` / an early phase without writing `final.json`. Treat that run as interrupted and use `tagteam resume [RUN_ID]`; resume verifies the baseline, diff hash, and required artifacts, then continues the first incomplete phase or quarantines unsafe partial work. Do not treat `active.json` or the TUI alone as evidence of success.
 - Different adapters do not expose identical capabilities. Some support schema-constrained output, stdin, or session resume; others do not. `tagteam` degrades where possible, but behavior is not perfectly uniform.
 - Local `.env` loading is a convenience feature, not a secret-management system. It helps with local runs, but shell-exported environment variables still take precedence.
@@ -467,7 +467,7 @@ tagteam fix
 
 If a `.env` file exists in the selected workdir, `tagteam` parses it as a small, line-oriented dotenv subset: `KEY=VALUE`, optional `export`, inline comments outside quotes, single-quoted raw values, and double-quoted escape sequences such as `\n`. `.env` is a convenience source for local development; it is not a full shell parser, and explicit shell exports still win.
 
-Repo-local `.tagteam.toml` is loaded in untrusted mode by default. It can set ordinary role/model defaults, but high-authority settings such as `defaults.test`, `git_safety`, adapter `extra_args`, Claude `coder_allowed_tools` / `bare`, and `openai-compatible` `base_url`, `api_key_env`, `extra_headers`, or `extra_args` require `--trust-repo-config`.
+Repo-local `.tagteam.toml` is loaded in untrusted mode by default. It can set ordinary role/model defaults, but high-authority settings such as `defaults.test`, `git_safety`, adapter `extra_args`, Claude `coder_allowed_tools` / `bare` / `serialize`, and `openai-compatible` `base_url`, `api_key_env`, `extra_headers`, or `extra_args` require `--trust-repo-config`.
 
 User config path:
 
@@ -569,6 +569,15 @@ effort = "high"
 ```
 
 The equivalent environment variables are `TAGTEAM_CODEX_REASONING_EFFORT` and `TAGTEAM_CLAUDE_EFFORT`.
+
+Claude invocations are serialized across tagteam processes by default because concurrent Claude Code processes can stall or remain pending. Disable this (for example when every run uses isolated Claude configuration) with:
+
+```toml
+[adapters.claude]
+serialize = false
+```
+
+or `TAGTEAM_CLAUDE_SERIALIZE=false`. The lock lives at `<state-root>/locks/claude-invocation.lock`; a run that waits longer than its invocation timeout proceeds without serialization and says so in progress output.
 
 For `openai-compatible`, environment overrides are `TAGTEAM_OPENAI_COMPATIBLE_MAX_CONTEXT_TOKENS` and `TAGTEAM_OPENAI_COMPATIBLE_RESERVED_OUTPUT_TOKENS`. Omitted limits mean `unknown` and preserve existing relay behavior.
 

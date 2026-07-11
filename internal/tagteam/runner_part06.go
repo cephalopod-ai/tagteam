@@ -306,6 +306,16 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	if runCtx == nil {
 		runCtx = ctx
 	}
+	if adapter.Capabilities().SerializeInvocations {
+		// Serialize before starting the invocation timer so lock wait does
+		// not consume the subprocess budget.
+		release, lockErr := acquireInvocationSlot(runCtx, adapter.ID(), req, req.Timeout)
+		if lockErr != nil {
+			finishDeliveryRecord(recordPath, record, "failed", lockErr)
+			return Result{}, lockErr
+		}
+		defer release()
+	}
 	cancel := func() {}
 	if req.Timeout > 0 {
 		runCtx, cancel = context.WithTimeout(runCtx, req.Timeout)

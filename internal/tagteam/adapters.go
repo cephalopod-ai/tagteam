@@ -39,6 +39,7 @@ func Registry(cfg Config, opts RunOptions) map[string]Adapter {
 			Effort:            cfg.Adapters.Claude.Effort,
 			CoderAllowedTools: cfg.Adapters.Claude.CoderAllowedTools,
 			Bare:              cfg.Adapters.Claude.Bare,
+			Serialize:         cfg.Adapters.Claude.Serialize == nil || *cfg.Adapters.Claude.Serialize,
 			ExtraArgs:         opts.ClaudeArgs,
 		},
 		"agy": &AgyAdapter{
@@ -136,6 +137,7 @@ type ClaudeAdapter struct {
 	Effort            string
 	CoderAllowedTools []string
 	Bare              bool
+	Serialize         bool
 	ExtraArgs         []string
 }
 
@@ -144,7 +146,7 @@ func (a *ClaudeAdapter) ID() string {
 }
 
 func (a *ClaudeAdapter) Capabilities() CapabilitySet {
-	return CapabilitySet{SupportsSchema: true, SupportsResume: true, SupportsStdin: true}
+	return CapabilitySet{SupportsSchema: true, SupportsResume: true, SupportsStdin: true, SerializeInvocations: a.Serialize}
 }
 
 func (a *ClaudeAdapter) Detect(ctx context.Context) (VersionInfo, error) {
@@ -225,6 +227,8 @@ func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 }
 
 type claudeEnvelope struct {
+	Subtype          string          `json:"subtype"`
+	IsError          bool            `json:"is_error"`
 	Result           string          `json:"result"`
 	SessionID        string          `json:"session_id"`
 	TotalCostUSD     float64         `json:"total_cost_usd"`
@@ -241,6 +245,9 @@ func (a *ClaudeAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 			}
 		}
 		return Result{}, fmt.Errorf("decode claude JSON: %w", err)
+	}
+	if envelope.IsError || strings.HasPrefix(envelope.Subtype, "error") {
+		return Result{}, claudeEnvelopeError(envelope)
 	}
 	result := Result{
 		Raw:       raw,
@@ -298,18 +305,43 @@ func normalizeClaudeStructuredOutput(raw json.RawMessage) []byte {
 	return []byte(encoded)
 }
 
-func parseReviewPayload(raw []byte) (*Review, error) {
-	var review Review
-	if err := json.Unmarshal(raw, &review); err != nil {
-		extracted, extractErr := extractJSONObject(raw)
-		if extractErr != nil {
-			return nil, &OutputContractError{Err: fmt.Errorf("decode claude review JSON: %w", err)}
-		}
-		if err := json.Unmarshal(extracted, &review); err != nil {
-			return nil, &OutputContractError{Err: fmt.Errorf("decode claude review JSON: %w", err)}
-		}
+// claudeEnvelopeError converts a claude result envelope that reports its own
+// failure (is_error or an error_* subtype) into a clear adapter error instead
+// of letting the error text cascade into a misleading JSON contract failure.
+func claudeEnvelopeError(envelope claudeEnvelope) error {
+	subtype := strings.TrimSpace(envelope.Subtype)
+	if subtype == "" {
+		subtype = "error"
 	}
-	if err := review.Validate(); err != nil {
+	detail := strings.TrimSpace(envelope.Result)
+	if detail == "" {
+		detail = "no result text"
+	}
+	const maxDetail = 400
+	if len(detail) > maxDetail {
+		detail = detail[:maxDetail] + "..."
+	}
+	return fmt.Errorf("claude reported %s: %s", subtype, detail)
+}
+
+func parseReviewPayload(raw []byte) (*Review, error) {
+	return parseReviewPayloadLabeled(raw, "claude")
+}
+
+func parseReviewPayloadLabeled(raw []byte, label string) (*Review, error) {
+	var review Review
+	err := decodeEmbeddedJSON(raw, func(candidate []byte) error {
+		var parsed Review
+		if err := json.Unmarshal(candidate, &parsed); err != nil {
+			return fmt.Errorf("decode %s review JSON: %w", label, err)
+		}
+		if err := parsed.Validate(); err != nil {
+			return err
+		}
+		review = parsed
+		return nil
+	})
+	if err != nil {
 		return nil, &OutputContractError{Err: err}
 	}
 	return &review, nil
@@ -386,21 +418,11 @@ func (a *AgyAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 func (a *AgyAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 	result := Result{Raw: raw, Text: strings.TrimSpace(string(raw))}
 	if role == RoleAdversary {
-		var review Review
-		reviewRaw := raw
-		if err := json.Unmarshal(reviewRaw, &review); err != nil {
-			extracted, extractErr := extractJSONObject(reviewRaw)
-			if extractErr != nil {
-				return Result{}, &OutputContractError{Err: fmt.Errorf("decode agy review JSON: %w", err)}
-			}
-			if err := json.Unmarshal(extracted, &review); err != nil {
-				return Result{}, &OutputContractError{Err: fmt.Errorf("decode agy review JSON: %w", err)}
-			}
+		review, err := parseReviewPayloadLabeled(raw, "agy")
+		if err != nil {
+			return Result{}, err
 		}
-		if err := review.Validate(); err != nil {
-			return Result{}, &OutputContractError{Err: err}
-		}
-		result.Review = &review
+		result.Review = review
 		result.Text = review.Summary
 	}
 	if role == RoleScout {
@@ -415,14 +437,16 @@ func (a *AgyAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 
 func parseScout(raw []byte) (*Scout, error) {
 	var scout Scout
-	if err := json.Unmarshal(raw, &scout); err != nil {
-		extracted, extractErr := extractJSONObject(raw)
-		if extractErr != nil {
-			return nil, &OutputContractError{Err: fmt.Errorf("decode scout JSON: %w", err)}
+	err := decodeEmbeddedJSON(raw, func(candidate []byte) error {
+		var parsed Scout
+		if err := json.Unmarshal(candidate, &parsed); err != nil {
+			return fmt.Errorf("decode scout JSON: %w", err)
 		}
-		if err := json.Unmarshal(extracted, &scout); err != nil {
-			return nil, &OutputContractError{Err: fmt.Errorf("decode scout JSON: %w", err)}
-		}
+		scout = parsed
+		return nil
+	})
+	if err != nil {
+		return nil, &OutputContractError{Err: err}
 	}
 	if scout.DoNotBlock == false {
 		scout.DoNotBlock = true
@@ -621,24 +645,14 @@ func (a *OpenAICompatibleAdapter) ParseResult(role Role, raw []byte) (Result, er
 			Scout: scout,
 		}, nil
 	}
-	var review Review
-	reviewRaw := []byte(content)
-	if err := json.Unmarshal(reviewRaw, &review); err != nil {
-		extracted, extractErr := extractJSONObject(reviewRaw)
-		if extractErr != nil {
-			return Result{}, &OutputContractError{Err: fmt.Errorf("decode openai-compatible review JSON: %w", err)}
-		}
-		if err := json.Unmarshal(extracted, &review); err != nil {
-			return Result{}, &OutputContractError{Err: fmt.Errorf("decode openai-compatible review JSON: %w", err)}
-		}
-	}
-	if err := review.Validate(); err != nil {
-		return Result{}, &OutputContractError{Err: err}
+	review, err := parseReviewPayloadLabeled([]byte(content), "openai-compatible")
+	if err != nil {
+		return Result{}, err
 	}
 	return Result{
 		Raw:    raw,
 		Text:   review.Summary,
-		Review: &review,
+		Review: review,
 	}, nil
 }
 

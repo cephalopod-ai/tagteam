@@ -203,6 +203,9 @@ type CapabilitySet struct {
 	SupportsSchema bool
 	SupportsResume bool
 	SupportsStdin  bool
+	// SerializeInvocations requests the cross-process invocation lock for
+	// CLIs that misbehave when multiple copies run concurrently.
+	SerializeInvocations bool
 }
 
 type VersionInfo struct {

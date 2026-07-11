@@ -22,20 +22,22 @@ func newOrchestrationDecision(runID string, initial Mode) OrchestrationDecision 
 
 func parseOrchestrationAdvisory(raw []byte, source string) (OrchestrationAdvisory, error) {
 	var advisory OrchestrationAdvisory
-	if err := json.Unmarshal(raw, &advisory); err != nil {
-		extracted, extractErr := extractJSONObject(raw)
-		if extractErr != nil {
-			return OrchestrationAdvisory{}, &OutputContractError{Err: fmt.Errorf("decode orchestration advisory JSON: %w", err)}
+	err := decodeEmbeddedJSON(raw, func(candidate []byte) error {
+		var parsed OrchestrationAdvisory
+		if err := json.Unmarshal(candidate, &parsed); err != nil {
+			return fmt.Errorf("decode orchestration advisory JSON: %w", err)
 		}
-		if err := json.Unmarshal(extracted, &advisory); err != nil {
-			return OrchestrationAdvisory{}, &OutputContractError{Err: fmt.Errorf("decode orchestration advisory JSON: %w", err)}
+		parsed.Source = source
+		if parsed.SchemaVersion == 0 {
+			parsed.SchemaVersion = ArtifactSchemaVersion
 		}
-	}
-	advisory.Source = source
-	if advisory.SchemaVersion == 0 {
-		advisory.SchemaVersion = ArtifactSchemaVersion
-	}
-	if err := advisory.Validate(); err != nil {
+		if err := parsed.Validate(); err != nil {
+			return err
+		}
+		advisory = parsed
+		return nil
+	})
+	if err != nil {
 		return OrchestrationAdvisory{}, &OutputContractError{Err: err}
 	}
 	advisory.Reason = strings.TrimSpace(advisory.Reason)

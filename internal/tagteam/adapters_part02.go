@@ -74,6 +74,82 @@ func extractJSONObject(raw []byte) ([]byte, error) {
 	return nil, fmt.Errorf("unterminated JSON object")
 }
 
+const maxEmbeddedJSONCandidates = 8
+
+// jsonObjectCandidates returns balanced top-level JSON objects embedded in
+// raw. Fenced code blocks are scanned first because they are the strongest
+// signal of an intentional payload inside prose replies.
+func jsonObjectCandidates(raw []byte) [][]byte {
+	text := string(raw)
+	candidates := make([][]byte, 0, 4)
+	seen := map[string]bool{}
+	add := func(candidate []byte) bool {
+		trimmed := strings.TrimSpace(string(candidate))
+		if trimmed != "" && !seen[trimmed] {
+			seen[trimmed] = true
+			candidates = append(candidates, []byte(trimmed))
+		}
+		return len(candidates) >= maxEmbeddedJSONCandidates
+	}
+	rest := text
+	for {
+		fence := strings.Index(rest, "```")
+		if fence < 0 {
+			break
+		}
+		bodyStart := fence + 3
+		newline := strings.IndexByte(rest[bodyStart:], '\n')
+		if newline < 0 {
+			break
+		}
+		bodyStart += newline + 1
+		end := strings.Index(rest[bodyStart:], "```")
+		if end < 0 {
+			break
+		}
+		body := strings.TrimSpace(rest[bodyStart : bodyStart+end])
+		if strings.HasPrefix(body, "{") {
+			if object, err := extractJSONObject([]byte(body)); err == nil && add(object) {
+				return candidates
+			}
+		}
+		rest = rest[bodyStart+end+3:]
+	}
+	offset := 0
+	for offset < len(text) {
+		idx := strings.IndexByte(text[offset:], '{')
+		if idx < 0 {
+			break
+		}
+		object, err := extractJSONObject([]byte(text[offset+idx:]))
+		if err != nil {
+			break
+		}
+		if add(object) {
+			return candidates
+		}
+		offset += idx + len(object)
+	}
+	return candidates
+}
+
+// decodeEmbeddedJSON decodes raw with decode, which must reject candidates
+// that do not satisfy the target contract (unmarshal plus validation). When
+// raw itself fails, every embedded JSON object candidate is tried in order;
+// the error from decoding raw is returned when no candidate succeeds.
+func decodeEmbeddedJSON(raw []byte, decode func([]byte) error) error {
+	baseErr := decode(bytes.TrimSpace(raw))
+	if baseErr == nil {
+		return nil
+	}
+	for _, candidate := range jsonObjectCandidates(raw) {
+		if decode(candidate) == nil {
+			return nil
+		}
+	}
+	return baseErr
+}
+
 type GoslingAdapter struct {
 	DefaultModel string
 	ExtraArgs    []string

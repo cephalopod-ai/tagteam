@@ -69,13 +69,18 @@ func parseWorkerResult(raw []byte) (*WorkerResult, error) {
 		return nil, &OutputContractError{Err: fmt.Errorf("worker output is empty")}
 	}
 	var result WorkerResult
-	if err := json.Unmarshal([]byte(trimmed), &result); err != nil {
-		extracted, extractErr := extractJSONObject([]byte(trimmed))
-		if extractErr != nil || json.Unmarshal(extracted, &result) != nil {
-			return nil, &OutputContractError{Err: fmt.Errorf("decode worker result JSON: %w", err)}
+	err := decodeEmbeddedJSON([]byte(trimmed), func(candidate []byte) error {
+		var parsed WorkerResult
+		if err := json.Unmarshal(candidate, &parsed); err != nil {
+			return fmt.Errorf("decode worker result JSON: %w", err)
 		}
-	}
-	if err := result.Validate(); err != nil {
+		if err := parsed.Validate(); err != nil {
+			return err
+		}
+		result = parsed
+		return nil
+	})
+	if err != nil {
 		return nil, &OutputContractError{Err: err}
 	}
 	for i, path := range result.FilesChanged {

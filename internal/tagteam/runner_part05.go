@@ -97,16 +97,18 @@ func diffWithBaselineHeader(baseline, diff string) string {
 
 func parseWorkPlan(raw []byte, requestedPackage string, maxPackages int) (WorkPlan, error) {
 	var plan WorkPlan
-	if err := json.Unmarshal(raw, &plan); err != nil {
-		extracted, extractErr := extractJSONObject(raw)
-		if extractErr != nil {
-			return WorkPlan{}, &OutputContractError{Err: fmt.Errorf("decode work plan JSON: %w", err)}
+	err := decodeEmbeddedJSON(raw, func(candidate []byte) error {
+		var parsed WorkPlan
+		if err := json.Unmarshal(candidate, &parsed); err != nil {
+			return fmt.Errorf("decode work plan JSON: %w", err)
 		}
-		if err := json.Unmarshal(extracted, &plan); err != nil {
-			return WorkPlan{}, &OutputContractError{Err: fmt.Errorf("decode work plan JSON: %w", err)}
+		if err := validateWorkPlan(&parsed, requestedPackage, maxPackages); err != nil {
+			return err
 		}
-	}
-	if err := validateWorkPlan(&plan, requestedPackage, maxPackages); err != nil {
+		plan = parsed
+		return nil
+	})
+	if err != nil {
 		return WorkPlan{}, &OutputContractError{Err: err}
 	}
 	return plan, nil
