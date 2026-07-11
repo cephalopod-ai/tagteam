@@ -443,7 +443,7 @@ func validateClaudeRoleAssignments(opts RunOptions) error {
 }
 
 func unsupportedClaudeRoleError(role string) error {
-	return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("claude is supported only as a supervisor; %s role is not supported", role)}
+	return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("claude is supported only as a read-only supervisor or adversary; %s role is not supported", role)}
 }
 
 func validateRoleTarget(role Role, target RoleTarget) error {
