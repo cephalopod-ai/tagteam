@@ -262,7 +262,7 @@ cd my-project
 tagteam "add a --json flag to the export command and cover it with a test"
 ```
 
-With no other options, `tagteam` uses the default supervisor mode: `codex:gpt-5.6-sol` at high reasoning effort writes a brief and reviews, `agy:Gemini 3.5 Flash (Medium)` implements, and findings loop back until the change passes review, tests fail, or the round limit is hit. If the Agy worker fails before changing the worktree, Tagteam retries with `codex:gpt-5.6-terra`; partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, and diff summary, or afterward to see the latest completed run. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
+With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `agy:Gemini 3.5 Flash (Medium)`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, and diff summary, or afterward to see the latest completed run. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
 
 Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
 
@@ -529,11 +529,11 @@ Profiles may override `mode`, `state_root`, `watchdog_timeout`, `scout`, `scout_
 ```toml
 [defaults]
 mode = "supervisor"
-worker = "agy:Gemini 3.5 Flash (Medium)"
-supervisor = "codex:gpt-5.6-sol"
+worker = "codex:gpt-5.6-terra"
+supervisor = "claude:claude-opus-4-8"
 coder = "codex:gpt-5.6-terra"
-relay_coder = "agy:Gemini 3.5 Flash (Medium)"
-adversary = "codex:gpt-5.6-sol"
+relay_coder = "codex:gpt-5.6-terra"
+adversary = "claude:claude-opus-4-8"
 scout = "openai-compatible:gemma4:latest"
 scout_retrieval = false
 supervisor_slicing = true

@@ -56,7 +56,7 @@ func TestDefaultConfig_SupervisorDefaults(t *testing.T) {
 	if cfg.Defaults.MaxPackages != 5 {
 		t.Fatalf("max packages = %d", cfg.Defaults.MaxPackages)
 	}
-	// Legacy adversarial-mode defaults must still be present.
+	// Adversarial-mode defaults remain independently configurable.
 	if cfg.Defaults.Coder != defaultAdversarialCoderTarget || cfg.Defaults.Adversary != defaultAdversaryTarget {
 		t.Fatalf("legacy defaults = coder=%q adversary=%q", cfg.Defaults.Coder, cfg.Defaults.Adversary)
 	}
@@ -66,7 +66,7 @@ func TestDefaultConfig_SupervisorDefaults(t *testing.T) {
 	if cfg.Defaults.LossPolicy.Scout != LossPolicyDegrade || cfg.Defaults.LossPolicy.Supervisor != LossPolicyBlock {
 		t.Fatalf("loss policy = %#v", cfg.Defaults.LossPolicy)
 	}
-	if cfg.Defaults.LossPolicy.Worker != LossPolicyReplaceThenBlock || len(cfg.Defaults.Fallbacks.Worker) != 1 || cfg.Defaults.Fallbacks.Worker[0] != defaultAdversarialCoderTarget {
+	if cfg.Defaults.LossPolicy.Worker != LossPolicyReplaceThenBlock || len(cfg.Defaults.Fallbacks.Worker) != 1 || cfg.Defaults.Fallbacks.Worker[0] != defaultWorkerFallback {
 		t.Fatalf("worker fallback policy = policy:%q fallbacks:%#v", cfg.Defaults.LossPolicy.Worker, cfg.Defaults.Fallbacks.Worker)
 	}
 	if cfg.Defaults.ScoutContextPolicy != "warn" {
@@ -355,10 +355,10 @@ func TestResolveOptions_DefaultsToSupervisorMode(t *testing.T) {
 	if opts.Mode != ModeSupervisor {
 		t.Fatalf("mode = %q", opts.Mode)
 	}
-	if opts.Coder.Adapter != "agy" || opts.Coder.Model != "Gemini 3.5 Flash (Medium)" {
+	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "gpt-5.6-terra" {
 		t.Fatalf("worker target = %#v", opts.Coder)
 	}
-	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-sol" {
+	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "claude-opus-4-8" {
 		t.Fatalf("supervisor target = %#v", opts.Adversary)
 	}
 	if opts.Rounds != 2 {
@@ -390,7 +390,7 @@ func TestResolveOptions_AdversarialModeUsesDefaults(t *testing.T) {
 	if opts.Coder.Adapter != "codex" {
 		t.Fatalf("coder adapter = %q", opts.Coder.Adapter)
 	}
-	if opts.Adversary.Adapter != "codex" {
+	if opts.Adversary.Adapter != "claude" {
 		t.Fatalf("adversary adapter = %q", opts.Adversary.Adapter)
 	}
 }
