@@ -644,7 +644,7 @@ func (m *model) detailLines() []string {
 		fmt.Sprintf("Rounds: %d/%d current=%d", s.RoundsCompleted, s.RoundsRequested, s.CurrentRound),
 	}
 	if live := s.LiveProgress; live != nil && (s.Status == "running" || live.Status == "stalled") {
-		activity := fmt.Sprintf("Activity: %s · %s · elapsed %s", dashIfEmpty(string(live.Role)), dashIfEmpty(live.Status), dashIfEmpty(live.Elapsed))
+		activity := fmt.Sprintf("Activity: %s · %s · elapsed %s", dashIfEmpty(string(live.Role)), liveStatusLabel(live), dashIfEmpty(live.Elapsed))
 		if live.NoProgressFor != "" {
 			activity += " · idle " + live.NoProgressFor
 		}

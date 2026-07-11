@@ -64,6 +64,25 @@ func TestWriteLiveProgressCapturesWorktreeDiff(t *testing.T) {
 	}
 }
 
+func TestWriteWaitingProgressPersistsQueueContext(t *testing.T) {
+	runDir := t.TempDir()
+	started := time.Now().Add(-2 * time.Second)
+	if err := writeWaitingProgress(Request{RunDir: runDir, InvocationID: "invoke-1"}, RoleCoder, "round 1 coder", started, "claude", 4242); err != nil {
+		t.Fatal(err)
+	}
+	var progress LiveProgress
+	data, err := os.ReadFile(filepath.Join(runDir, liveProgressArtifact))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &progress); err != nil {
+		t.Fatal(err)
+	}
+	if progress.Status != "waiting" || progress.WaitingFor != "claude" || progress.HolderPID != 4242 || progress.Elapsed == "" {
+		t.Fatalf("waiting progress = %#v", progress)
+	}
+}
+
 func TestRunAdapterPersistsLogicalProgressRole(t *testing.T) {
 	repo := t.TempDir()
 	mustRunProgressTestCommand(t, repo, "git", "init", "-q")

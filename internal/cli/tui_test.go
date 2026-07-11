@@ -57,6 +57,21 @@ func TestResolveTUIRunDir_LatestWhenNoArgs(t *testing.T) {
 	}
 }
 
+func TestShouldInspectTUIRunAutomaticallyOpensActiveRun(t *testing.T) {
+	workdir := t.TempDir()
+	runDir := writeRunFixture(t, workdir, "run-active")
+	active := `{"schema_version":1,"run_id":"run-active","run_dir":"` + runDir + `","status":"running"}`
+	if err := os.WriteFile(filepath.Join(workdir, ".tagteam", "active.json"), []byte(active), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !shouldInspectTUIRun(workdir, runDir, false) {
+		t.Fatal("active run should open automatically")
+	}
+	if shouldInspectTUIRun(workdir, filepath.Join(workdir, "other"), false) {
+		t.Fatal("unrelated run should remain compose-first")
+	}
+}
+
 func TestResolveTUIRunDir_MissingExplicitRunReturnsClearError(t *testing.T) {
 	workdir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workdir, ".tagteam"), 0o755); err != nil {

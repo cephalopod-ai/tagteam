@@ -456,6 +456,9 @@ func renderRunSnapshot(cmd *cobra.Command, snapshot tagteam.RunSnapshot, asJSON 
 	if snapshot.LiveProgress != nil {
 		progress := snapshot.LiveProgress
 		fmt.Fprintf(cmd.OutOrStdout(), "progress role=%s status=%s elapsed=%s idle=%s files=%d +%d -%d\n", progress.Role, progress.Status, progress.Elapsed, progress.NoProgressFor, progress.FilesChanged, progress.Additions, progress.Deletions)
+		if progress.Status == "waiting" && progress.WaitingFor != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "queued_for=%s holder_pid=%d\n", progress.WaitingFor, progress.HolderPID)
+		}
 	}
 	if snapshot.Degraded {
 		fmt.Fprintf(cmd.OutOrStdout(), "degraded=true reason=%s\n", snapshot.DegradedReason)

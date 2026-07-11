@@ -104,6 +104,27 @@ func TestRenderDashboardIncludesCorePanels(t *testing.T) {
 	}
 }
 
+func TestRenderDashboardShowsSerializedInvocationWait(t *testing.T) {
+	m := fixtureModel()
+	m.currentSnapshot.Phase = "implementing"
+	m.currentSnapshot.LiveProgress = &tagteam.LiveProgress{
+		Role:       tagteam.RoleCoder,
+		Status:     "waiting",
+		WaitingFor: "claude",
+		HolderPID:  4242,
+		Elapsed:    "42s",
+	}
+	out := renderDashboard(m)
+	for _, want := range []string{
+		"coder queued for claude (pid 4242)",
+		"Activity: coder · queued for claude (pid 4242) · elapsed 42s",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("render output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderDashboardNoSelectedRunShowsComposeHint(t *testing.T) {
 	m := fixtureModel()
 	m.currentSnapshot = nil

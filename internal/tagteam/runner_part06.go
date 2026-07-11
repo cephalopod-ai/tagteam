@@ -306,12 +306,22 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	if runCtx == nil {
 		runCtx = ctx
 	}
+	progressRole := role
+	if req.ProgressRole != "" {
+		progressRole = req.ProgressRole
+	}
 	if adapter.Capabilities().SerializeInvocations {
 		// Serialize before starting the invocation timer so lock wait does
 		// not consume the subprocess budget. Lock failures are fail-closed
-		// adapter failures, so role fallback policies can engage.
-		release, lockErr := acquireInvocationSlot(runCtx, adapter.ID(), req, req.Timeout)
+		// adapter failures, so role fallback policies can engage. A
+		// contended wait publishes live progress as "waiting" so the TUI
+		// and status views show the run is queued, not hung.
+		waitStarted := time.Now()
+		release, lockErr := acquireInvocationSlot(runCtx, adapter.ID(), req, req.Timeout, func(holderPID int) {
+			_ = writeWaitingProgress(req, progressRole, phase, waitStarted, adapter.ID(), holderPID)
+		})
 		if lockErr != nil {
+			_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, waitStarted, "failed")
 			finishDeliveryRecord(recordPath, record, "failed", lockErr)
 			return Result{}, lockErr
 		}
@@ -347,10 +357,6 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	req.ProgressStdout = stdout
 	req.ProgressStderr = stderr
 	req.ProgressLastActivity = &lastActivity
-	progressRole := role
-	if req.ProgressRole != "" {
-		progressRole = req.ProgressRole
-	}
 	logRequestProgress(req, "%s process starting output=%s", phase, spec.Output)
 	initialProgress, _ := writeLiveProgress(runCtx, req, progressRole, phase, started, "running")
 	lastFingerprint := fmt.Sprintf("%s:%d:%d:%s", initialProgress.DiffHash, initialProgress.StdoutBytes, initialProgress.StderrBytes, outputArtifactFingerprint(req.OutputPath))

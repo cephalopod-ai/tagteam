@@ -81,16 +81,24 @@ func TestAcquireInvocationSlotWaitsForRelease(t *testing.T) {
 	}
 	holder.recordHolder()
 	go func() {
-		time.Sleep(700 * time.Millisecond)
+		time.Sleep(1200 * time.Millisecond)
 		_ = holder.Release()
 	}()
 	start := time.Now()
-	release, err := acquireInvocationSlot(context.Background(), "claude", req, time.Minute)
+	waitCalls := 0
+	waitHolder := 0
+	release, err := acquireInvocationSlot(context.Background(), "claude", req, time.Minute, func(pid int) {
+		waitCalls++
+		waitHolder = pid
+	})
 	if err != nil {
 		t.Fatalf("acquire slot: %v", err)
 	}
-	if waited := time.Since(start); waited < 500*time.Millisecond {
+	if waited := time.Since(start); waited < time.Second {
 		t.Fatalf("expected to wait for the holder, waited %s", waited)
+	}
+	if waitCalls < 2 || waitHolder != os.Getpid() {
+		t.Fatalf("onWait should fire with the holder pid: calls=%d holder=%d", waitCalls, waitHolder)
 	}
 	release()
 }
@@ -111,7 +119,7 @@ func TestAcquireInvocationSlotCancelledWhileWaiting(t *testing.T) {
 	defer holder.Release()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := acquireInvocationSlot(ctx, "claude", req, time.Minute); err == nil {
+	if _, err := acquireInvocationSlot(ctx, "claude", req, time.Minute, nil); err == nil {
 		t.Fatal("expected cancellation error while waiting for a held lock")
 	}
 }
@@ -130,7 +138,7 @@ func TestAcquireInvocationSlotTimeoutFailsClosed(t *testing.T) {
 		t.Fatalf("pre-hold: lock=%v err=%v", holder, err)
 	}
 	defer holder.Release()
-	_, err = acquireInvocationSlot(context.Background(), "claude", req, time.Millisecond)
+	_, err = acquireInvocationSlot(context.Background(), "claude", req, time.Millisecond, nil)
 	if err == nil {
 		t.Fatal("timeout must fail closed, not run unlocked")
 	}

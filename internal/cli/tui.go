@@ -35,10 +35,11 @@ With no RUN_ID it starts in compose mode, surfaces the active/latest run as cont
 			if _, verifyErr := verifyInstallation(shared.AllowDevBuild); verifyErr != nil {
 				mutationBlocked = verifyErr.Error()
 			}
+			inspectOnStart := shouldInspectTUIRun(workdir, runDir, len(args) > 0)
 			return tui.Run(ctx, tui.RunOptions{
 				Workdir:         workdir,
 				InitialRunDir:   runDir,
-				InspectOnStart:  len(args) > 0,
+				InspectOnStart:  inspectOnStart,
 				Flags:           shared.FlagInputs,
 				Changed:         collectChangedFlags(cmd),
 				TrustRepoConfig: shared.TrustRepoConfig && collectChangedFlags(cmd)["trust-repo-config"],
@@ -46,6 +47,17 @@ With no RUN_ID it starts in compose mode, surfaces the active/latest run as cont
 			}, os.Stdout, os.Stdin)
 		},
 	}
+}
+
+func shouldInspectTUIRun(workdir, runDir string, explicit bool) bool {
+	if explicit {
+		return true
+	}
+	if runDir == "" {
+		return false
+	}
+	active, err := tagteam.ReadActiveRunForCLI(workdir)
+	return err == nil && active.Status == "running" && active.RunDir == runDir
 }
 
 // resolveTUIRunDir picks the run directory tui should display: an explicit

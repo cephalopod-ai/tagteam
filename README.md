@@ -55,7 +55,9 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 - **Interactive TUI dashboard.** `tagteam tui [RUN_ID]` can now launch runs, switch modes/targets, and inspect recent runs from one terminal UI.
 - **Better live-state observability.** In-progress runs publish external `active.json`, richer phase/progress state, and a shared run snapshot surface that powers both the TUI and status-style views.
 - **Opt-in JSON repair for malformed contract output.** `--repair-json-with-worker` and `json_repair = "worker"` explicitly allow the selected worker to act as a read-only parser workaround for invalid JSON artifacts; repaired runs are marked degraded with `json_repair_used`.
-- **More resilient Claude-heavy setups.** The built-in `claude-failover` profile adds target-specific fallbacks from Claude supervisor/reviewer roles to Codex models when those invocations fail.
+- **More resilient Claude-heavy setups.** Contract-aware embedded-JSON recovery absorbs fenced/prose Claude responses, self-reported Claude envelope errors enter the existing fallback ladder, cross-process Claude invocations are serialized by default, and the built-in `claude-failover` profile adds target-specific Codex replacements.
+- **Persistent findings and safer continuation.** `tagteam findings` exposes unresolved findings across historical runs, while `resume` and `transfer` preserve integrity, baseline, and acceptance gates instead of silently treating the latest run as authoritative.
+- **Observable budgets and progress.** Final artifacts account for role invocations even when no limit is configured, review-only runs retain their actual phase, and live status includes role, elapsed/idle time, and diff statistics.
 - **Documentation and release hardening.** The user manual, architecture docs, diagrams, and test ledger now describe the current command surface and run-state model.
 
 ## Modes
@@ -104,7 +106,7 @@ Recent additions in this repo:
 - adversarial coder/adversary mode remains available for backward compatibility
 - saved run artifacts include briefs, diffs, reviews, tests, and final summaries
 - active runs publish external `active.json` so live views can discover in-flight work without exposing host state to workers
-- command surface now includes `run`, `review`, `fix`, `status`, `plan`, `transcript`, `tui`, `doctor`, and `init`
+- command surface now includes `run`, `review`, `fix`, `resume`, `status`, `plan`, `transcript`, `findings`, `transfer`, `tui`, `doctor`, and `init`
 - config layering supports repo config, user config, env overrides, flags, and named profiles
 - explicit JSON repair is available through `--repair-json-with-worker` / `json_repair = "worker"`
 - explicit repo instruction files are loaded by default and appended to role prompts
@@ -117,9 +119,13 @@ tagteam "<prompt>"
 tagteam run "<prompt>"
 tagteam review
 tagteam fix
+tagteam resume [RUN_ID]
 tagteam status
 tagteam plan [RUN_ID]
 tagteam transcript [RUN_ID]
+tagteam findings [--all]
+tagteam findings defer RUN_ID FINDING_ID --reason "..."
+tagteam transfer RUN_ID --test "..." --lint "..."
 tagteam tui [RUN_ID]
 tagteam doctor
 tagteam init
@@ -146,7 +152,7 @@ Supported adapters in this repo today:
 |---|---|
 | `codex` | full |
 | `codex-oss` | full |
-| `claude` / Claude Code | full, but currently questionable for unattended or concurrent relay roles |
+| `claude` / Claude Code | full; malformed structured output and Tagteam-managed concurrency are hardened, with the cautions below |
 | `agy` | full |
 | `gosling` | coder-only |
 | `openai-compatible` / `oai` | read-only reviewer/scout (first cut) |
@@ -171,8 +177,11 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - Vendor CLI flag drift can break adapters. `codex`, `codex-oss`, `claude`, `agy`, `gosling`, and similar tools may rename flags, change output formats, or alter auth behavior between releases.
 - Authentication is adapter-specific. CLI-backed adapters usually rely on the vendor's own login/session flow; `openai-compatible` / `oai` relies on explicit environment/config values.
 - Supervisor slicing is more format-sensitive than the final review pass. The final review path is schema-validated, but some supervisor planning/instruction steps still depend on adapter output being reasonably well-formed.
-- Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and recovers when a valid contract JSON object is embedded anywhere in the prose: fenced ```json blocks are tried first, then every balanced JSON object in the reply, so an unrelated brace snippet earlier in the prose no longer masks the real payload. Claude envelopes that self-report failure (`is_error` / `error_*` subtypes such as `error_max_turns`) are surfaced as clear adapter errors (`claude reported error_max_turns: ...`) instead of misleading `decode ... JSON` contract failures, which lets the fallback ladder engage. If no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection. If you intentionally want the already-selected worker to act as a read-only parser workaround, pass `--repair-json-with-worker` or set `json_repair = "worker"`; repaired runs are marked degraded with `json_repair_used`.
-- Concurrent Claude Code processes can stall or remain pending, especially in relay/multi-role configurations. `tagteam` now serializes Claude invocations across its own processes by default with a cross-process kernel lock (flock) under the state root (`adapters.claude.serialize`, `TAGTEAM_CLAUDE_SERIALIZE`); waiting runs log `waiting for concurrent claude invocation`, and a crashed holder releases the lock automatically. Serialization is fail-closed: a run that cannot acquire the lock within its invocation timeout fails that invocation with a classified adapter error (so configured fallbacks such as `claude-failover` can engage) instead of running unlocked. This removes contention between concurrent tagteam runs, but cannot see Claude processes started outside tagteam — `tagteam doctor` only confirms that the binary is present and cannot detect that external contention.
+- Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and searches a bounded set of contract candidates embedded in the prose: fenced ```json blocks are tried first, followed by balanced JSON objects, so an unrelated or unmatched brace snippet earlier in the prose no longer masks the real payload. Claude envelopes that self-report failure (`is_error` / `error_*` subtypes such as `error_max_turns`) are surfaced as clear adapter errors (`claude reported error_max_turns: ...`) instead of misleading `decode ... JSON` contract failures, which lets the fallback ladder engage. If no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection. If you intentionally want the already-selected worker to act as a read-only parser workaround, pass `--repair-json-with-worker` or set `json_repair = "worker"`; repaired runs are marked degraded with `json_repair_used`.
+- Concurrent Claude Code processes can stall or remain pending, especially in relay/multi-role configurations. `tagteam` now serializes Claude invocations across its own processes by default with an OS-specific cross-process lock under the resolved state root (`adapters.claude.serialize`, `TAGTEAM_CLAUDE_SERIALIZE`); Unix/macOS use `flock`, while Windows uses a PID-file fallback. Waiting runs log `waiting for concurrent claude invocation`, and a crashed Unix/macOS holder releases the lock automatically. Serialization is fail-closed: a run that cannot acquire the lock within its invocation timeout fails that invocation with a classified adapter error (so configured fallbacks such as `claude-failover` can engage) instead of running unlocked.
+- Claude serialization is scoped to a state root, not the whole machine. Tagteam processes configured with different `--state-root` values use different locks and can still overlap; use one shared state root for concurrent Claude-backed runs. The lock also cannot see Claude processes started outside Tagteam. `tagteam doctor` confirms binary availability but cannot detect either form of contention.
+- Unix/macOS Claude locking is runtime-tested with real multi-process contention. The Windows PID-file fallback is compile-checked but not runtime-tested in CI; ownership-record write failures and same-process concurrent invocations remain residual risks there. Prefer one Claude-backed Tagteam run at a time on Windows until that path has equivalent runtime coverage.
+- Do not launch two Tagteam runs against the same worktree. Run-state locking and integrity checks assume one active writer per worktree; use separate Git worktrees when runs need to proceed concurrently, even when their Claude invocations would otherwise serialize.
 - A stalled or externally interrupted adapter process may leave `state.json` at `status=running` / an early phase without writing `final.json`. Treat that run as interrupted and use `tagteam resume [RUN_ID]`; resume verifies the baseline, diff hash, and required artifacts, then continues the first incomplete phase or quarantines unsafe partial work. Do not treat `active.json` or the TUI alone as evidence of success.
 - Different adapters do not expose identical capabilities. Some support schema-constrained output, stdin, or session resume; others do not. `tagteam` degrades where possible, but behavior is not perfectly uniform.
 - Local `.env` loading is a convenience feature, not a secret-management system. It helps with local runs, but shell-exported environment variables still take precedence.
@@ -577,7 +586,7 @@ Claude invocations are serialized across tagteam processes by default because co
 serialize = false
 ```
 
-or `TAGTEAM_CLAUDE_SERIALIZE=false`. The lock lives at `<state-root>/locks/claude-invocation.lock` (following `--state-root` / profile overrides) and persists between runs; on Unix the kernel flock is the lock, so it cannot go stale. A run that waits longer than its invocation timeout fails that invocation with a classified adapter error — role fallback policies apply — rather than running unlocked.
+or `TAGTEAM_CLAUDE_SERIALIZE=false`. The lock lives at `<state-root>/locks/claude-invocation.lock` (following `--state-root` / profile overrides) and persists between runs; on Unix the kernel flock is the lock, so it cannot go stale. While an invocation is queued behind the lock, `live-progress.json` reports `status=waiting`, so `tagteam status` and the TUI show the run as queued rather than hung. A run that waits longer than its invocation timeout fails that invocation with a classified adapter error — role fallback policies apply — rather than running unlocked.
 
 For `openai-compatible`, environment overrides are `TAGTEAM_OPENAI_COMPATIBLE_MAX_CONTEXT_TOKENS` and `TAGTEAM_OPENAI_COMPATIBLE_RESERVED_OUTPUT_TOKENS`. Omitted limits mean `unknown` and preserve existing relay behavior.
 
@@ -686,7 +695,7 @@ tagteam tui [RUN_ID]
 
 `tagteam tui` is an interactive dashboard. It opens in a sparse compose-first state by default, surfaces the latest known run as context, and lets you explicitly open saved run details when you want them.
 
-The dashboard has three main surfaces:
+The dashboard has four main surfaces:
 
 - a compose surface for prompt entry and run launch
 - an on-demand Team builder for orchestration mode, profiles, provider effort, and role-aware model assignments
@@ -711,7 +720,7 @@ Core keyboard affordances:
 - `p`, `f`, `a`, and `t` toggle detail sections
 - `q` quits
 
-The run-detail surface reads `active.json`, `state.json`, `live-progress.json`, `final.json`, and `plan.json` through the same `RunSnapshot` assembly used by status views. While an adapter is active it shows the logical team role, elapsed/idle time, and a tracked-plus-untracked working-diff summary; the compose surface remains primary and invokes adapters through the normal runner path.
+The run-detail surface reads `active.json`, `state.json`, `live-progress.json`, `final.json`, and `plan.json` through the same `RunSnapshot` assembly used by status views. While an adapter is active it shows the logical team role, elapsed/idle time, and a tracked-plus-untracked working-diff summary; an invocation queued behind the cross-process Claude lock shows as `waiting` with its queue time. The compose surface remains primary and invokes adapters through the normal runner path.
 
 ## Development
 

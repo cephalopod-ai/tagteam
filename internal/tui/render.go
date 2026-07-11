@@ -52,7 +52,7 @@ func renderTopCard(model *model) []string {
 	if model.currentSnapshot != nil {
 		watching := fmt.Sprintf("watching %s [%s]", shortRunLabel(model.currentSnapshot.RunID), statusBadge(model.currentSnapshot.Status))
 		if live := model.currentSnapshot.LiveProgress; live != nil && model.currentSnapshot.Status == "running" {
-			watching += fmt.Sprintf(" · %s %s", dashIfEmpty(string(live.Role)), dashIfEmpty(live.Status))
+			watching += fmt.Sprintf(" · %s %s", dashIfEmpty(string(live.Role)), liveStatusLabel(live))
 			if live.NoProgressFor != "" {
 				watching += " · idle " + live.NoProgressFor
 			}
@@ -63,6 +63,20 @@ func renderTopCard(model *model) []string {
 	}
 	lines = append(lines, "")
 	return lines
+}
+
+func liveStatusLabel(live *tagteam.LiveProgress) string {
+	if live == nil {
+		return "-"
+	}
+	if live.Status != "waiting" || live.WaitingFor == "" {
+		return dashIfEmpty(live.Status)
+	}
+	label := "queued for " + live.WaitingFor
+	if live.HolderPID > 0 {
+		label += fmt.Sprintf(" (pid %d)", live.HolderPID)
+	}
+	return label
 }
 
 func roleSummaryLines(model *model, width int) []string {

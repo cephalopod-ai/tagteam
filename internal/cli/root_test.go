@@ -134,3 +134,19 @@ func TestRenderRunSnapshotIncludesLiveProgress(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderRunSnapshotIncludesQueueContext(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	renderRunSnapshot(cmd, tagteam.RunSnapshot{LiveProgress: &tagteam.LiveProgress{
+		Role:       tagteam.RoleCoder,
+		Status:     "waiting",
+		WaitingFor: "claude",
+		HolderPID:  4242,
+		Elapsed:    "8s",
+	}}, false)
+	if got := out.String(); !strings.Contains(got, "queued_for=claude holder_pid=4242") {
+		t.Fatalf("queue context missing from status output:\n%s", got)
+	}
+}

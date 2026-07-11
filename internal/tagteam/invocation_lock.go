@@ -91,7 +91,10 @@ func (l *invocationLock) recordHolder() {
 // fail-closed: a timeout or lock-infrastructure error returns a classified
 // adapter failure (so role fallback policies can engage) instead of running
 // unlocked and reintroducing the concurrency this lock exists to prevent.
-func acquireInvocationSlot(ctx context.Context, adapterID string, req Request, maxWait time.Duration) (func(), error) {
+// onWait, when non-nil, is called with the holder PID when contention is
+// first observed and again on each periodic wait log, so callers can surface
+// the queued state to live-status consumers.
+func acquireInvocationSlot(ctx context.Context, adapterID string, req Request, maxWait time.Duration, onWait func(holderPID int)) (func(), error) {
 	failure := func(err error) (func(), error) {
 		return func() {}, &ExitError{Code: ExitAdapterFailure, Err: err}
 	}
@@ -108,6 +111,7 @@ func acquireInvocationSlot(ctx context.Context, adapterID string, req Request, m
 	start := time.Now()
 	deadline := start.Add(maxWait)
 	nextLog := start
+	nextStatus := start
 	for {
 		lock, holder, tryErr := tryLockInvocationFile(path)
 		if tryErr != nil {
@@ -123,6 +127,12 @@ func acquireInvocationSlot(ctx context.Context, adapterID string, req Request, m
 		now := time.Now()
 		if now.After(deadline) {
 			return failure(fmt.Errorf("timed out after %s waiting for the %s invocation lock held by pid %d; another process is running %s (stagger runs or set adapters.%s.serialize = false)", shortDuration(maxWait), adapterID, holder, adapterID, adapterID))
+		}
+		if !now.Before(nextStatus) {
+			if onWait != nil {
+				onWait(holder)
+			}
+			nextStatus = now.Add(time.Second)
 		}
 		if !now.Before(nextLog) {
 			logRequestProgress(req, "waiting for concurrent %s invocation (pid %d) to finish before starting", adapterID, holder)

@@ -31,6 +31,8 @@ type LiveProgress struct {
 	Phase          string    `json:"phase"`
 	Role           Role      `json:"role"`
 	Status         string    `json:"status"`
+	WaitingFor     string    `json:"waiting_for,omitempty"`
+	HolderPID      int       `json:"holder_pid,omitempty"`
 	Elapsed        string    `json:"elapsed"`
 	FilesChanged   int       `json:"files_changed"`
 	Additions      int       `json:"additions"`
@@ -42,6 +44,23 @@ type LiveProgress struct {
 	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
 	NoProgressFor  string    `json:"no_progress_for,omitempty"`
 	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+func writeWaitingProgress(req Request, role Role, phase string, started time.Time, adapterID string, holderPID int) error {
+	if req.RunDir == "" {
+		return nil
+	}
+	return writeJSONAtomic(filepath.Join(req.RunDir, liveProgressArtifact), LiveProgress{
+		SchemaVersion: ArtifactSchemaVersion,
+		InvocationID:  req.InvocationID,
+		Phase:         phase,
+		Role:          role,
+		Status:        "waiting",
+		WaitingFor:    adapterID,
+		HolderPID:     holderPID,
+		Elapsed:       shortDuration(time.Since(started)),
+		UpdatedAt:     time.Now().UTC(),
+	})
 }
 
 func writeLiveProgress(
