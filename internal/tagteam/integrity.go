@@ -24,6 +24,10 @@ func IsIntegrityViolation(err error) bool {
 	return errors.As(err, &target)
 }
 
+func shouldBlockScoutFailure(policy LossPolicy, err error) bool {
+	return IsIntegrityViolation(err) || policyBlocks(policy)
+}
+
 type protectedFile struct {
 	Path string
 	Data []byte

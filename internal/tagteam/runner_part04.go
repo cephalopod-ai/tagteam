@@ -537,7 +537,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			if err != nil {
 				scoutStatus.FailureClass = classifyScoutFailure(err)
 				scoutStatus.Failure = err.Error()
-				if policyBlocks(opts.LossPolicy.Scout) {
+				if shouldBlockScoutFailure(opts.LossPolicy.Scout, err) {
 					_ = writeJSONWithNewline(scoutStatusPath, scoutStatus)
 					return final, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("scout failed and scout_failure_policy=fail; aborting relay run: %w", err)}
 				}

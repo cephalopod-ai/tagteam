@@ -46,6 +46,16 @@ func TestRunAdapterRejectsReadOnlyGitMutation(t *testing.T) {
 	}
 }
 
+func TestScoutIntegrityViolationAlwaysBlocks(t *testing.T) {
+	err := &IntegrityViolationError{Paths: []string{"git:governed.yaml"}}
+	if !shouldBlockScoutFailure(LossPolicy("degrade"), err) {
+		t.Fatal("integrity violation must block even when ordinary scout failures degrade")
+	}
+	if shouldBlockScoutFailure(LossPolicy("degrade"), context.DeadlineExceeded) {
+		t.Fatal("ordinary scout failure should retain configured degradation policy")
+	}
+}
+
 func TestRunAdapterRestoresProtectedPointer(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")

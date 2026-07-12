@@ -23,3 +23,17 @@ mutated paths and stops the run before orchestration or editor work.
 
 Ignored runtime files remain outside Git's ordinary status surface. Extending
 the check to explicitly governed ignored paths is retained in `docs/TODO.md`.
+
+## Scout integrity follow-up
+
+Retry run `2026-07-12T144805.567563000Z` used a non-mutating focused baseline,
+then its read-only Gemini scout invoked repository verification that rewrote the
+same two registries. `runAdapter` correctly returned an integrity violation,
+but the relay scout failure policy treated it like an ordinary unavailable
+scout and continued without scout context. The contaminated retry was manually
+cancelled and preserved.
+
+Pre- and post-scout integrity violations now override the configured scout-loss
+policy and abort into the run's quarantine path. Ordinary timeouts, unavailable
+models, and output-contract failures retain their configured degrade-or-block
+behavior.

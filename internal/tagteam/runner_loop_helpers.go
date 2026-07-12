@@ -186,7 +186,7 @@ func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runD
 	if err != nil {
 		postScoutStatus.FailureClass = classifyScoutFailure(err)
 		postScoutStatus.Failure = err.Error()
-		if policyBlocks(opts.LossPolicy.Scout) {
+		if shouldBlockScoutFailure(opts.LossPolicy.Scout, err) {
 			_ = writeJSONWithNewline(postScoutStatusPath, postScoutStatus)
 			return &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("post-scout failed and scout_failure_policy=fail; aborting relay run: %w", err)}
 		}
