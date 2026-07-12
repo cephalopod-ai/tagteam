@@ -46,6 +46,34 @@ func TestRunAdapterRejectsReadOnlyGitMutation(t *testing.T) {
 	}
 }
 
+func TestRunAdapterAllowsReadOnlyIndexStatusTransition(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	readme := filepath.Join(repo, "README.md")
+	if err := os.WriteFile(readme, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "baseline")
+	if err := os.WriteFile(readme, []byte("existing worker edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "README.md")
+
+	adapter := fakeDirectAdapter{
+		build: func(role Role, req Request) (*CommandSpec, error) { return &CommandSpec{}, nil },
+		direct: func(role Role, req Request) (Result, error) {
+			_, err := runCommand(context.Background(), repo, "git", "reset", "--quiet")
+			return Result{Text: "report"}, err
+		},
+	}
+	if _, err := (&App{}).runAdapter(context.Background(), adapter, RoleReporter, Request{Workdir: repo, RunDir: t.TempDir(), Phase: "index transition"}, false); err != nil {
+		t.Fatalf("status-only transition rejected: %v", err)
+	}
+}
+
 func TestScoutIntegrityViolationAlwaysBlocks(t *testing.T) {
 	err := &IntegrityViolationError{Paths: []string{"git:governed.yaml"}}
 	if !shouldBlockScoutFailure(LossPolicy("degrade"), err) {

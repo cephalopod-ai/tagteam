@@ -154,13 +154,16 @@ func captureWorktreeSnapshot(ctx context.Context, workdir string) (worktreeSnaps
 		data, readErr := os.ReadFile(absolute)
 		if readErr != nil {
 			if os.IsNotExist(readErr) {
-				snapshot[path] = "deleted:" + status
+				snapshot[path] = "deleted"
 				continue
 			}
 			return nil, readErr
 		}
 		sum := sha256.Sum256(data)
-		snapshot[path] = status + ":" + hex.EncodeToString(sum[:])
+		// Integrity protects repository content. Index-only transitions such as
+		// staged to unstaged do not change the worktree and must not make a
+		// read-only invocation appear to have edited every dirty file.
+		snapshot[path] = hex.EncodeToString(sum[:])
 	}
 	return snapshot, nil
 }
