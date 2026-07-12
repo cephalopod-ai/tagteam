@@ -170,19 +170,21 @@ func TestRunLoop_RelayModeWritesExpectedArtifacts(t *testing.T) {
 	runGit(t, repo, "commit", "-m", "init")
 
 	app := NewApp(DefaultConfig())
+	codeIntelCommand := writeCodeIntelScript(t, "echo sensor failed >&2; exit 7")
 	final, err := app.Run(context.Background(), RunOptions{
-		Prompt:         "add a feature",
-		Workdir:        repo,
-		Mode:           ModeRelay,
-		Scout:          RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
-		Coder:          RoleTarget{Adapter: "claude"},
-		Adversary:      RoleTarget{Adapter: "claude"},
-		ScoutMode:      "recon",
-		PostScoutMode:  "polish",
-		ScoutRetrieval: true,
-		Rounds:         1,
-		Timeout:        10 * time.Second,
-		EnvOverlay:     map[string]string{"AGY_ARGS_LOG": agyLogPath},
+		Prompt:           "add a feature",
+		Workdir:          repo,
+		Mode:             ModeRelay,
+		Scout:            RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Coder:            RoleTarget{Adapter: "claude"},
+		Adversary:        RoleTarget{Adapter: "claude"},
+		ScoutMode:        "recon",
+		PostScoutMode:    "polish",
+		ScoutRetrieval:   true,
+		CodeIntelCommand: codeIntelCommand,
+		Rounds:           1,
+		Timeout:          10 * time.Second,
+		EnvOverlay:       map[string]string{"AGY_ARGS_LOG": agyLogPath},
 	})
 	if err == nil {
 		t.Fatal("expected blocking-findings error from fake supervisor review")
@@ -194,6 +196,7 @@ func TestRunLoop_RelayModeWritesExpectedArtifacts(t *testing.T) {
 		"supervisor-brief.md",
 		"orchestration-decision.json",
 		"retrieval-round-1.json",
+		"code-intel-round-1.json",
 		"scout-context-round-1.json",
 		"scout-execution-round-1.json",
 		"scout-round-1.json",
@@ -208,6 +211,11 @@ func TestRunLoop_RelayModeWritesExpectedArtifacts(t *testing.T) {
 		if !fileExists(filepath.Join(final.RunDir, name)) {
 			t.Fatalf("expected relay artifact %s in %s", name, final.RunDir)
 		}
+	}
+	var codeIntel CodeIntelArtifact
+	readJSONFile(t, filepath.Join(final.RunDir, "code-intel-round-1.json"), &codeIntel)
+	if codeIntel.Status != codeIntelStatusError || len(codeIntel.Errors) == 0 {
+		t.Fatalf("code-intel failure artifact = %#v", codeIntel)
 	}
 	if final.Adapters["scout"] != "agy" || final.Adapters["coder"] != "claude" || final.Adapters["supervisor"] != "claude" {
 		t.Fatalf("adapters = %#v", final.Adapters)

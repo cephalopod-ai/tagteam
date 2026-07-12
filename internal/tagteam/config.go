@@ -51,6 +51,7 @@ func DefaultConfig() Config {
 			LossPolicy:              RoleLossPolicies{Worker: LossPolicyReplaceThenBlock, Reviewer: LossPolicyBlock, Supervisor: LossPolicyBlock, Scout: LossPolicyDegrade},
 			Fallbacks:               RoleFallbacks{Worker: []string{defaultWorkerFallback}},
 			ScoutRetrieval:          &scoutRetrieval,
+			CodeIntelCommand:        "",
 			ScoutContextPolicy:      "warn",
 			SupervisorSlicing:       &supervisorSlicing,
 			MaxPackages:             5,
@@ -95,6 +96,7 @@ func DefaultConfig() Config {
 				ScoutFailurePolicy: "continue",
 				LossPolicy:         RoleLossPolicies{Worker: LossPolicyReplaceThenBlock, Reviewer: LossPolicyBlock, Supervisor: LossPolicyBlock, Scout: LossPolicyDegrade},
 				ScoutRetrieval:     &scoutRetrieval,
+				CodeIntelCommand:   "",
 				ScoutContextPolicy: "warn",
 				Rounds:             2,
 			},
@@ -370,6 +372,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 	src.Defaults.Fallbacks = RoleFallbacks{}
 	src.Defaults.FallbacksByTarget = nil
 	src.Defaults.ScoutContextPolicy = ""
+	src.Defaults.CodeIntelCommand = ""
 	for name, profile := range src.Profiles {
 		profile.StateRoot = ""
 		profile.WatchdogTimeout = ""
@@ -384,6 +387,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 		profile.Fallbacks = RoleFallbacks{}
 		profile.FallbacksByTarget = nil
 		profile.ScoutContextPolicy = ""
+		profile.CodeIntelCommand = ""
 		src.Profiles[name] = profile
 	}
 	src.Adapters.Codex.ExtraArgs = nil
@@ -454,6 +458,9 @@ func mergeConfig(dst *Config, src Config) {
 	mergeTargetFallbacks(&dst.Defaults.FallbacksByTarget, src.Defaults.FallbacksByTarget)
 	if src.Defaults.ScoutRetrieval != nil {
 		dst.Defaults.ScoutRetrieval = src.Defaults.ScoutRetrieval
+	}
+	if src.Defaults.CodeIntelCommand != "" {
+		dst.Defaults.CodeIntelCommand = src.Defaults.CodeIntelCommand
 	}
 	if src.Defaults.ScoutContextPolicy != "" {
 		dst.Defaults.ScoutContextPolicy = src.Defaults.ScoutContextPolicy
@@ -551,6 +558,9 @@ func mergeConfig(dst *Config, src Config) {
 			mergeTargetFallbacks(&current.FallbacksByTarget, profile.FallbacksByTarget)
 			if profile.ScoutRetrieval != nil {
 				current.ScoutRetrieval = profile.ScoutRetrieval
+			}
+			if profile.CodeIntelCommand != "" {
+				current.CodeIntelCommand = profile.CodeIntelCommand
 			}
 			if profile.ScoutContextPolicy != "" {
 				current.ScoutContextPolicy = profile.ScoutContextPolicy

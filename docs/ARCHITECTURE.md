@@ -30,6 +30,7 @@ orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`
 | Run state / reasons | `internal/tagteam/run_state.go` | Failure classification, exit→reason mapping, role status/loss records, budget state, redacted persistence helpers. |
 | Orchestration decision | `internal/tagteam/orchestration.go` | Host-owned single advisory adjustment (relay↔supervisor) before implementation. |
 | Scout retrieval | `internal/tagteam/retrieval.go` | Bounded, local-only pre-scout retrieval evidence for relay `recon`. |
+| Code-intelligence sensor | `internal/tagteam/codeintel.go`, `codeintel_provider.go` | Opt-in, read-only command boundary; validates revision-bound observations, computes Git staleness, persists `code-intel-round-1.json`, and exposes only fresh derived evidence to the relay scout prompt. |
 | Scout context budget | `internal/tagteam/context_budget.go` | Deterministic `ceil(prompt_bytes/3)` context estimate + policy. |
 | Scout status | `internal/tagteam/scout_status.go` | Scout execution/failure classification. |
 | Prompts | `internal/tagteam/prompts.go` | Role/system/brief/report prompt construction. |
@@ -53,7 +54,7 @@ orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`
 
 1. Preflight: resolve baseline, run dir, adapters; role availability checks.
 2. Optional host-owned orchestration decision (one bounded adjustment).
-3. Optional relay pre-scout retrieval + context-budget check + scout pass.
+3. Optional relay pre-scout retrieval and code-intelligence sensor + context-budget check + scout pass. Both are derived evidence; only fresh code-intelligence observations enter prompt context.
 4. Round loop: editor/coder implements → deterministic diff capture → tests →
    reviewer/supervisor review. Findings loop back until pass, test failure, or
    round limit.

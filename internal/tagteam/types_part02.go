@@ -22,6 +22,7 @@ type DefaultsConfig struct {
 	Fallbacks               RoleFallbacks    `toml:"fallbacks"`
 	FallbacksByTarget       TargetFallbacks  `toml:"fallbacks_by_target"`
 	ScoutRetrieval          *bool            `toml:"scout_retrieval"`
+	CodeIntelCommand        string           `toml:"code_intel_command"`
 	ScoutContextPolicy      string           `toml:"scout_context_policy"`
 	SupervisorSlicing       *bool            `toml:"supervisor_slicing"`
 	MaxPackages             int              `toml:"max_packages"`
@@ -58,6 +59,7 @@ type ProfileConfig struct {
 	Fallbacks               RoleFallbacks    `toml:"fallbacks"`
 	FallbacksByTarget       TargetFallbacks  `toml:"fallbacks_by_target"`
 	ScoutRetrieval          *bool            `toml:"scout_retrieval"`
+	CodeIntelCommand        string           `toml:"code_intel_command"`
 	ScoutContextPolicy      string           `toml:"scout_context_policy"`
 	SupervisorSlicing       *bool            `toml:"supervisor_slicing"`
 	MaxPackages             int              `toml:"max_packages"`
@@ -234,6 +236,7 @@ type RunOptions struct {
 	Fallbacks                 RoleFallbacks
 	FallbacksByTarget         TargetFallbacks
 	ScoutRetrieval            bool
+	CodeIntelCommand          string
 	ScoutContextPolicy        string
 	TrustRepoConfig           bool
 	SupervisorCanEdit         bool

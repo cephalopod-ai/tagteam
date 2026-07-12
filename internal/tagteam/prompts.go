@@ -434,6 +434,10 @@ finding must name a file and a concrete fix.`, userPrompt, string(pkgJSON), stri
 }
 
 func BuildScoutPrompt(workdir, userPrompt, brief, mode, phase, diff, testOutput, retrievalContext string) string {
+	return BuildScoutPromptWithCodeIntel(workdir, userPrompt, brief, mode, phase, diff, testOutput, retrievalContext, "")
+}
+
+func BuildScoutPromptWithCodeIntel(workdir, userPrompt, brief, mode, phase, diff, testOutput, retrievalContext, codeIntelContext string) string {
 	if strings.TrimSpace(mode) == "" {
 		mode = "recon"
 	}
@@ -441,6 +445,10 @@ func BuildScoutPrompt(workdir, userPrompt, brief, mode, phase, diff, testOutput,
 	retrievalSection := "(not provided for this scout phase)"
 	if strings.TrimSpace(retrievalContext) != "" {
 		retrievalSection = retrievalContext
+	}
+	codeIntelSection := "(not provided for this scout phase)"
+	if strings.TrimSpace(codeIntelContext) != "" {
+		codeIntelSection = codeIntelContext
 	}
 	diffSection := "(not available for this scout phase)"
 	if strings.TrimSpace(diff) != "" {
@@ -474,12 +482,15 @@ Test output:
 Host retrieval evidence:
 %s
 
+Code-intelligence derived evidence (fresh observations only; run artifact is authoritative for provenance):
 %s
 
 %s
 
-Scout findings are advisory only and must not directly block the run.
-Keep values concise and specific.`, phase, mode, workdir, userPrompt, brief, diffSection, testSection, retrievalSection, untrustedArtifactNotice, modeInstructions)
+%s
+
+	Scout findings are advisory only and must not directly block the run.
+	Keep values concise and specific.`, phase, mode, workdir, userPrompt, brief, diffSection, testSection, retrievalSection, codeIntelSection, untrustedArtifactNotice, modeInstructions)
 }
 
 func scoutModeInstructions(mode string) string {

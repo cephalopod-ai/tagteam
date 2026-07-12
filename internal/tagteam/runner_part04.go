@@ -412,7 +412,13 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		scoutStatus := newScoutExecutionArtifact(opts.ScoutMode, opts.ScoutFailurePolicy, opts.ScoutRetrieval && opts.ScoutMode == "recon")
 		skipScout := !scoutAvailable
 		retrievalContext := ""
+		codeIntelContext := ""
 		var retrieval RetrievalArtifact
+		var codeIntel CodeIntelArtifact
+		if opts.CodeIntelCommand != "" && !opts.DryRun {
+			codeIntel, _ = runConfiguredCodeIntel(ctx, opts, runDir)
+			codeIntelContext = CompactCodeIntelForPrompt(codeIntel)
+		}
 		if opts.ScoutRetrieval && opts.ScoutMode == "recon" && scoutAvailable {
 			logProgress(opts, "scout retrieval started")
 			var err error
@@ -426,29 +432,32 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			scoutStatus.RetrievalDegraded = retrievalStatusIsDegraded(retrieval.Status)
 			logProgress(opts, "scout retrieval completed status=%s evidence=%d", retrieval.Status, len(retrieval.Evidence))
 		}
-		scoutPrompt := withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext), repoInstructions)
+		scoutPrompt := withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext), repoInstructions)
 		if opts.ScoutMode == "recon" {
 			contextBudgetPath := filepath.Join(runDir, "scout-context-round-1.json")
 			limit := scoutContextLimitForAdapter(a.Config, opts.Scout.Adapter)
 			contextBudget := estimateScoutPromptBudget(scoutPrompt, limit)
 			contextBudget.Adapter = opts.Scout.Adapter
 			contextBudget.Model = opts.Scout.Model
-			if contextBudget.Status == scoutContextStatusNearLimit && retrievalContext != "" {
-				logProgress(opts, "scout context near configured limit; compacting retrieval estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
-				compacted := CompactRetrievalForPromptAggressive(retrieval)
-				if compacted != "" && len(compacted) < len(retrievalContext) {
-					retrievalContext = compacted
-					scoutPrompt = withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext), repoInstructions)
+			if contextBudget.Status == scoutContextStatusNearLimit && (retrievalContext != "" || codeIntelContext != "") {
+				logProgress(opts, "scout context near configured limit; compacting derived context estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
+				compactedRetrieval := CompactRetrievalForPromptAggressive(retrieval)
+				compactedCodeIntel := CompactCodeIntelForPromptAggressive(codeIntel)
+				if (compactedRetrieval != "" && len(compactedRetrieval) < len(retrievalContext)) || (compactedCodeIntel != "" && len(compactedCodeIntel) < len(codeIntelContext)) {
+					retrievalContext = compactedRetrieval
+					codeIntelContext = compactedCodeIntel
+					scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext), repoInstructions)
 					contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
 					contextBudget.Adapter = opts.Scout.Adapter
 					contextBudget.Model = opts.Scout.Model
 					contextBudget.RetrievalCompacted = true
 				}
 			}
-			if contextBudget.Status == scoutContextStatusExceeds && retrievalContext != "" {
-				logProgress(opts, "scout context exceeds configured limit; disabling retrieval estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
+			if contextBudget.Status == scoutContextStatusExceeds && (retrievalContext != "" || codeIntelContext != "") {
+				logProgress(opts, "scout context exceeds configured limit; disabling derived context estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
 				retrievalContext = ""
-				scoutPrompt = withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", ""), repoInstructions)
+				codeIntelContext = ""
+				scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", "", ""), repoInstructions)
 				contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
 				contextBudget.Adapter = opts.Scout.Adapter
 				contextBudget.Model = opts.Scout.Model

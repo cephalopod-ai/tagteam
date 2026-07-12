@@ -74,6 +74,7 @@ func hasTagteamEnv(overlay map[string]string) bool {
 		"TAGTEAM_REVIEWER_LOSS_POLICY",
 		"TAGTEAM_SUPERVISOR_LOSS_POLICY",
 		"TAGTEAM_SCOUT_RETRIEVAL",
+		"TAGTEAM_CODE_INTEL_COMMAND",
 		"TAGTEAM_SCOUT_CONTEXT_POLICY",
 		"TAGTEAM_SUPERVISOR",
 		"TAGTEAM_SUPERVISOR_SLICING",
@@ -172,6 +173,9 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 		if parsed, err := strconv.ParseBool(value); err == nil {
 			cfg.Defaults.ScoutRetrieval = &parsed
 		}
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CODE_INTEL_COMMAND"); ok {
+		cfg.Defaults.CodeIntelCommand = value
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_SCOUT_CONTEXT_POLICY"); ok {
 		cfg.Defaults.ScoutContextPolicy = value

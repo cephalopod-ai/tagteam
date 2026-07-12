@@ -398,6 +398,12 @@ Retrieval runs only for relay pre-scout `scout_mode = "recon"` and never for pos
 
 If an adapter has explicit context limits configured, relay pre-scout `recon` also writes `scout-context-round-1.json` before calling the scout. The check is deterministic and conservative (`ceil(prompt_bytes/3)`), not provider metadata. Statuses are `unknown`, `ok`, `near_limit`, or `exceeds_limit`. Near-limit runs compact retrieval more aggressively; retrieval is disabled if it alone would push the scout prompt over the configured usable context. Use `scout_context_policy = "warn" | "skip" | "block"` or `--scout-context-policy` to decide whether a too-small configured scout context only warns, skips/degrades the scout pass, or blocks before scout invocation.
 
+### Code-intelligence sensor
+
+Relay pre-scout can run one configured, read-only command provider before scout invocation. The command runs in the worktree with a restricted environment, a 10-second timeout, and JSON stdin containing `workdir` and `prompt`. Its stdout must be a `CodeIntelArtifact` with revision-bound observations. Tagteam validates provenance, confidence, bounded summaries, and worktree-relative evidence paths, then computes `fresh`, `dirty`, `stale`, or `unknown` from Git state; provider staleness is never trusted. Only `fresh` observations are compacted into scout context. The run artifact is the sole record: derived evidence is never written to `.tagteam/` memory, config, or a provider database. Missing commands, invalid output, and timeouts degrade the run and remain visible in the artifact.
+
+The command is provider-neutral, so Codebase Memory or GitNexus can implement the contract without becoming authoritative. CLI subcommands, multiple-provider aggregation, provider-specific adapters, per-round re-observation, and write-back to persistent memory remain deferred.
+
 Scout model failures are explicit and configurable. By default, `scout_failure_policy = "continue"` warns, writes `scout-execution-round-1.json`, and continues without scout context so the coder and supervisor can still run. Use `--strict-scout` or `scout_failure_policy = "fail"` when evaluation or reproducibility should abort before coder edits if the scout invocation, scout JSON contract, or scout context-budget check fails. Retrieval unavailable/timeout/empty/degraded states are separate from scout model failure and continue into the scout pass where possible.
 
 For finer control, `loss_policy` can be configured per non-primary role: `block`, `degrade`, `replace_then_block`, or `replace_then_degrade`. Replacement is bounded: tagteam may replace an unavailable target during preflight, and reviewer/supervisor review calls may try the configured fallback chain once after an invocation or output-contract failure. Fallback chains are ordered, deduped, capped at five targets, and recorded in `final.json`.
@@ -509,7 +515,7 @@ tagteam fix
 
 If a `.env` file exists in the selected workdir, `tagteam` parses it as a small, line-oriented dotenv subset: `KEY=VALUE`, optional `export`, inline comments outside quotes, single-quoted raw values, and double-quoted escape sequences such as `\n`. `.env` is a convenience source for local development; it is not a full shell parser, and explicit shell exports still win.
 
-Repo-local `.tagteam.toml` is loaded in untrusted mode by default. It can set ordinary role/model defaults, but high-authority settings such as `defaults.test`, `git_safety`, adapter `extra_args`, Claude `coder_allowed_tools` / `bare` / `serialize`, and `openai-compatible` `base_url`, `api_key_env`, `extra_headers`, or `extra_args` require `--trust-repo-config`.
+Repo-local `.tagteam.toml` is loaded in untrusted mode by default. It can set ordinary role/model defaults, but high-authority settings such as `defaults.test`, `git_safety`, `code_intel_command`, adapter `extra_args`, Claude `coder_allowed_tools` / `bare` / `serialize`, and `openai-compatible` `base_url`, `api_key_env`, `extra_headers`, or `extra_args` require `--trust-repo-config`.
 
 User config path:
 
@@ -534,6 +540,7 @@ tagteam init
 | `scout` | `adapter[:model]` target used in relay mode |
 | `scout_mode` / `post_scout_mode` | relay scout task modes: `recon`, `lint`, `polish`, `tests`, or `risk` |
 | `scout_retrieval` | enable bounded local retrieval for relay pre-scout `recon` (default `true`; disable with `--no-scout-retrieval` or `TAGTEAM_SCOUT_RETRIEVAL=false`). Relay scouts work best with `256k+` context and ideally at least as much context as the relay coder/supervisor |
+| `code_intel_command` | optional read-only command provider for relay pre-scout code intelligence; it receives JSON on stdin and must emit a bounded `CodeIntelArtifact` JSON document on stdout. Empty (default) disables the sensor; `TAGTEAM_CODE_INTEL_COMMAND` is the environment equivalent. |
 | `scout_failure_policy` | relay scout model failure handling: `continue` (default) or `fail`; `--strict-scout` maps to `fail`, and `TAGTEAM_SCOUT_FAILURE_POLICY` can override config |
 | `scout_context_policy` | relay scout configured-context behavior: `warn` (default), `skip`, or `block`; `--scout-context-policy` overrides it |
 | `supervisor_slicing` | split supervisor-mode work into bounded packages before implementation |
@@ -550,7 +557,7 @@ tagteam init
 
 </details>
 
-Profiles may override `mode`, `state_root`, `watchdog_timeout`, `scout`, `scout_mode`, `scout_retrieval`, `scout_failure_policy`, `scout_context_policy`, `loss_policy`, `fallbacks`, `fallbacks_by_target`, `json_repair`, `post_scout_mode`, `worker`, `supervisor`, `coder`, `adversary`, `rounds`, `test`, `lint`, `test_identity_regex`, and `churn`. A profile that sets `coder`/`adversary` but omits `mode` resolves as an adversarial-mode profile, so profiles written before `mode` existed keep working unchanged:
+Profiles may override `mode`, `state_root`, `watchdog_timeout`, `scout`, `scout_mode`, `scout_retrieval`, `code_intel_command`, `scout_failure_policy`, `scout_context_policy`, `loss_policy`, `fallbacks`, `fallbacks_by_target`, `json_repair`, `post_scout_mode`, `worker`, `supervisor`, `coder`, `adversary`, `rounds`, `test`, `lint`, `test_identity_regex`, and `churn`. A profile that sets `coder`/`adversary` but omits `mode` resolves as an adversarial-mode profile, so profiles written before `mode` existed keep working unchanged:
 
 ```toml
 [defaults]
@@ -661,6 +668,7 @@ State changes are atomic and journaled through `state.json` plus `events.jsonl`.
 - `supervisor-work-plan.json` (supervisor mode with slicing)
 - `supervisor-brief.md` (supervisor or relay mode, round 1)
 - `retrieval-round-1.json` (relay pre-scout `recon` when retrieval is enabled)
+- `code-intel-round-1.json` (relay pre-scout when `code_intel_command` is configured; derived evidence only)
 - `scout-context-round-1.json` (relay pre-scout `recon` context-budget check)
 - `scout-execution-round-1.json` (relay scout host-owned success/failure/degraded status)
 - `scout-round-1.json` (relay mode)

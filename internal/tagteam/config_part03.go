@@ -41,6 +41,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	if cfg.Defaults.ScoutRetrieval != nil {
 		scoutRetrieval = *cfg.Defaults.ScoutRetrieval
 	}
+	codeIntelCommand := cfg.Defaults.CodeIntelCommand
 	scoutContextPolicy := cfg.Defaults.ScoutContextPolicy
 	supervisorSlicing := true
 	if cfg.Defaults.SupervisorSlicing != nil {
@@ -137,6 +138,9 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		mergeTargetFallbacks(&fallbacksByTarget, profile.FallbacksByTarget)
 		if profile.ScoutRetrieval != nil {
 			scoutRetrieval = *profile.ScoutRetrieval
+		}
+		if profile.CodeIntelCommand != "" {
+			codeIntelCommand = profile.CodeIntelCommand
 		}
 		if profile.ScoutContextPolicy != "" {
 			scoutContextPolicy = profile.ScoutContextPolicy
@@ -594,6 +598,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		Fallbacks:                 normalizeRoleFallbacks(fallbacks, editorTarget, reviewerTarget, scoutTarget),
 		FallbacksByTarget:         normalizeTargetFallbacks(fallbacksByTarget),
 		ScoutRetrieval:            scoutRetrieval,
+		CodeIntelCommand:          strings.TrimSpace(codeIntelCommand),
 		ScoutContextPolicy:        scoutContextPolicy,
 		TrustRepoConfig:           flags.TrustRepoConfig && changed["trust-repo-config"],
 		SupervisorCanEdit:         flags.SupervisorCanEdit,
