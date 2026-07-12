@@ -291,6 +291,26 @@ func TestBuildRunSnapshot_MissingRunDirReturnsError(t *testing.T) {
 	}
 }
 
+func TestBuildRunSnapshotDoesNotFollowArtifactReferencesOutsideRun(t *testing.T) {
+	workdir, runDir, runID := newRunDirForSnapshotTest(t)
+	outside := filepath.Join(workdir, "outside-review.json")
+	if err := writeJSONWithNewline(outside, Review{SchemaVersion: ArtifactSchemaVersion, Verdict: "needs_changes", Findings: []Finding{{Severity: "major", File: "secret", Issue: "outside", Fix: "none"}}}); err != nil {
+		t.Fatal(err)
+	}
+	state := RunState{RunID: runID, Status: "running", LatestReviewPath: outside, LatestDiffPath: filepath.Join(workdir, "outside.patch")}
+	if err := writeJSONWithNewline(filepath.Join(runDir, "state.json"), state); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := BuildRunSnapshot(workdir, runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.LatestReviewPath != "" || snapshot.LatestDiffPath != "" || snapshot.FindingsCount != 0 {
+		t.Fatalf("outside artifacts were projected: %#v", snapshot)
+	}
+}
+
 func TestBuildRunSnapshot_ExposesDegradedAndBlockingReasonConsistently(t *testing.T) {
 	workdir, runDir, runID := newRunDirForSnapshotTest(t)
 	final := FinalRun{

@@ -15,6 +15,9 @@ Canonical entry point for `tagteam` documentation.
 
 - [Architecture](ARCHITECTURE.md) — components, run flow, data model, extension
   points, live status/TUI datapath, known risks.
+- [Control Plane Contract](CONTROL_PLANE_CONTRACT.md) — draft versioned producer
+  contract, bounded read operations, authority boundary, and MCP lifecycle
+  gates.
 - [Implementation Diagrams](IMPLEMENTATION_DIAGRAMS.md) — Mermaid diagrams of the
   component map, live status/TUI flow, run loop, and failure classification.
 - [Test Ledger](TEST_LEDGER.md) — test areas, evidence, latest results, and
