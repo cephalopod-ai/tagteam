@@ -196,7 +196,7 @@ func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	case RoleAdversary:
 		argv = append(argv,
 			"--permission-mode", "dontAsk",
-			"--allowedTools", "Read,Glob,Grep,Bash(git diff *),Bash(git log *),Bash(git status *)",
+			"--allowedTools", "Read,Glob,Grep",
 		)
 		if req.SchemaPath != "" {
 			schemaBytes, err := osReadFile(req.SchemaPath)
@@ -208,7 +208,7 @@ func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	case RoleSupervisor, RoleReporter, RoleScout:
 		argv = append(argv,
 			"--permission-mode", "dontAsk",
-			"--allowedTools", "Read,Glob,Grep,Bash(git diff *),Bash(git log *),Bash(git status *)",
+			"--allowedTools", "Read,Glob,Grep",
 		)
 		if role == RoleSupervisor && req.SchemaPath != "" {
 			schemaBytes, err := osReadFile(req.SchemaPath)

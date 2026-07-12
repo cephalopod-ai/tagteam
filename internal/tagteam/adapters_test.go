@@ -90,6 +90,20 @@ func TestCodexBuildCmdReporterIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestClaudeBuildCmdReadOnlyRolesHaveNoBashTool(t *testing.T) {
+	adapter := &ClaudeAdapter{}
+	for _, role := range []Role{RoleAdversary, RoleSupervisor, RoleReporter, RoleScout} {
+		spec, err := adapter.BuildCmd(role, Request{Prompt: "review", Workdir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(spec.Argv, " ")
+		if strings.Contains(joined, "Bash") || !strings.Contains(joined, "Read,Glob,Grep") {
+			t.Fatalf("%s argv grants executable tools: %q", role, joined)
+		}
+	}
+}
+
 func TestClaudeBuildCmdAdversary(t *testing.T) {
 	tmp := t.TempDir()
 	schemaPath := filepath.Join(tmp, "schema.json")
