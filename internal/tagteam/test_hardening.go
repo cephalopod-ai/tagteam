@@ -159,10 +159,25 @@ func runBaselineTest(ctx context.Context, opts RunOptions, runDir string) (*Test
 	if opts.TestCmd == "" || opts.NoTest {
 		return nil, nil
 	}
+	before, err := captureWorktreeSnapshot(ctx, opts.Workdir)
+	if err != nil {
+		return nil, fmt.Errorf("capture worktree before baseline test: %w", err)
+	}
 	path := filepath.Join(runDir, "baseline-test.txt")
 	test, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, path, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
 	if err != nil {
 		return nil, err
+	}
+	after, err := captureWorktreeSnapshot(ctx, opts.Workdir)
+	if err != nil {
+		return nil, fmt.Errorf("capture worktree after baseline test: %w", err)
+	}
+	if changed := worktreeDelta(before, after); len(changed) > 0 {
+		paths := make([]string, 0, len(changed))
+		for _, changedPath := range changed {
+			paths = append(paths, "baseline-test:"+changedPath)
+		}
+		return nil, &IntegrityViolationError{Paths: paths}
 	}
 	return &test, nil
 }

@@ -32,6 +32,28 @@ func TestIsolatedTestDirectoriesArePerInvocation(t *testing.T) {
 	}
 }
 
+func TestRunBaselineTestRejectsTrackedWorktreeMutation(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "tracked.txt"), "baseline\n")
+	runGit(t, repo, "add", "tracked.txt")
+	runGit(t, repo, "commit", "-m", "init")
+
+	_, err := runBaselineTest(context.Background(), RunOptions{
+		Workdir: repo,
+		TestCmd: "sh -c 'printf mutation > tracked.txt'",
+		Timeout: 10 * time.Second,
+	}, t.TempDir())
+	if err == nil || !IsIntegrityViolation(err) {
+		t.Fatalf("runBaselineTest() error = %T %v, want integrity violation", err, err)
+	}
+	if !strings.Contains(err.Error(), "baseline-test:tracked.txt") {
+		t.Fatalf("baseline mutation diagnostic = %v", err)
+	}
+}
+
 func TestRegressionComparesFailureIdentitySets(t *testing.T) {
 	baseline := TestRun{Passed: false, FailureIdentities: []string{"TestKnown"}}
 	known := compareRegression(baseline, TestRun{Passed: false, FailureIdentities: []string{"TestKnown"}})

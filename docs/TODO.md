@@ -18,3 +18,80 @@
   edits are complete but whose `files_changed` claim includes a gitignored,
   repo-required local log. The repair must not permit further edits or include
   ignored contents in review artifacts.
+- [ ] Extend baseline-test integrity snapshots to explicitly governed ignored
+  paths when a repository declares mutable runtime state outside Git-visible
+  files. Git-visible baseline mutations now fail closed.
+
+## Deferred: MCP control plane and optional Run Steward
+
+**Status:** Deferred architecture plan. This is not committed to the current
+release and must not displace the open recovery work above.
+
+The goal is to let any MCP-capable host launch and monitor Tagteam without
+turning model output into shell commands. A deterministic controller remains
+the only execution authority. An optional Run Steward model may summarize
+normalized evidence and recommend actions, but it is advisory and cannot edit
+the repository, broaden scope, change roles, dismiss findings, or approve its
+own recovery action.
+
+### Immediate implementation horizon
+
+- [ ] Define a versioned machine contract for launch specifications, run
+  handles, status snapshots, plans, findings, diagnostics, cancellation, and
+  resumability. Reuse the existing JSON artifacts and CLI reason/exit codes
+  rather than creating a second state model.
+- [ ] Add a local MCP surface with typed, outcome-level operations for start,
+  status, plan, findings, prepare-resume, resume, cancel, and diagnostics.
+  Start must return a run handle promptly; status and findings must be bounded,
+  paginated where necessary, and explicit about truncation.
+- [ ] Keep command construction deterministic: no generic command tool, raw
+  shell, arbitrary flag passthrough, unrestricted artifact reader, or
+  model-controlled working directory. Canonicalize the repository root and
+  allowed paths before execution.
+- [ ] Bind start, resume, and cancel approvals to the normalized action,
+  repository identity, selected roles, scope, run identity, and an expiry or
+  nonce. A changed action requires a new approval.
+- [ ] Add an optional local-first Run Steward interface. Feed it only bounded,
+  sanitized `RunObservation` records and require a schema-validated advisory
+  result with an enum action such as wait, inspect, notify, prepare-resume,
+  ask-user, or report-issue.
+- [ ] Make deterministic status and error templates the final fallback. A
+  missing, invalid, slow, or rate-limited steward must never delay or alter the
+  Tagteam run.
+- [ ] Default the steward tier to a separately configured local Ollama model.
+  Cloud or CLI-backed stewards are optional escalation targets and must run at
+  lower priority with call, token, timeout, and deduplication budgets so they
+  do not contend with worker or reviewer invocations.
+- [ ] Prevent recursion and duplicate observers: one steward lease per run,
+  no Tagteam invocation from the steward, and no inherited arbitrary MCP or
+  repository-write tools.
+- [ ] Add contract, process-lifecycle, hostile-output, approval-replay,
+  concurrency, cancellation, restart, malformed-JSON, and weak-model
+  playtests. Verify that an MCP host can recover from every returned error
+  without reading source code.
+
+### Future vision
+
+- [ ] Separate durable process ownership into a local `tagteamd`-style service
+  with the MCP endpoint as a thin client transport. Add leases, reconnectable
+  event streams, multi-client arbitration, and safe cancellation after the
+  originating host exits.
+- [ ] Add capability/version provenance and quarantine when tool schemas,
+  side effects, or the Tagteam binary change outside the approved baseline.
+- [ ] Support authenticated remote deployment only after local stdio behavior,
+  workload identity, repository authorization, credential scope, and audit
+  logging are proven.
+- [ ] Provide fleet-level run summaries and notifications without centralizing
+  repository contents, raw prompts, secrets, or private model reasoning.
+
+### Acceptance boundary
+
+- The MCP path and direct CLI path produce equivalent normalized launch and
+  terminal records for the same inputs.
+- A low-capability steward can explain progress and request help, but cannot
+  gain execution authority through prompt text or tool output.
+- Killing an attached MCP host leaves either a cleanly cancelled run or an
+  explicitly recoverable persisted state; no run is reported as successful
+  from missing or malformed evidence.
+- Gosling and other hosts consume this contract rather than duplicating
+  Tagteam profiles, model catalogs, reason codes, or recovery rules.
