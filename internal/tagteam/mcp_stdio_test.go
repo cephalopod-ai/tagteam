@@ -28,12 +28,15 @@ func TestMCPStdioServerServesBoundedReadTools(t *testing.T) {
 	tools := responses[1]["result"].(map[string]any)["tools"].([]any)
 	foundStart := false
 	foundPrepareStart := false
+	foundPrepareResume := false
 	for _, tool := range tools {
 		switch tool.(map[string]any)["name"] {
 		case "tagteam_start":
 			foundStart = true
 		case "tagteam_prepare_start":
 			foundPrepareStart = true
+		case "tagteam_prepare_resume":
+			foundPrepareResume = true
 		}
 	}
 	if foundStart {
@@ -41,6 +44,9 @@ func TestMCPStdioServerServesBoundedReadTools(t *testing.T) {
 	}
 	if !foundPrepareStart {
 		t.Fatal("MCP server did not advertise prepare_start")
+	}
+	if !foundPrepareResume {
+		t.Fatal("MCP server did not advertise prepare_resume")
 	}
 	diagnostics := responses[2]["result"].(map[string]any)["structuredContent"].(map[string]any)
 	if diagnostics["status"] != "ready" {
@@ -96,6 +102,31 @@ func TestMCPStdioServerPreparesTheApprovalBoundStartDigest(t *testing.T) {
 	prepared := responses[1]["result"].(map[string]any)["structuredContent"].(map[string]any)
 	if _, ok := prepared["action_digest"].(string); !ok {
 		t.Fatalf("prepared start = %#v", prepared)
+	}
+}
+
+func TestMCPStdioServerPreparesResumeWithoutRunningIt(t *testing.T) {
+	repo, baseline := createResumeFixtureRepo(t)
+	stateRoot := t.TempDir()
+	runID := "mcp-resume-assessment"
+	runDir, err := createRunDir(repo, stateRoot, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeResumeFixture(t, runDir, runID, repo, baseline, RunStatusRunning)
+	repository, err := resolveControlRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := ControlService{RepositoryRoot: repo, StateRoot: stateRoot, ProducerVersion: "test"}
+	request := ControlResumeRequest{SchemaVersion: ControlContractVersion, Repository: repository, RunID: runID}
+	responses := runMCPStdio(t, service,
+		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}},
+		map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tagteam_prepare_resume", "arguments": request}},
+	)
+	prepared := responses[1]["result"].(map[string]any)["structuredContent"].(map[string]any)
+	if prepared["resumable"] != true || prepared["reason_code"] != "resumable" {
+		t.Fatalf("prepared resume = %#v", prepared)
 	}
 }
 

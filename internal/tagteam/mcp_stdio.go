@@ -63,9 +63,9 @@ func (s *MCPStdioServer) Serve(ctx context.Context) error {
 				continue
 			}
 			initialized = true
-			instructions := "Use Tagteam control tools for bounded status and diagnostics. Start, resume, and cancel are unavailable in this server configuration."
+			instructions := "Use Tagteam control tools for bounded status, diagnostics, and resume assessment. Start, resume, and cancel are unavailable in this server configuration."
 			if s.runtime != nil {
-				instructions = "Use Tagteam control tools for bounded status and diagnostics. Call prepare_start, collect explicit user approval for its digest, then call start. Resume and cancel are not available in this server revision."
+				instructions = "Use Tagteam control tools for bounded status, diagnostics, and resume assessment. Call prepare_start, collect explicit user approval for its digest, then call start. Resume and cancel are not available in this server revision."
 			}
 			if err := s.writeResult(request.ID, map[string]any{
 				"protocolVersion": MCPProtocolVersion,
@@ -157,7 +157,17 @@ func (s *MCPStdioServer) callTool(ctx context.Context, raw json.RawMessage) (map
 		if err := json.Unmarshal(call.Arguments, &request); err != nil {
 			return nil, fmt.Errorf("invalid start preparation request")
 		}
-		result, err := PrepareControlStart(request)
+		result, err := s.service.PrepareStart(request)
+		if err != nil {
+			return nil, err
+		}
+		return mcpToolSuccess(result)
+	case "tagteam_prepare_resume":
+		var request ControlResumeRequest
+		if err := json.Unmarshal(call.Arguments, &request); err != nil {
+			return nil, fmt.Errorf("invalid resume preparation request")
+		}
+		result, err := s.service.PrepareResume(ctx, request)
 		if err != nil {
 			return nil, err
 		}
@@ -307,6 +317,7 @@ func mcpControlTools(includeStart bool) []map[string]any {
 		mcpTool("tagteam_capabilities", "Read Tagteam control-plane capabilities.", map[string]any{"type": "object", "additionalProperties": false}, readOnly),
 		mcpTool("tagteam_validate_launch", "Validate and normalize a Tagteam launch without starting it.", mcpLaunchSchema(), readOnly),
 		mcpTool("tagteam_prepare_start", "Validate an idempotent start and return the exact digest requiring user approval.", mcpStartPreparationSchema(), readOnly),
+		mcpTool("tagteam_prepare_resume", "Assess whether a persisted run can be resumed without changing it.", mcpResumePreparationSchema(), readOnly),
 		mcpTool("tagteam_status", "Read bounded status for one Tagteam run.", mcpRunSchema(false), readOnly),
 		mcpTool("tagteam_plan", "Read a bounded page of a run plan.", mcpRunSchema(true), readOnly),
 		mcpTool("tagteam_findings", "Read a bounded page of persisted findings.", mcpRunSchema(true), readOnly),
@@ -370,6 +381,19 @@ func mcpStartPreparationSchema() map[string]any {
 			"schema_version":  map[string]any{"type": "integer", "const": ControlContractVersion},
 			"launch":          mcpLaunchSchema(),
 			"idempotency_key": map[string]any{"type": "string", "minLength": 1, "maxLength": controlMaxRoleBytes},
+		},
+	}
+}
+
+func mcpResumePreparationSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"schema_version", "repository", "run_id"},
+		"properties": map[string]any{
+			"schema_version": map[string]any{"type": "integer", "const": ControlContractVersion},
+			"repository":     map[string]any{"type": "object"},
+			"run_id":         map[string]any{"type": "string", "minLength": 1},
 		},
 	}
 }

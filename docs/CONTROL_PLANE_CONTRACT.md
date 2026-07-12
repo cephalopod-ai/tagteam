@@ -1,7 +1,8 @@
 # Control Plane Contract
 
-**Status:** draft producer contract, local MCP stdio transport, and approved
-idempotent start are implemented. Resume and cancel remain disabled.
+**Status:** draft producer contract, local MCP stdio transport, approved
+idempotent start, and non-mutating resume assessment are implemented. Resume
+and cancel remain disabled.
 
 Tagteam owns a versioned control-plane contract in
 `internal/tagteam/control_contract.go`. It is the anti-corruption boundary for
@@ -20,6 +21,9 @@ state model rather than introducing a second run state machine.
   across actions.
 - `PrepareControlStart` returns the start-specific digest and maximum approval
   lifetime, so MCP clients never have to reconstruct approval hashing.
+- `PrepareResume` validates the exact persisted state, artifact integrity,
+  baseline, and deterministic worktree diff without changing repository or run
+  artifacts. It reports a bounded reason code instead of quarantining a run.
 - `Status` projects the authoritative `RunSnapshot` assembled from existing
   run artifacts and supplies a stable snapshot digest.
 - `Plan` and `Findings` return bounded cursor pages from `plan.json` and
@@ -32,22 +36,25 @@ state model rather than introducing a second run state machine.
   nonce, launches Tagteam through its normal configuration and runner, and
   persists a terminal artifact if preflight fails before the runner can do so.
 
-The capability list intentionally excludes `prepare_resume`, `resume`, and
-`cancel`. Their request/result types are defined so consumers can review the
-draft shape, but no handler returns canned success or delegates to arbitrary
-shell input.
+The capability list intentionally excludes `resume` and `cancel`. Their
+request/result types are defined so consumers can review the draft shape, but
+no handler returns canned success or delegates to arbitrary shell input.
 
 `tagteam mcp` implements MCP protocol revision `2025-11-25` over stdio. It
 advertises exactly the implemented tools and returns both structured JSON and
-bounded text content. `tagteam_prepare_start` is read-only; `tagteam_start` is
-marked destructive and idempotent for MCP clients, and is the only mutating
-tool currently exposed. An unverified binary keeps the server read-only unless
-the operator explicitly passes `--allow-dev-build`.
+bounded text content. `tagteam_prepare_start` and `tagteam_prepare_resume` are
+read-only; `tagteam_start` is marked destructive and idempotent for MCP
+clients, and is the only mutating tool currently exposed. An unverified binary
+keeps the server read-only unless the operator explicitly passes
+`--allow-dev-build`.
 
 ## Authority and validation
 
 - The canonical Git worktree root and Tagteam-derived repository ID are the
   repository identity. A caller-supplied mismatched ID is rejected.
+- Each MCP server is bound to the worktree it was started for. Launch and
+  lifecycle preparation for another repository are rejected rather than
+  returning a handle this server cannot monitor.
 - Repository, run, and artifact paths are resolved to full canonical paths.
   Symlinks are usable only when their real target remains inside the expected
   repository or run-state boundary; escaping or broken links fail closed.
@@ -77,10 +84,11 @@ the operator explicitly passes `--allow-dev-build`.
 ## Deferred transport and lifecycle work
 
 The MCP adapter is a thin transport over this boundary. Before it can advertise
-resume or cancel, Tagteam still needs cancellation ownership after restart and
-non-mutating resume assessment. The approval-ledger lock fails closed if a stale
-owner remains after an abnormal process exit; this is surfaced as a recoverable
-start error rather than launching without replay protection.
+resume or cancel, Tagteam still needs cancellation ownership after restart.
+`prepare_resume` deliberately refuses live or stale run locks and active-run
+pointers rather than altering ownership. The approval-ledger lock fails closed
+if a stale owner remains after an abnormal process exit; this is surfaced as a
+recoverable start error rather than launching without replay protection.
 Unknown contract versions and malformed persisted artifacts must fail with
 typed, recoverable errors rather than inferred success.
 

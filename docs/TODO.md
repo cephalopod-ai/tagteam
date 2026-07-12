@@ -24,9 +24,9 @@
 
 ## Deferred: MCP control plane and optional Run Steward
 
-**Status:** Producer contract, local MCP transport, and approved idempotent
-start are implemented. Resume/cancel lifecycle operations remain gated and
-must not displace the open recovery work above.
+**Status:** Producer contract, local MCP transport, approved idempotent start,
+and non-mutating resume assessment are implemented. Resume/cancel lifecycle
+operations remain gated and must not displace the open recovery work above.
 
 The goal is to let any MCP-capable host launch and monitor Tagteam without
 turning model output into shell commands. A deterministic controller remains
@@ -41,8 +41,8 @@ own recovery action.
   handles, status snapshots, plans, findings, diagnostics, cancellation, and
   resumability. Reuse the existing JSON artifacts and CLI reason/exit codes
   rather than creating a second state model.
-- [ ] Add the remaining local MCP operations for prepare-resume, resume, and
-  cancel. The current surface has typed capabilities, launch validation, start,
+- [ ] Add the remaining local MCP operations for resume and cancel. The current
+  surface has typed capabilities, launch validation, start/resume preparation,
   status, plan, findings, and diagnostics.
   Start returns a durable handle promptly; status and findings are bounded,
   paginated where necessary, and explicit about truncation.

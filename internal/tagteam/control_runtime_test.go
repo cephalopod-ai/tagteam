@@ -111,6 +111,16 @@ func TestControlRuntimeRejectsSecondStartWhileFirstReservationIsPending(t *testi
 	}
 }
 
+func TestControlRuntimeRejectsStartOutsideTheMCPWorktree(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	otherRepo, _ := createResumeFixtureRepo(t)
+	runtime := NewControlRuntime(ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}, DefaultConfig(), nil)
+	request := controlStartFixture(t, otherRepo)
+	if _, err := runtime.Start(context.Background(), request); err == nil || !strings.Contains(err.Error(), "must match the MCP server worktree") {
+		t.Fatalf("start error = %v, want server worktree rejection", err)
+	}
+}
+
 func waitForControlRunFailure(t *testing.T, runtime *ControlRuntime, idempotencyKey string) {
 	t.Helper()
 	locator, err := resolveStateLocator(runtime.service.RepositoryRoot, runtime.service.StateRoot)

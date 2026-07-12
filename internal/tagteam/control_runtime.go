@@ -91,6 +91,9 @@ func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest)
 	if err != nil {
 		return ControlRunHandle{}, err
 	}
+	if err := r.service.requireRepository(normalized.Repository); err != nil {
+		return ControlRunHandle{}, err
+	}
 	request.Launch = normalized
 	digest, err := ControlStartActionDigest(request)
 	if err != nil {
@@ -110,10 +113,6 @@ func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest)
 	if err := locator.Prepare(); err != nil {
 		return ControlRunHandle{}, fmt.Errorf("prepare start state root: %w", err)
 	}
-	if active, err := readActiveAt(filepath.Join(locator.RepoRoot, "active.json")); err == nil && active.Status == string(RunStatusRunning) {
-		return ControlRunHandle{}, fmt.Errorf("run %q is already active for this worktree", active.RunID)
-	}
-
 	lock, err := acquireRunLock(locator.RepoRoot, false)
 	if err != nil {
 		return ControlRunHandle{}, fmt.Errorf("control approval ledger is locked: %w", err)
@@ -133,6 +132,11 @@ func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest)
 			return ControlRunHandle{}, fmt.Errorf("idempotency_key is already bound to a different start action")
 		}
 		return ControlRunHandle{SchemaVersion: ControlContractVersion, RunID: record.RunID, ProducerVersion: normalizedProducerVersion(r.service.ProducerVersion)}, nil
+	}
+	if active, activeErr := readActiveAt(filepath.Join(locator.RepoRoot, "active.json")); activeErr == nil && active.Status == string(RunStatusRunning) {
+		return ControlRunHandle{}, fmt.Errorf("run %q is already active for this worktree", active.RunID)
+	} else if activeErr != nil && !os.IsNotExist(activeErr) {
+		return ControlRunHandle{}, fmt.Errorf("read active run: %w", activeErr)
 	}
 	for _, record := range ledger.Starts {
 		if record.Nonce == request.Approval.Nonce {

@@ -146,12 +146,13 @@ coder, or solo model). Use `--supervisor`, `--reviewer`, or `--scout` for the
 other roles.
 
 `tagteam mcp` is a local stdio MCP server. It exposes bounded tools for
-capabilities, launch validation, start preparation, approved/idempotent starts,
-status, plans, findings, and diagnostics. `prepare_start` returns the exact
-action digest that `start` requires after user confirmation. `start` is marked
-destructive for MCP clients and requires an expiring, single-use approval
-record. Resume and cancel remain unavailable through MCP pending their
-lifecycle gates.
+capabilities, launch validation, start preparation, resume assessment,
+approved/idempotent starts, status, plans, findings, and diagnostics.
+`prepare_start` returns the exact action digest that `start` requires after
+user confirmation; `prepare_resume` reports whether an existing run meets
+resume preconditions without changing it. `start` is marked destructive for
+MCP clients and requires an expiring, single-use approval record. Resume and
+cancel remain unavailable through MCP pending their lifecycle gates.
 
 Released binaries can expose `start` normally. Development or otherwise
 unverified builds keep MCP read-only unless the operator starts the server with

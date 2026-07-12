@@ -133,6 +133,19 @@ func TestPrepareControlStartReturnsTheBoundStartDigest(t *testing.T) {
 	}
 }
 
+func TestControlServiceBindsLaunchPreparationToItsWorktree(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	otherRepo, _ := createResumeFixtureRepo(t)
+	service := ControlService{RepositoryRoot: repo, ProducerVersion: "test"}
+	if _, err := service.ValidateLaunch(controlLaunchFixture(t, otherRepo)); err == nil || !strings.Contains(err.Error(), "must match the MCP server worktree") {
+		t.Fatalf("launch validation error = %v", err)
+	}
+	request := ControlStartRequest{SchemaVersion: ControlContractVersion, Launch: controlLaunchFixture(t, otherRepo), IdempotencyKey: "session-1-generation-1"}
+	if _, err := service.PrepareStart(request); err == nil || !strings.Contains(err.Error(), "must match the MCP server worktree") {
+		t.Fatalf("start preparation error = %v", err)
+	}
+}
+
 func TestNormalizeControlLaunchRejectsTraversalAndRoleConfusion(t *testing.T) {
 	repo, _ := createResumeFixtureRepo(t)
 	spec := controlLaunchFixture(t, repo)

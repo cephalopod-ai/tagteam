@@ -191,13 +191,16 @@ func (s ControlService) Capabilities() ControlCapabilitySet {
 	return ControlCapabilitySet{
 		SchemaVersion:   ControlContractVersion,
 		ProducerVersion: normalizedProducerVersion(s.ProducerVersion),
-		Capabilities:    []string{"capabilities", "validate_launch", "prepare_start", "status", "plan", "findings", "diagnostics"},
+		Capabilities:    []string{"capabilities", "validate_launch", "prepare_start", "prepare_resume", "status", "plan", "findings", "diagnostics"},
 	}
 }
 
 func (s ControlService) ValidateLaunch(spec ControlLaunchSpec) (ControlLaunchValidation, error) {
 	normalized, err := NormalizeControlLaunch(spec)
 	if err != nil {
+		return ControlLaunchValidation{}, err
+	}
+	if err := s.requireRepository(normalized.Repository); err != nil {
 		return ControlLaunchValidation{}, err
 	}
 	digest, err := ControlActionDigest(normalized)
@@ -221,6 +224,20 @@ func PrepareControlStart(request ControlStartRequest) (ControlStartPreparation, 
 		return ControlStartPreparation{}, err
 	}
 	return ControlStartPreparation{SchemaVersion: ControlContractVersion, Normalized: normalized, ActionDigest: digest, ApprovalMaxLifetimeSeconds: int64(ControlApprovalMaxLifetime / time.Second)}, nil
+}
+
+// PrepareStart validates a start request for this server's configured
+// worktree. The standalone function above remains useful to local callers
+// that need the transport-independent digest contract.
+func (s ControlService) PrepareStart(request ControlStartRequest) (ControlStartPreparation, error) {
+	prepared, err := PrepareControlStart(request)
+	if err != nil {
+		return ControlStartPreparation{}, err
+	}
+	if err := s.requireRepository(prepared.Normalized.Repository); err != nil {
+		return ControlStartPreparation{}, err
+	}
+	return prepared, nil
 }
 
 // NormalizeControlLaunch validates caller input and returns the canonical
@@ -417,7 +434,7 @@ func (s ControlService) Diagnostics() (ControlDiagnostics, error) {
 	if err != nil {
 		return ControlDiagnostics{}, fmt.Errorf("resolve state root: %w", err)
 	}
-	return ControlDiagnostics{SchemaVersion: ControlContractVersion, Status: "ready", Repository: repository, StateRoot: locator.StateRoot, Details: []string{"repository identity verified", "state root resolved", "mutating control operations disabled"}, Completeness: ControlComplete}, nil
+	return ControlDiagnostics{SchemaVersion: ControlContractVersion, Status: "ready", Repository: repository, StateRoot: locator.StateRoot, Details: []string{"repository identity verified", "state root resolved", "approved start requires an enabled runtime", "resume and cancel remain unavailable"}, Completeness: ControlComplete}, nil
 }
 
 func (s ControlService) runDir(runID string) (string, error) {
@@ -514,6 +531,20 @@ func resolveControlRepository(root string) (ControlRepository, error) {
 		return ControlRepository{}, fmt.Errorf("derive repository identity: %w", err)
 	}
 	return ControlRepository{CanonicalRoot: canonical, RepoID: repoID}, nil
+}
+
+// requireRepository keeps an MCP server scoped to the worktree it was started
+// for. Without this check a returned handle could be unqueryable by the same
+// server after a caller supplied a different repository root.
+func (s ControlService) requireRepository(repository ControlRepository) error {
+	expected, err := resolveControlRepository(s.RepositoryRoot)
+	if err != nil {
+		return err
+	}
+	if repository.CanonicalRoot != expected.CanonicalRoot || repository.RepoID != expected.RepoID {
+		return fmt.Errorf("control repository must match the MCP server worktree")
+	}
+	return nil
 }
 
 func validateControlTeam(team ControlTeamSpec) error {
