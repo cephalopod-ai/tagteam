@@ -309,10 +309,10 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	argv = append(argv, "--output-format", "json", "--no-plan", "--no-subagents", "--no-memory")
 	switch role {
 	case RoleCoder:
-		argv = append(argv,
-			"--permission-mode", "acceptEdits",
-			"--tools", "read_file,list_dir,write_file,search_replace,run_terminal_cmd",
-		)
+		// Grok 0.2.93 rejects filtered coder toolsets when its terminal tool has
+		// background execution disabled. Use its complete coder toolset and rely
+		// on Tagteam's write-scope and integrity gates for repository boundaries.
+		argv = append(argv, "--permission-mode", "acceptEdits")
 	case RoleAdversary, RoleSupervisor, RoleReporter, RoleScout:
 		argv = append(argv,
 			"--permission-mode", "dontAsk",

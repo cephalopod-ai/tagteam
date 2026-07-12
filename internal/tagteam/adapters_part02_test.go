@@ -155,7 +155,6 @@ func TestGrokBuildCmdCoder(t *testing.T) {
 		"--model", "grok-4.5", "--reasoning-effort", "high",
 		"--output-format", "json", "--no-plan", "--no-subagents", "--no-memory",
 		"--permission-mode", "acceptEdits",
-		"--tools", "read_file,list_dir,write_file,search_replace,run_terminal_cmd",
 		"--json-schema", `{"type":"object"}`, "--verbatim",
 	}
 	if !reflect.DeepEqual(spec.Argv, want) {
