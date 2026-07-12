@@ -17,6 +17,7 @@ import (
 const (
 	controlApprovalLedgerName = "control-approvals.json"
 	controlMaxApprovalRecords = 1024
+	controlCancelRequestName  = "cancel-request.json"
 )
 
 type ControlRuntime struct {
@@ -32,6 +33,62 @@ type controlApprovalLedger struct {
 	SchemaVersion int                   `json:"schema_version"`
 	Starts        []controlStartRecord  `json:"starts"`
 	Resumes       []controlResumeRecord `json:"resumes,omitempty"`
+	Cancels       []controlCancelRecord `json:"cancels,omitempty"`
+}
+
+type controlCancelRecord struct {
+	ActionDigest string    `json:"action_digest"`
+	Nonce        string    `json:"nonce"`
+	RunID        string    `json:"run_id"`
+	OwnerPID     int       `json:"owner_pid,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
+type controlCancelRequest struct {
+	SchemaVersion int       `json:"schema_version"`
+	ActionDigest  string    `json:"action_digest"`
+	Nonce         string    `json:"nonce"`
+	RunID         string    `json:"run_id"`
+	OwnerPID      int       `json:"owner_pid,omitempty"`
+	RequestedAt   time.Time `json:"requested_at"`
+}
+
+// ControlCancelError is a bounded, recoverable error returned by the MCP
+// cancel operation. Its reason code is stable enough for a host to decide
+// whether to request another approval or report a persisted run problem.
+type ControlCancelError struct {
+	ReasonCode  string
+	Reason      string
+	Recoverable bool
+	Err         error
+}
+
+func (e *ControlCancelError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Reason == "" {
+		return "cancel " + e.ReasonCode
+	}
+	return "cancel " + e.ReasonCode + ": " + e.Reason
+}
+
+func (e *ControlCancelError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func newControlCancelError(reasonCode, reason string, cause error) error {
+	if reasonCode == "" {
+		reasonCode = "cancel_unavailable"
+	}
+	if reason == "" && cause != nil {
+		reason = cause.Error()
+	}
+	return &ControlCancelError{ReasonCode: reasonCode, Reason: boundControlText(reason), Recoverable: true, Err: cause}
 }
 
 type controlStartRecord struct {
@@ -44,12 +101,14 @@ type controlStartRecord struct {
 }
 
 func NewControlRuntime(service ControlService, cfg Config, sources []string) *ControlRuntime {
-	return &ControlRuntime{service: service, config: cfg, sources: append([]string(nil), sources...), jobs: map[string]context.CancelFunc{}}
+	runtime := &ControlRuntime{service: service, config: cfg, sources: append([]string(nil), sources...), jobs: map[string]context.CancelFunc{}}
+	go runtime.watchControlCancellation()
+	return runtime
 }
 
 func (r *ControlRuntime) Capabilities() ControlCapabilitySet {
 	capabilities := r.service.Capabilities()
-	capabilities.Capabilities = append(capabilities.Capabilities, "start", "resume")
+	capabilities.Capabilities = append(capabilities.Capabilities, "start", "resume", "cancel")
 	return capabilities
 }
 
@@ -181,6 +240,250 @@ func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest)
 	return ControlRunHandle{SchemaVersion: ControlContractVersion, RunID: runID, ProducerVersion: normalizedProducerVersion(r.service.ProducerVersion)}, nil
 }
 
+// Cancel records an approved cancellation request next to the run and asks a
+// locally-owned job to stop when one is present. The request is durable, so a
+// fresh ControlRuntime can cancel a run started by an earlier runtime without
+// relying on an in-memory job map or signalling the MCP host process.
+func (r *ControlRuntime) Cancel(ctx context.Context, request ControlCancelRequest) (ControlRunHandle, error) {
+	if request.SchemaVersion != ControlContractVersion {
+		return ControlRunHandle{}, newControlCancelError("invalid_request", fmt.Sprintf("unsupported control schema_version %d (want %d)", request.SchemaVersion, ControlContractVersion), nil)
+	}
+	digest, err := ControlCancelActionDigest(request)
+	if err != nil {
+		return ControlRunHandle{}, newControlCancelError("invalid_request", err.Error(), err)
+	}
+	repository, err := resolveControlRepository(request.Repository.CanonicalRoot)
+	if err != nil {
+		return ControlRunHandle{}, newControlCancelError("repository_unavailable", err.Error(), err)
+	}
+	if err := r.service.requireRepository(repository); err != nil {
+		return ControlRunHandle{}, newControlCancelError("repository_mismatch", err.Error(), err)
+	}
+	request.Repository = repository
+	if err := validateControlCancelApproval(request.Approval, digest); err != nil {
+		return ControlRunHandle{}, err
+	}
+	select {
+	case <-ctx.Done():
+		return ControlRunHandle{}, newControlCancelError("request_cancelled", ctx.Err().Error(), ctx.Err())
+	default:
+	}
+
+	locator, err := resolveStateLocator(repository.CanonicalRoot, r.service.StateRoot)
+	if err != nil {
+		return ControlRunHandle{}, newControlCancelError("state_root_unavailable", err.Error(), err)
+	}
+	runDir, ownerPID, terminal, err := controlCancelTarget(locator, repository.CanonicalRoot, request.RunID)
+	if err != nil {
+		return ControlRunHandle{}, newControlCancelError("cancel_unavailable", err.Error(), err)
+	}
+	if terminal {
+		return controlRunHandle(r.service.ProducerVersion, request.RunID), nil
+	}
+
+	lock, err := acquireRunLock(locator.RepoRoot, false)
+	if err != nil {
+		return ControlRunHandle{}, newControlCancelError("approval_ledger_locked", err.Error(), err)
+	}
+	ledgerPath := filepath.Join(locator.RepoRoot, controlApprovalLedgerName)
+	ledger, err := readControlApprovalLedger(ledgerPath)
+	if err != nil {
+		_ = lock.Release()
+		return ControlRunHandle{}, newControlCancelError("approval_ledger_invalid", err.Error(), err)
+	}
+	if handle, cancelErr := controlCancelLedgerResult(ledger, request, digest); handle.RunID != "" || cancelErr != nil {
+		handle.ProducerVersion = normalizedProducerVersion(r.service.ProducerVersion)
+		_ = lock.Release()
+		return handle, cancelErr
+	}
+	if len(ledger.Cancels) >= controlMaxApprovalRecords {
+		_ = lock.Release()
+		return ControlRunHandle{}, newControlCancelError("approval_ledger_full", "cancel approval ledger reached its maximum retained records", nil)
+	}
+	now := time.Now().UTC()
+	ledger.Cancels = append(ledger.Cancels, controlCancelRecord{ActionDigest: digest, Nonce: request.Approval.Nonce, RunID: request.RunID, OwnerPID: ownerPID, CreatedAt: now, ExpiresAt: request.Approval.ExpiresAt})
+	if err := writeJSONDurable(ledgerPath, ledger, false, true); err != nil {
+		_ = lock.Release()
+		return ControlRunHandle{}, newControlCancelError("approval_ledger_write_failed", fmt.Sprintf("persist consumed cancel approval: %v", err), err)
+	}
+	if err := lock.Release(); err != nil {
+		return ControlRunHandle{}, newControlCancelError("approval_ledger_unlock_failed", err.Error(), err)
+	}
+
+	requestRecord := controlCancelRequest{SchemaVersion: ControlContractVersion, ActionDigest: digest, Nonce: request.Approval.Nonce, RunID: request.RunID, OwnerPID: ownerPID, RequestedAt: now}
+	if err := writeJSONDurable(filepath.Join(runDir, controlCancelRequestName), requestRecord, true, true); err != nil {
+		return ControlRunHandle{}, newControlCancelError("cancel_request_write_failed", fmt.Sprintf("persist cancellation request: %v", err), err)
+	}
+	r.mu.Lock()
+	jobCancel := r.jobs[request.RunID]
+	r.mu.Unlock()
+	if jobCancel != nil {
+		jobCancel()
+	} else if ownerPID <= 0 || !processAlive(ownerPID) {
+		if err := r.persistControlCancellation(repository.CanonicalRoot, runDir, request.RunID); err != nil {
+			return ControlRunHandle{}, newControlCancelError("cancel_status_write_failed", err.Error(), err)
+		}
+	}
+	return controlRunHandle(r.service.ProducerVersion, request.RunID), nil
+}
+
+func validateControlCancelApproval(approval ControlApproval, expectedDigest string) error {
+	if strings.TrimSpace(approval.Nonce) == "" {
+		return newControlCancelError("approval_missing", "approval nonce is required", nil)
+	}
+	if approval.ActionDigest != expectedDigest {
+		return newControlCancelError("approval_action_mismatch", "approval does not match the normalized cancel action", nil)
+	}
+	if strings.TrimSpace(approval.Nonce) != approval.Nonce || len(approval.Nonce) > controlMaxRoleBytes || containsControl(approval.Nonce) {
+		return newControlCancelError("approval_invalid", fmt.Sprintf("approval nonce must be a normalized identifier no longer than %d bytes", controlMaxRoleBytes), nil)
+	}
+	now := time.Now().UTC()
+	if approval.ApprovedAt.IsZero() || approval.ExpiresAt.IsZero() || approval.ApprovedAt.After(now) {
+		return newControlCancelError("approval_invalid", "approval timestamps are invalid", nil)
+	}
+	if approval.ExpiresAt.Sub(approval.ApprovedAt) > ControlApprovalMaxLifetime {
+		return newControlCancelError("approval_lifetime_exceeded", fmt.Sprintf("approval must expire within %s", ControlApprovalMaxLifetime), nil)
+	}
+	if !approval.ExpiresAt.After(now) {
+		return newControlCancelError("approval_expired", "approval has expired", nil)
+	}
+	return nil
+}
+
+func controlCancelLedgerResult(ledger controlApprovalLedger, request ControlCancelRequest, digest string) (ControlRunHandle, error) {
+	for _, record := range ledger.Starts {
+		if record.Nonce == request.Approval.Nonce {
+			return ControlRunHandle{}, newControlCancelError("approval_nonce_replayed", "approval nonce has already been consumed for another action", nil)
+		}
+	}
+	for _, record := range ledger.Resumes {
+		if record.Nonce == request.Approval.Nonce {
+			return ControlRunHandle{}, newControlCancelError("approval_nonce_replayed", "approval nonce has already been consumed for another action", nil)
+		}
+	}
+	for _, record := range ledger.Cancels {
+		if record.Nonce == request.Approval.Nonce {
+			if record.RunID == request.RunID && record.ActionDigest == digest {
+				return controlRunHandle("", record.RunID), nil
+			}
+			return ControlRunHandle{}, newControlCancelError("approval_nonce_replayed", "approval nonce has already been consumed for another cancel action", nil)
+		}
+		if record.RunID == request.RunID {
+			return ControlRunHandle{}, newControlCancelError("cancel_already_consumed", "a cancel approval has already been consumed for this run", nil)
+		}
+	}
+	return ControlRunHandle{}, nil
+}
+
+func controlCancelTarget(locator StateLocator, repository, runID string) (string, int, bool, error) {
+	if err := validateRunID(runID); err != nil {
+		return "", 0, false, err
+	}
+	runDir, err := locator.RunDir(runID)
+	if err != nil {
+		return "", 0, false, err
+	}
+	info, err := os.Stat(runDir)
+	if err != nil || !info.IsDir() {
+		return "", 0, false, fmt.Errorf("run %q not found", runID)
+	}
+	if final, finalErr := readFinal(filepath.Join(runDir, "final.json")); finalErr == nil && final.RunID != "" {
+		if final.RunID != runID {
+			return "", 0, false, fmt.Errorf("persisted final result does not match the requested run")
+		}
+		if err := controlRunWorkdirMatches(repository, final.Workdir, "final result"); err != nil {
+			return "", 0, false, err
+		}
+		if final.Status == RunStatusCancelled {
+			return runDir, 0, true, nil
+		}
+		return "", 0, false, fmt.Errorf("run %q is already terminal", runID)
+	} else if finalErr != nil && !os.IsNotExist(finalErr) {
+		return "", 0, false, fmt.Errorf("read persisted final result: %v", finalErr)
+	}
+	if state, stateErr := readRunState(runDir); stateErr == nil {
+		if state.RunID != "" && state.RunID != runID {
+			return "", 0, false, fmt.Errorf("persisted state run_id does not match the requested run")
+		}
+		if state.Workdir != "" {
+			if err := controlRunWorkdirMatches(repository, state.Workdir, "state"); err != nil {
+				return "", 0, false, err
+			}
+		}
+		if state.Status != "" && state.Status != string(RunStatusRunning) {
+			return "", 0, false, fmt.Errorf("run %q is already terminal", runID)
+		}
+	} else if !os.IsNotExist(stateErr) {
+		return "", 0, false, fmt.Errorf("read run state: %v", stateErr)
+	}
+	ownerPID := 0
+	if data, lockErr := os.ReadFile(filepath.Join(runDir, "run.lock")); lockErr == nil {
+		var record runLockRecord
+		if err := json.Unmarshal(data, &record); err != nil || record.PID <= 0 {
+			return "", 0, false, fmt.Errorf("run lock does not contain a valid owner")
+		}
+		ownerPID = record.PID
+	} else if !os.IsNotExist(lockErr) {
+		return "", 0, false, fmt.Errorf("read run owner: %v", lockErr)
+	}
+	return runDir, ownerPID, false, nil
+}
+
+func (r *ControlRuntime) persistControlCancellation(repository, runDir, runID string) error {
+	if final, err := readFinal(filepath.Join(runDir, "final.json")); err == nil && final.Status == RunStatusCancelled {
+		return nil
+	}
+	state, _ := readRunState(runDir)
+	meta, _ := readMeta(filepath.Join(runDir, "meta.json"))
+	workdir := repository
+	baseline := state.BaselineSHA
+	if meta.Workdir != "" {
+		workdir = meta.Workdir
+	}
+	if baseline == "" {
+		baseline = meta.Baseline
+	}
+	final := FinalRun{SchemaVersion: ArtifactSchemaVersion, RunID: runID, RunDir: runDir, Workdir: workdir, Baseline: baseline, Mode: state.Mode, Verdict: "cancelled", Summary: "run cancelled by MCP control request", Status: RunStatusCancelled, BlockingReason: string(ReasonCancelled), ExitCode: ExitPreflightFailed, StartedAt: meta.StartedAt, FinishedAt: time.Now().UTC()}
+	if err := writeRunState(runDir, RunState{RunID: runID, Mode: state.Mode, Status: string(RunStatusCancelled), Phase: state.Phase, Workdir: workdir, BaselineSHA: baseline, BlockingReason: string(ReasonCancelled), ExitCode: final.ExitCode}); err != nil {
+		return fmt.Errorf("persist cancelled run state: %w", err)
+	}
+	if err := NewApp(r.config).persistFinal(workdir, final); err != nil {
+		return fmt.Errorf("persist cancelled final result: %w", err)
+	}
+	_ = finalizeActiveRun(workdir, runID, string(RunStatusCancelled))
+	return nil
+}
+
+// watchControlCancellation is intentionally file-backed. A second local MCP
+// process can publish the request, while the process that owns the run keeps
+// the actual context and child-process cancellation authority.
+func (r *ControlRuntime) watchControlCancellation() {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		locator, err := resolveStateLocator(r.service.RepositoryRoot, r.service.StateRoot)
+		if err != nil {
+			continue
+		}
+		r.mu.Lock()
+		jobs := make(map[string]context.CancelFunc, len(r.jobs))
+		for runID, cancel := range r.jobs {
+			jobs[runID] = cancel
+		}
+		r.mu.Unlock()
+		for runID, cancel := range jobs {
+			data, err := os.ReadFile(filepath.Join(locator.RunsRoot, runID, controlCancelRequestName))
+			if err != nil {
+				continue
+			}
+			var request controlCancelRequest
+			if json.Unmarshal(data, &request) == nil && request.RunID == runID && request.ActionDigest != "" && request.Nonce != "" && (request.OwnerPID == 0 || request.OwnerPID == os.Getpid()) {
+				cancel()
+			}
+		}
+	}
+}
+
 func (r *ControlRuntime) runStart(ctx context.Context, opts RunOptions, runID string) {
 	defer func() {
 		r.mu.Lock()
@@ -300,7 +603,7 @@ func validateControlApproval(approval ControlApproval, expectedDigest string) er
 }
 
 func readControlApprovalLedger(path string) (controlApprovalLedger, error) {
-	ledger := controlApprovalLedger{SchemaVersion: ControlContractVersion, Starts: []controlStartRecord{}}
+	ledger := controlApprovalLedger{SchemaVersion: ControlContractVersion, Starts: []controlStartRecord{}, Resumes: []controlResumeRecord{}, Cancels: []controlCancelRecord{}}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return ledger, nil

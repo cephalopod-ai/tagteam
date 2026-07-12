@@ -140,15 +140,21 @@ func TestMCPStdioServerAdvertisesStartOnlyWithLifecycleRuntime(t *testing.T) {
 	)
 	tools := responses[1]["result"].(map[string]any)["tools"].([]any)
 	foundResume := false
+	foundCancel := false
 	for _, tool := range tools {
 		switch tool.(map[string]any)["name"] {
 		case "tagteam_start":
 		case "tagteam_resume":
 			foundResume = true
+		case "tagteam_cancel":
+			foundCancel = true
 		}
 	}
 	if !foundResume {
 		t.Fatalf("runtime tool list did not include resume: %#v", tools)
+	}
+	if !foundCancel {
+		t.Fatalf("runtime tool list did not include cancel: %#v", tools)
 	}
 	for _, tool := range tools {
 		if tool.(map[string]any)["name"] == "tagteam_start" {

@@ -60,9 +60,6 @@ func secretValuesFromEnv(overlay map[string]string) []string {
 		}
 	}
 	for key, value := range overlay {
-		if _, exists := os.LookupEnv(key); exists {
-			continue
-		}
 		add(key, value)
 	}
 	sort.Slice(values, func(i, j int) bool {

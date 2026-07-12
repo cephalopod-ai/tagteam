@@ -36,6 +36,19 @@ func TestRedactSecretsWithOverlay_ReplacesSensitiveOverlayValues(t *testing.T) {
 	}
 }
 
+func TestRedactSecretsWithOverlayIncludesEffectiveOverlayWhenShellKeyExists(t *testing.T) {
+	t.Setenv("PURDUE_API_KEY", "shell-secret-token")
+	got := redactSecretsWithOverlay("shell-secret-token overlay-secret-token", map[string]string{
+		"PURDUE_API_KEY": "overlay-secret-token",
+	})
+	if strings.Contains(got, "shell-secret-token") || strings.Contains(got, "overlay-secret-token") {
+		t.Fatalf("redacted text still contains effective secret: %q", got)
+	}
+	if count := strings.Count(got, redactedSecret); count != 2 {
+		t.Fatalf("redacted count = %d, want 2: %q", count, got)
+	}
+}
+
 func TestRunAdapterRedactsPersistedPromptArgvAndRawArtifacts(t *testing.T) {
 	app := NewApp(DefaultConfig())
 	runDir := t.TempDir()
