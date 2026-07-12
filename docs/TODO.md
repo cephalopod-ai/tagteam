@@ -24,8 +24,10 @@
 
 ## Deferred: MCP control plane and optional Run Steward
 
-**Status:** Deferred architecture plan. This is not committed to the current
-release and must not displace the open recovery work above.
+**Status:** Producer contract implementation started. The versioned launch and
+action types plus bounded read projections are implemented in-process. MCP
+transport and all mutating lifecycle operations remain gated and must not
+displace the open recovery work above.
 
 The goal is to let any MCP-capable host launch and monitor Tagteam without
 turning model output into shell commands. A deterministic controller remains
@@ -36,7 +38,7 @@ own recovery action.
 
 ### Immediate implementation horizon
 
-- [ ] Define a versioned machine contract for launch specifications, run
+- [x] Define a versioned machine contract for launch specifications, run
   handles, status snapshots, plans, findings, diagnostics, cancellation, and
   resumability. Reuse the existing JSON artifacts and CLI reason/exit codes
   rather than creating a second state model.
@@ -48,6 +50,9 @@ own recovery action.
   shell, arbitrary flag passthrough, unrestricted artifact reader, or
   model-controlled working directory. Canonicalize the repository root and
   allowed paths before execution.
+- [ ] Add bounded scout evidence for symlink topology where it helps explain
+  scope, while keeping canonical real-path resolution and enforcement in the
+  host controller.
 - [ ] Bind start, resume, and cancel approvals to the normalized action,
   repository identity, selected roles, scope, run identity, and an expiry or
   nonce. A changed action requires a new approval.

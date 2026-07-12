@@ -27,6 +27,7 @@ orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`
 | Resilience | `state_machine.go`, `run_lock.go`, `invocation_lock.go`, `recovery.go`, `resume.go`, `resume_execution.go`, `resume_phases.go`, `timeout_calibration.go`, `invocation_stream.go` | Phase journaling, locks/cancellation, cross-process claude invocation serialization, partial-diff recovery, same-run phase continuation, calibrated deadlines, and durable subprocess streams. |
 | Quality / transfer | `quality_gates.go`, `findings.go`, `test_hardening.go`, `transfer.go`, `integrity.go` | Scope/churn/data-loss/findings/regression gates, isolated tests, structural integrity, and explicit patch transfer. |
 | Snapshot / live status | `internal/tagteam/snapshot.go` | Builds `RunSnapshot` from `active.json`, `state.json`, `final.json`, and `plan.json`. |
+| Control-plane contract | `internal/tagteam/control_contract.go` | Draft versioned launch/action types plus bounded, read-only capabilities, status, plan, findings, and diagnostics projections. No MCP transport or mutating controller is enabled. |
 | Run state / reasons | `internal/tagteam/run_state.go` | Failure classification, exit→reason mapping, role status/loss records, budget state, redacted persistence helpers. |
 | Orchestration decision | `internal/tagteam/orchestration.go` | Host-owned single advisory adjustment (relay↔supervisor) before implementation. |
 | Scout retrieval | `internal/tagteam/retrieval.go` | Bounded, local-only pre-scout retrieval evidence for relay `recon`. |
@@ -112,6 +113,8 @@ as the TUI. See the README
   `run_state.go`.
 - New live status consumer: prefer reading `RunSnapshot` instead of reverse-
   engineering `final.json` / `state.json` directly.
+- New control transport: adapt the versioned control-plane operations; do not
+  expose shell construction, raw artifact reads, or a second run state model.
 
 ## Code-intelligence contracts
 

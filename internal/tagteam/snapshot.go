@@ -159,6 +159,12 @@ func BuildRunSnapshot(workdir, runDir string) (RunSnapshot, error) {
 		snapshot.OpenMajorCount = summarizeFindings(filepath.Join(runDir, findingsLedgerFilename), ledger).OpenBlockerOrMajor
 	}
 
+	if snapshot.LatestDiffPath != "" && !snapshotArtifactPathAllowed(runDir, snapshot.LatestDiffPath) {
+		snapshot.LatestDiffPath = ""
+	}
+	if snapshot.LatestReviewPath != "" && !snapshotArtifactPathAllowed(runDir, snapshot.LatestReviewPath) {
+		snapshot.LatestReviewPath = ""
+	}
 	if len(snapshot.ChangedFiles) == 0 && snapshot.LatestDiffPath != "" {
 		snapshot.ChangedFiles = readChangedFilesFromDiffPath(snapshot.LatestDiffPath)
 	}
@@ -176,6 +182,18 @@ func BuildRunSnapshot(workdir, runDir string) (RunSnapshot, error) {
 	}
 
 	return snapshot, nil
+}
+
+func snapshotArtifactPathAllowed(runDir, path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	root, err := canonicalPath(runDir, true)
+	if err != nil {
+		return false
+	}
+	artifact, err := canonicalPath(path, false)
+	return err == nil && pathWithin(root, artifact)
 }
 
 func readRunState(runDir string) (RunState, error) {
