@@ -29,8 +29,9 @@ type ControlRuntime struct {
 }
 
 type controlApprovalLedger struct {
-	SchemaVersion int                  `json:"schema_version"`
-	Starts        []controlStartRecord `json:"starts"`
+	SchemaVersion int                   `json:"schema_version"`
+	Starts        []controlStartRecord  `json:"starts"`
+	Resumes       []controlResumeRecord `json:"resumes,omitempty"`
 }
 
 type controlStartRecord struct {
@@ -48,7 +49,7 @@ func NewControlRuntime(service ControlService, cfg Config, sources []string) *Co
 
 func (r *ControlRuntime) Capabilities() ControlCapabilitySet {
 	capabilities := r.service.Capabilities()
-	capabilities.Capabilities = append(capabilities.Capabilities, "start")
+	capabilities.Capabilities = append(capabilities.Capabilities, "start", "resume")
 	return capabilities
 }
 

@@ -139,6 +139,17 @@ func TestMCPStdioServerAdvertisesStartOnlyWithLifecycleRuntime(t *testing.T) {
 		map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": map[string]any{}},
 	)
 	tools := responses[1]["result"].(map[string]any)["tools"].([]any)
+	foundResume := false
+	for _, tool := range tools {
+		switch tool.(map[string]any)["name"] {
+		case "tagteam_start":
+		case "tagteam_resume":
+			foundResume = true
+		}
+	}
+	if !foundResume {
+		t.Fatalf("runtime tool list did not include resume: %#v", tools)
+	}
 	for _, tool := range tools {
 		if tool.(map[string]any)["name"] == "tagteam_start" {
 			return
@@ -174,6 +185,38 @@ func TestMCPStdioServerStartsApprovedRunWithDurableHandle(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatalf("MCP-started run %q did not persist its terminal preflight failure", runID)
+}
+
+func TestMCPStdioServerResumesApprovedRunWithDurableHandle(t *testing.T) {
+	repo, baseline := createResumeFixtureRepo(t)
+	stateRoot := t.TempDir()
+	runID := "mcp-resume-runtime"
+	runDir, err := createRunDir(repo, stateRoot, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeResumeFixture(t, runDir, runID, repo, baseline, RunStatusRunning)
+	repository, err := resolveControlRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ControlResumeRequest{SchemaVersion: ControlContractVersion, Repository: repository, RunID: runID}
+	request.Approval = validResumeApproval(t, request, "mcp-resume-once")
+	service := ControlService{RepositoryRoot: repo, StateRoot: stateRoot, ProducerVersion: "test"}
+	runtime := NewControlRuntime(service, DefaultConfig(), nil)
+	responses := runMCPStdioWithRuntime(t, service, runtime,
+		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}},
+		map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tagteam_resume", "arguments": request}},
+	)
+	result := responses[1]["result"].(map[string]any)
+	if result["isError"] != false {
+		t.Fatalf("resume result = %#v", result)
+	}
+	handle := result["structuredContent"].(map[string]any)
+	if handle["run_id"] != runID {
+		t.Fatalf("resume handle = %#v", handle)
+	}
+	waitForControlResumeJob(t, runtime, runID)
 }
 
 func runMCPStdio(t *testing.T, service ControlService, messages ...map[string]any) []map[string]any {

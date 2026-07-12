@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -65,7 +66,7 @@ func (s *MCPStdioServer) Serve(ctx context.Context) error {
 			initialized = true
 			instructions := "Use Tagteam control tools for bounded status, diagnostics, and resume assessment. Start, resume, and cancel are unavailable in this server configuration."
 			if s.runtime != nil {
-				instructions = "Use Tagteam control tools for bounded status, diagnostics, and resume assessment. Call prepare_start, collect explicit user approval for its digest, then call start. Resume and cancel are not available in this server revision."
+				instructions = "Use Tagteam control tools for bounded status, diagnostics, and resume assessment. Call prepare_start or prepare_resume, collect explicit user approval for its digest, then call start or resume. Cancel is not available in this server revision."
 			}
 			if err := s.writeResult(request.ID, map[string]any{
 				"protocolVersion": MCPProtocolVersion,
@@ -235,6 +236,19 @@ func (s *MCPStdioServer) callTool(ctx context.Context, raw json.RawMessage) (map
 			return nil, err
 		}
 		return mcpToolSuccess(result)
+	case "tagteam_resume":
+		if s.runtime == nil {
+			return nil, fmt.Errorf("Tagteam resume is unavailable in this server configuration")
+		}
+		var request ControlResumeRequest
+		if err := json.Unmarshal(call.Arguments, &request); err != nil {
+			return nil, fmt.Errorf("invalid resume request")
+		}
+		result, err := s.runtime.Resume(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+		return mcpToolSuccess(result)
 	default:
 		return nil, fmt.Errorf("unknown Tagteam tool %q", call.Name)
 	}
@@ -303,6 +317,16 @@ func mcpToolSuccess(value any) (map[string]any, error) {
 }
 
 func mcpToolFailure(err error) map[string]any {
+	var resumeErr *ControlResumeError
+	if errors.As(err, &resumeErr) {
+		structured := map[string]any{"code": resumeErr.ReasonCode, "reason": resumeErr.Reason, "recoverable": resumeErr.Recoverable}
+		payload, _ := json.Marshal(structured)
+		return map[string]any{
+			"content":           []map[string]string{{"type": "text", "text": string(payload)}},
+			"structuredContent": structured,
+			"isError":           true,
+		}
+	}
 	payload, _ := json.Marshal(map[string]string{"error": err.Error()})
 	return map[string]any{
 		"content":           []map[string]string{{"type": "text", "text": string(payload)}},
@@ -325,6 +349,7 @@ func mcpControlTools(includeStart bool) []map[string]any {
 	}
 	if includeStart {
 		tools = append(tools, mcpTool("tagteam_start", "Start one approved, idempotent Tagteam run and return its durable run handle.", mcpStartSchema(), map[string]bool{"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false}))
+		tools = append(tools, mcpTool("tagteam_resume", "Resume one approved, idempotent Tagteam run after deterministic precondition checks.", mcpResumeSchema(), map[string]bool{"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false}))
 	}
 	return tools
 }
@@ -357,6 +382,30 @@ func mcpStartSchema() map[string]any {
 			"schema_version":  map[string]any{"type": "integer", "const": ControlContractVersion},
 			"launch":          mcpLaunchSchema(),
 			"idempotency_key": map[string]any{"type": "string", "minLength": 1, "maxLength": controlMaxRoleBytes},
+			"approval": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"action_digest", "approved_at", "expires_at", "nonce"},
+				"properties": map[string]any{
+					"action_digest": map[string]any{"type": "string", "minLength": 64, "maxLength": 64},
+					"approved_at":   map[string]any{"type": "string", "format": "date-time"},
+					"expires_at":    map[string]any{"type": "string", "format": "date-time"},
+					"nonce":         map[string]any{"type": "string", "minLength": 1, "maxLength": controlMaxRoleBytes},
+				},
+			},
+		},
+	}
+}
+
+func mcpResumeSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"schema_version", "repository", "run_id", "approval"},
+		"properties": map[string]any{
+			"schema_version": map[string]any{"type": "integer", "const": ControlContractVersion},
+			"repository":     map[string]any{"type": "object"},
+			"run_id":         map[string]any{"type": "string", "minLength": 1},
 			"approval": map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,

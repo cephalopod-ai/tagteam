@@ -434,7 +434,7 @@ func (s ControlService) Diagnostics() (ControlDiagnostics, error) {
 	if err != nil {
 		return ControlDiagnostics{}, fmt.Errorf("resolve state root: %w", err)
 	}
-	return ControlDiagnostics{SchemaVersion: ControlContractVersion, Status: "ready", Repository: repository, StateRoot: locator.StateRoot, Details: []string{"repository identity verified", "state root resolved", "approved start requires an enabled runtime", "resume and cancel remain unavailable"}, Completeness: ControlComplete}, nil
+	return ControlDiagnostics{SchemaVersion: ControlContractVersion, Status: "ready", Repository: repository, StateRoot: locator.StateRoot, Details: []string{"repository identity verified", "state root resolved", "approved start and resume require an enabled runtime", "cancel remains unavailable"}, Completeness: ControlComplete}, nil
 }
 
 func (s ControlService) runDir(runID string) (string, error) {
