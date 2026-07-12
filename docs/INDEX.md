@@ -21,6 +21,10 @@ Canonical entry point for `tagteam` documentation.
   known gaps.
 - [v0.1.0 to current](V0.1.0_TO_CURRENT.md) — detailed release-to-development
   comparison, default changes, compatibility impact, and upgrade guidance.
+- [TODO](TODO.md) — active engineering follow-ups, including quarantined relay
+  recovery work.
+- [Error logs](logs/errors/) — source-grounded records for run failures and
+  their repair status.
 
 ## Policies
 

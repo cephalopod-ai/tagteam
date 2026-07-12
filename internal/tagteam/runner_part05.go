@@ -574,6 +574,11 @@ func maxOutputBytes(req Request) int64 {
 	if req.MaxOutputBytes > 0 {
 		return req.MaxOutputBytes
 	}
+	if req.Context != nil {
+		if value, ok := req.Context.Value(maxOutputBytesContextKey{}).(int64); ok && value > 0 {
+			return value
+		}
+	}
 	return 2 * 1024 * 1024
 }
 

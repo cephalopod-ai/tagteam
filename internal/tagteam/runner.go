@@ -17,6 +17,8 @@ type App struct {
 	Config Config
 }
 
+type maxOutputBytesContextKey struct{}
+
 const maxReviewInputBytes = 10 * 1024 * 1024
 const maxInlineReviewPromptBytes = 128 * 1024
 const maxRepoInstructionBytes = 64 * 1024
@@ -503,6 +505,7 @@ func persistExecutionPlan(runDir string, plan *ExecutionPlan) error {
 
 func (a *App) Run(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	normalizeDefaultMode(&opts)
+	ctx = context.WithValue(ctx, maxOutputBytesContextKey{}, opts.MaxOutputBytes)
 	if strings.TrimSpace(opts.Prompt) == "" {
 		return FinalRun{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("prompt is required")}
 	}
