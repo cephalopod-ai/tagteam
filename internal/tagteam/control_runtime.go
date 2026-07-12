@@ -25,8 +25,10 @@ type ControlRuntime struct {
 	config  Config
 	sources []string
 
-	mu   sync.Mutex
-	jobs map[string]context.CancelFunc
+	mu            sync.Mutex
+	jobs          map[string]context.CancelFunc
+	watcherCancel context.CancelFunc
+	watcherDone   chan struct{}
 }
 
 type controlApprovalLedger struct {
@@ -101,9 +103,37 @@ type controlStartRecord struct {
 }
 
 func NewControlRuntime(service ControlService, cfg Config, sources []string) *ControlRuntime {
-	runtime := &ControlRuntime{service: service, config: cfg, sources: append([]string(nil), sources...), jobs: map[string]context.CancelFunc{}}
-	go runtime.watchControlCancellation()
-	return runtime
+	return &ControlRuntime{service: service, config: cfg, sources: append([]string(nil), sources...), jobs: map[string]context.CancelFunc{}}
+}
+
+func (r *ControlRuntime) registerJob(runID string, cancel context.CancelFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.jobs[runID] = cancel
+	if r.watcherCancel != nil {
+		return
+	}
+	watcherContext, watcherCancel := context.WithCancel(context.Background())
+	r.watcherCancel = watcherCancel
+	r.watcherDone = make(chan struct{})
+	go r.watchControlCancellation(watcherContext, r.watcherDone)
+}
+
+func (r *ControlRuntime) unregisterJob(runID string) {
+	r.mu.Lock()
+	delete(r.jobs, runID)
+	if len(r.jobs) != 0 || r.watcherCancel == nil {
+		r.mu.Unlock()
+		return
+	}
+	watcherCancel := r.watcherCancel
+	watcherDone := r.watcherDone
+	r.watcherCancel = nil
+	r.watcherDone = nil
+	r.mu.Unlock()
+
+	watcherCancel()
+	<-watcherDone
 }
 
 func (r *ControlRuntime) Capabilities() ControlCapabilitySet {
@@ -233,17 +263,14 @@ func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest)
 
 	opts.RunID = runID
 	runContext, cancel := context.WithCancel(ctx)
-	r.mu.Lock()
-	r.jobs[runID] = cancel
-	r.mu.Unlock()
+	r.registerJob(runID, cancel)
 	go r.runStart(runContext, opts, runID)
 	return ControlRunHandle{SchemaVersion: ControlContractVersion, RunID: runID, ProducerVersion: normalizedProducerVersion(r.service.ProducerVersion)}, nil
 }
 
 // Cancel records an approved cancellation request next to the run and asks a
-// locally-owned job to stop when one is present. The request is durable, so a
-// fresh ControlRuntime can cancel a run started by an earlier runtime without
-// relying on an in-memory job map or signalling the MCP host process.
+// locally-owned job to stop. A live run owned by another runtime is rejected;
+// a fresh ControlRuntime can only cancel a run whose recorded owner is stale.
 func (r *ControlRuntime) Cancel(ctx context.Context, request ControlCancelRequest) (ControlRunHandle, error) {
 	if request.SchemaVersion != ControlContractVersion {
 		return ControlRunHandle{}, newControlCancelError("invalid_request", fmt.Sprintf("unsupported control schema_version %d (want %d)", request.SchemaVersion, ControlContractVersion), nil)
@@ -280,6 +307,10 @@ func (r *ControlRuntime) Cancel(ctx context.Context, request ControlCancelReques
 	if terminal {
 		return controlRunHandle(r.service.ProducerVersion, request.RunID), nil
 	}
+	jobCancel := r.localJobCancel(request.RunID)
+	if jobCancel == nil && ownerPID > 0 && processAlive(ownerPID) {
+		return ControlRunHandle{}, newControlCancelError("run_not_owned", fmt.Sprintf("live run %q is not owned by this MCP runtime", request.RunID), nil)
+	}
 
 	lock, err := acquireRunLock(locator.RepoRoot, false)
 	if err != nil {
@@ -314,9 +345,6 @@ func (r *ControlRuntime) Cancel(ctx context.Context, request ControlCancelReques
 	if err := writeJSONDurable(filepath.Join(runDir, controlCancelRequestName), requestRecord, true, true); err != nil {
 		return ControlRunHandle{}, newControlCancelError("cancel_request_write_failed", fmt.Sprintf("persist cancellation request: %v", err), err)
 	}
-	r.mu.Lock()
-	jobCancel := r.jobs[request.RunID]
-	r.mu.Unlock()
 	if jobCancel != nil {
 		jobCancel()
 	} else if ownerPID <= 0 || !processAlive(ownerPID) {
@@ -325,6 +353,12 @@ func (r *ControlRuntime) Cancel(ctx context.Context, request ControlCancelReques
 		}
 	}
 	return controlRunHandle(r.service.ProducerVersion, request.RunID), nil
+}
+
+func (r *ControlRuntime) localJobCancel(runID string) context.CancelFunc {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.jobs[runID]
 }
 
 func validateControlCancelApproval(approval ControlApproval, expectedDigest string) error {
@@ -454,13 +488,19 @@ func (r *ControlRuntime) persistControlCancellation(repository, runDir, runID st
 	return nil
 }
 
-// watchControlCancellation is intentionally file-backed. A second local MCP
-// process can publish the request, while the process that owns the run keeps
-// the actual context and child-process cancellation authority.
-func (r *ControlRuntime) watchControlCancellation() {
+// watchControlCancellation is intentionally file-backed. The runtime that
+// owns a job keeps the actual context and child-process cancellation authority,
+// while the request remains durable for diagnostics and stale-owner recovery.
+func (r *ControlRuntime) watchControlCancellation(ctx context.Context, done chan struct{}) {
+	defer close(done)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 		locator, err := resolveStateLocator(r.service.RepositoryRoot, r.service.StateRoot)
 		if err != nil {
 			continue
@@ -485,11 +525,7 @@ func (r *ControlRuntime) watchControlCancellation() {
 }
 
 func (r *ControlRuntime) runStart(ctx context.Context, opts RunOptions, runID string) {
-	defer func() {
-		r.mu.Lock()
-		delete(r.jobs, runID)
-		r.mu.Unlock()
-	}()
+	defer r.unregisterJob(runID)
 	final, err := NewApp(r.config).Run(ctx, opts)
 	if err == nil || final.RunID != "" {
 		return

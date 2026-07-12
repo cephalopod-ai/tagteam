@@ -127,9 +127,7 @@ func (r *ControlRuntime) Resume(ctx context.Context, request ControlResumeReques
 	}
 
 	runContext, cancel := context.WithCancel(ctx)
-	r.mu.Lock()
-	r.jobs[request.RunID] = cancel
-	r.mu.Unlock()
+	r.registerJob(request.RunID, cancel)
 	go r.runResume(runContext, opts, request.RunID)
 	return controlRunHandle(r.service.ProducerVersion, request.RunID), nil
 }
@@ -196,10 +194,6 @@ func (r *ControlRuntime) resumeOptions(repository string) (RunOptions, error) {
 }
 
 func (r *ControlRuntime) runResume(ctx context.Context, opts RunOptions, runID string) {
-	defer func() {
-		r.mu.Lock()
-		delete(r.jobs, runID)
-		r.mu.Unlock()
-	}()
+	defer r.unregisterJob(runID)
 	_, _ = NewApp(r.config).Resume(ctx, opts, runID)
 }

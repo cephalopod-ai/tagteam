@@ -24,9 +24,9 @@
 
 ## Deferred: MCP control plane and optional Run Steward
 
-**Status:** Producer contract, local MCP transport, approved idempotent start
-and resume, and non-mutating resume assessment are implemented. Cancel remains
-gated and must not displace the open recovery work above.
+**Status:** Producer contract, local MCP transport, approved idempotent start,
+resume, and cancel, and non-mutating resume assessment are implemented. The
+remaining lifecycle work is bounded ownership and transport hardening.
 
 The goal is to let any MCP-capable host launch and monitor Tagteam without
 turning model output into shell commands. A deterministic controller remains
@@ -44,10 +44,10 @@ own recovery action.
 - [x] Add the local MCP resume operation. It verifies the approval-bound
   action and worktree, reuses `PrepareResume`, persists single-use nonce
   consumption, and invokes the host-owned `App.Resume` path.
-- [ ] Add the local MCP cancel operation with deterministic host-owned process
-  ownership after server restart. The current surface has typed capabilities,
-  launch validation, start/resume preparation, status, plan, findings, and
-  diagnostics.
+- [x] Add the local MCP cancel operation with deterministic host-owned process
+  ownership after server restart. Live runs must be owned by the cancelling
+  MCP runtime; stale owners use the durable cancellation request and persisted
+  cancelled status.
   Start returns a durable handle promptly; status and findings are bounded,
   paginated where necessary, and explicit about truncation.
 - [ ] Keep command construction deterministic: no generic command tool, raw

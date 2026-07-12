@@ -1,8 +1,8 @@
 # Control Plane Contract
 
 **Status:** draft producer contract, local MCP stdio transport, approved
-idempotent start and resume, and non-mutating resume assessment are
-implemented. Cancel remains disabled.
+idempotent start, resume, and cancel, and non-mutating resume assessment are
+implemented.
 
 Tagteam owns a versioned control-plane contract in
 `internal/tagteam/control_contract.go`. It is the anti-corruption boundary for
@@ -39,18 +39,23 @@ state model rather than introducing a second run state machine.
 - `Start` reserves a durable run ID, consumes a matching short-lived approval
   nonce, launches Tagteam through its normal configuration and runner, and
   persists a terminal artifact if preflight fails before the runner can do so.
+- `Cancel` consumes a matching short-lived approval nonce and cancels a live run
+  only when this MCP runtime owns its cancellation context. A live run owned by
+  another runtime returns the typed `run_not_owned` error instead of reporting
+  success; a stale process owner is handled through the durable cancellation
+  request and persisted cancelled status.
 
-The base capability list intentionally excludes `resume` and `cancel`; the
-enabled lifecycle runtime adds `start` and `resume` only when those handlers
-are available. Cancel remains gated. No handler returns canned success or
-delegates to arbitrary shell input.
+The base capability list intentionally excludes lifecycle mutations; the
+enabled lifecycle runtime adds `start`, `resume`, and `cancel` only when those
+handlers are available. No handler returns canned success or delegates to
+arbitrary shell input.
 
 `tagteam mcp` implements MCP protocol revision `2025-11-25` over stdio. It
 advertises exactly the implemented tools and returns both structured JSON and
 bounded text content. `tagteam_prepare_start` and `tagteam_prepare_resume` are
-read-only; `tagteam_start` and `tagteam_resume` are marked destructive and
-idempotent for MCP clients. An unverified binary keeps the server read-only
-unless the operator explicitly passes `--allow-dev-build`.
+read-only; `tagteam_start`, `tagteam_resume`, and `tagteam_cancel` are marked
+destructive and idempotent for MCP clients. An unverified binary keeps the
+server read-only unless the operator explicitly passes `--allow-dev-build`.
 
 ## Authority and validation
 
@@ -99,8 +104,9 @@ the resume runtime deliberately refuse live or stale run locks and active-run
 pointers rather than altering ownership. The approval-ledger lock fails closed
 if a stale owner remains after an abnormal process exit; this is surfaced as a
 recoverable lifecycle error rather than launching without replay protection.
-Cancel still requires deterministic host-owned process ownership after server
-restart and remains deferred.
+The cancellation watcher is scoped to active jobs and stops before the owning
+runtime's terminal run returns, so a completed run does not leave a background
+watcher behind.
 Unknown contract versions and malformed persisted artifacts must fail with
 typed, recoverable errors rather than inferred success.
 

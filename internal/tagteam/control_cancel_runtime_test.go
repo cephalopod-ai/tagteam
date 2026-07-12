@@ -2,6 +2,7 @@ package tagteam
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,7 +66,7 @@ func TestControlRuntimeCancelPersistsStatusAfterOwnerRestart(t *testing.T) {
 	}
 }
 
-func TestControlRuntimeCancelFromFreshRuntimeSignalsOriginalJob(t *testing.T) {
+func TestControlRuntimeCancelFromFreshRuntimeRejectsLiveRunItDoesNotOwn(t *testing.T) {
 	repo, baseline := createResumeFixtureRepo(t)
 	stateRoot := t.TempDir()
 	runID := "control-cancel-fresh-runtime"
@@ -88,21 +89,52 @@ func TestControlRuntimeCancelFromFreshRuntimeSignalsOriginalJob(t *testing.T) {
 	firstRuntime := NewControlRuntime(service, DefaultConfig(), nil)
 	jobContext, cancelJob := context.WithCancel(context.Background())
 	defer cancelJob()
-	firstRuntime.mu.Lock()
-	firstRuntime.jobs[runID] = func() { cancelJob() }
-	firstRuntime.mu.Unlock()
+	firstRuntime.registerJob(runID, cancelJob)
+	defer firstRuntime.unregisterJob(runID)
 	request := ControlCancelRequest{SchemaVersion: ControlContractVersion, Repository: repository, RunID: runID}
 	request.Approval = validCancelApproval(t, request, "cancel-from-new-runtime")
 
 	secondRuntime := NewControlRuntime(service, DefaultConfig(), nil)
-	if _, err := secondRuntime.Cancel(jobContext, request); err != nil {
-		t.Fatal(err)
+	if _, err := secondRuntime.Cancel(context.Background(), request); err == nil {
+		t.Fatal("unowned live run cancellation reported success")
+	} else {
+		assertControlCancelError(t, err, "run_not_owned")
+	}
+	select {
+	case <-jobContext.Done():
+		t.Fatal("unowned live run cancellation signalled the original job")
+	case <-time.After(150 * time.Millisecond):
+	}
+	if _, err := firstRuntime.Cancel(context.Background(), request); err != nil {
+		t.Fatalf("owned live run cancellation failed: %v", err)
 	}
 	select {
 	case <-jobContext.Done():
 	case <-time.After(2 * time.Second):
-		t.Fatal("original runtime did not observe the durable cancellation request")
+		t.Fatal("owned live run cancellation did not signal the job")
 	}
+}
+
+func TestControlRuntimeCancellationWatcherStopsAfterTerminalRun(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	runtime := NewControlRuntime(ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}, DefaultConfig(), nil)
+	request := controlStartFixture(t, repo)
+	handle, err := runtime.Start(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForControlRunFailure(t, runtime, request.IdempotencyKey)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		runtime.mu.Lock()
+		watcherActive := runtime.watcherCancel != nil || runtime.watcherDone != nil
+		runtime.mu.Unlock()
+		if !watcherActive {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("cancellation watcher remained active after terminal run %q", handle.RunID)
 }
 
 func validCancelApproval(t *testing.T, request ControlCancelRequest, nonce string) ControlApproval {
@@ -113,4 +145,15 @@ func validCancelApproval(t *testing.T, request ControlCancelRequest, nonce strin
 	}
 	now := time.Now().UTC()
 	return ControlApproval{ActionDigest: digest, ApprovedAt: now.Add(-time.Second), ExpiresAt: now.Add(5 * time.Minute), Nonce: nonce}
+}
+
+func assertControlCancelError(t *testing.T, err error, wantCode string) {
+	t.Helper()
+	var cancelErr *ControlCancelError
+	if err == nil || !errors.As(err, &cancelErr) {
+		t.Fatalf("error = %v, want ControlCancelError/%s", err, wantCode)
+	}
+	if cancelErr.ReasonCode != wantCode || cancelErr.Reason == "" {
+		t.Fatalf("cancel error = %#v, want code %q and bounded reason", cancelErr, wantCode)
+	}
 }
