@@ -35,6 +35,9 @@ func TestIntegrationJSONPreservesUnknownKeys(t *testing.T) {
 	if !bytes.Contains(plan.Content, []byte(`"other"`)) || !bytes.Contains(plan.Content, []byte(`"tagteam"`)) {
 		t.Fatalf("JSON plan = %s", plan.Content)
 	}
+	if !bytes.Contains(plan.Content, []byte(`"mcp"`)) || bytes.Contains(plan.Content, []byte(`"intel"`)) {
+		t.Fatalf("JSON MCP command = %s", plan.Content)
+	}
 }
 
 func TestIntegrationRoundTripsEveryTargetAndRefusesCorruption(t *testing.T) {

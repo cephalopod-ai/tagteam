@@ -24,10 +24,9 @@
 
 ## Deferred: MCP control plane and optional Run Steward
 
-**Status:** Producer contract implementation started. The versioned launch and
-action types plus bounded read projections are implemented in-process. MCP
-transport and all mutating lifecycle operations remain gated and must not
-displace the open recovery work above.
+**Status:** Producer contract and local read-only MCP transport are implemented.
+Mutating lifecycle operations remain gated and must not displace the open
+recovery work above.
 
 The goal is to let any MCP-capable host launch and monitor Tagteam without
 turning model output into shell commands. A deterministic controller remains

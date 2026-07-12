@@ -1,7 +1,7 @@
 # Control Plane Contract
 
-**Status:** draft producer contract implemented in-process; no MCP transport or
-mutating controller is enabled.
+**Status:** draft producer contract and local read-only MCP stdio transport are
+implemented. Mutating controller operations remain disabled.
 
 Tagteam owns a versioned control-plane contract in
 `internal/tagteam/control_contract.go`. It is the anti-corruption boundary for
@@ -30,6 +30,10 @@ and `cancel`. Their request/result types are defined so consumers can review the
 draft shape, but no handler returns canned success or delegates to arbitrary
 shell input.
 
+`tagteam mcp` implements MCP protocol revision `2025-11-25` over stdio. It
+advertises exactly the implemented read tools and returns both structured JSON
+and bounded text content. The server does not write repository or run state.
+
 ## Authority and validation
 
 - The canonical Git worktree root and Tagteam-derived repository ID are the
@@ -52,8 +56,8 @@ shell input.
 
 ## Deferred transport and lifecycle work
 
-An MCP adapter should be a thin transport over this boundary. Before it can
-advertise mutating tools, Tagteam still needs one durable lifecycle owner,
+The MCP adapter is a thin transport over this boundary. Before it can advertise
+mutating tools, Tagteam still needs one durable lifecycle owner,
 immediate run-handle semantics, idempotency storage, action-bound approval
 verification, cancellation ownership, and non-mutating resume assessment.
 Unknown contract versions and malformed persisted artifacts must fail with

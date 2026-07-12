@@ -63,6 +63,17 @@ func TestRunCommandAndModelFlagUseExistingRunSurface(t *testing.T) {
 	}
 }
 
+func TestMCPCommandUsesLocalStdioSurface(t *testing.T) {
+	cmd := NewRootCommand()
+	mcp, _, err := cmd.Find([]string{"mcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mcp == nil || mcp.Use != "mcp" {
+		t.Fatalf("mcp command = %#v", mcp)
+	}
+}
+
 func TestVersionCommandAndFlag(t *testing.T) {
 	t.Run("version subcommand", func(t *testing.T) {
 		cmd := NewRootCommand()
