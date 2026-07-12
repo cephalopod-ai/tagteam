@@ -38,6 +38,12 @@ captured patch as a checkpointed baseline.
 
 ## Resolution status
 
-The propagation fix is tracked in the active repair branch. The quarantined
-feature patch is intentionally left untouched until the repair is validated
-and a fresh relay/recovery decision can safely use the configured limit.
+The propagation repair was integrated with fresh-run and resume inheritance.
+A new checkpointed `--allow-dirty` continuation,
+`2026-07-12T085150.470640000Z`, completed two relay rounds successfully with
+the requested 8 MiB limit and produced the full code-intelligence integration
+contracts. Its nonblocking review findings were fixed before integration.
+
+The original quarantined artifacts remain preserved for audit. The retry guard
+remains intentionally unchanged; an explicit operator-approved retry design
+is retained in `docs/TODO.md`.

@@ -2,9 +2,9 @@
 
 ## Code-intelligence relay recovery
 
-- [ ] After the output-cap propagation repair is merged, resume or rerun the
-  quarantined full-phase code-intelligence relay
-  `2026-07-12T082001.248813000Z` from its preserved run artifacts.
+- [x] Rerun the quarantined full-phase code-intelligence work as a fresh,
+  checkpointed `--allow-dirty` continuation after the output-cap repair. Run
+  `2026-07-12T085150.470640000Z` passed its two completed relay rounds.
 - [ ] Add an integration test that drives a relay editor above the default
   2 MiB output size while `--max-output-bytes` is higher, proving the CLI
   value reaches the editor request.
