@@ -225,7 +225,11 @@ func (m *model) applyCommand(ctx context.Context, raw string) (action loopAction
 	case "allow-path":
 		paths := parseAllowedPaths(rest)
 		if len(paths) == 0 {
-			m.statusMessage = "allow-path requires one or more comma-separated repo-relative paths"
+			m.statusMessage = "allow-path requires an exact repo-relative file or directory prefix ending in / (examples: README.md, docs/)"
+			return
+		}
+		if err := tagteam.ValidateAllowedPaths(paths); err != nil {
+			m.statusMessage = err.Error()
 			return
 		}
 		m.compose.AllowedPaths = paths

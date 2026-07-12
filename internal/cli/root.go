@@ -614,7 +614,7 @@ func resolve(cmd *cobra.Command, flags *flagState, prompt string) (tagteam.RunOp
 	mutatingRun := command == "tagteam" || command == "run" || command == "fix" || command == "resume"
 	requiresExplicitScope := opts.Mode == tagteam.ModeSolo || opts.Mode == tagteam.ModeRelay || opts.Mode == tagteam.ModeAdversarial || !opts.SupervisorSlicing || command == "fix" || command == "resume"
 	if mutatingRun && requiresExplicitScope && !opts.DryRun && len(opts.AllowedPaths) == 0 {
-		return tagteam.RunOptions{}, tagteam.Config{}, &tagteam.ExitError{Code: tagteam.ExitInvalidArguments, Err: fmt.Errorf("%s mode requires at least one --allow-path for this command", opts.Mode)}
+		return tagteam.RunOptions{}, tagteam.Config{}, &tagteam.ExitError{Code: tagteam.ExitInvalidArguments, Err: fmt.Errorf("%s mode requires explicit write scope for this command; repeat --allow-path with an exact repo-relative file or a directory prefix ending in / (examples: --allow-path README.md --allow-path internal/)", opts.Mode)}
 	}
 	return opts, cfg, nil
 }

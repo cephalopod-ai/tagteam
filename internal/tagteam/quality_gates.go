@@ -86,20 +86,60 @@ func normalizeAllowedScope(raw []string) []string {
 
 func validateExplicitAllowedScope(raw []string) error {
 	if len(raw) == 0 {
-		return fmt.Errorf("at least one --allow-path is required")
+		return fmt.Errorf("at least one --allow-path is required; use an exact repo-relative file or a directory prefix ending in / (examples: --allow-path README.md --allow-path docs/)")
 	}
-	if len(normalizeAllowedScope(raw)) != len(raw) {
-		return fmt.Errorf("allow paths must be unique repo-relative exact files or directory prefixes ending in /; glob, absolute, and .. paths are forbidden")
-	}
+	seen := make(map[string]string, len(raw))
 	for _, item := range raw {
-		clean := filepath.ToSlash(strings.TrimSpace(item))
-		if clean != "." && strings.Contains(clean, "/") && !strings.HasSuffix(clean, "/") {
-			// A path containing a slash may still be an exact file. No filesystem
-			// lookup is required because the worker may create it.
-			continue
+		normalized, err := normalizeExplicitAllowedPath(item)
+		if err != nil {
+			return err
 		}
+		if previous, exists := seen[normalized]; exists {
+			return fmt.Errorf("invalid --allow-path %q: duplicates %q after normalization to %q; remove one entry", item, previous, normalized)
+		}
+		seen[normalized] = item
 	}
 	return nil
+}
+
+// ValidateAllowedPaths validates operator-provided write scope in input order,
+// producing stable errors that identify the first invalid value.
+func ValidateAllowedPaths(raw []string) error {
+	return validateExplicitAllowedScope(raw)
+}
+
+func normalizeExplicitAllowedPath(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("invalid --allow-path %q: value is empty", raw)
+	}
+	if strings.Contains(trimmed, `\`) {
+		return "", fmt.Errorf("invalid --allow-path %q: use / as the path separator", raw)
+	}
+	if filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, "/") {
+		suggestion := strings.TrimLeft(trimmed, "/")
+		if suggestion == "" {
+			suggestion = "."
+		}
+		return "", fmt.Errorf("invalid --allow-path %q: path must be repo-relative, not absolute; use %q for an exact path or %q for a directory", raw, strings.TrimSuffix(suggestion, "/"), strings.TrimSuffix(suggestion, "/")+"/")
+	}
+	if strings.ContainsAny(trimmed, `*?[]{}`) {
+		return "", fmt.Errorf("invalid --allow-path %q: glob syntax is not supported; use an exact file or a directory prefix ending in /", raw)
+	}
+	for _, segment := range strings.Split(filepath.ToSlash(trimmed), "/") {
+		if segment == ".." {
+			return "", fmt.Errorf("invalid --allow-path %q: parent traversal (..) is forbidden", raw)
+		}
+	}
+	directoryPrefix := strings.HasSuffix(trimmed, "/")
+	normalized := filepath.ToSlash(filepath.Clean(trimmed))
+	if normalized != "." {
+		normalized = strings.TrimPrefix(normalized, "./")
+		if directoryPrefix {
+			normalized += "/"
+		}
+	}
+	return normalized, nil
 }
 
 func pathAllowed(path string, allowed []string) bool {

@@ -628,3 +628,16 @@ func TestDisplayedSlashCommandsAreRecognized(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowPathCommandRejectsAbsolutePathWithCorrection(t *testing.T) {
+	m, err := newModel(RunOptions{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.applyCommand(nil, "/allow-path /internal")
+	for _, want := range []string{`invalid --allow-path "/internal"`, `use "internal" for an exact path`, `"internal/" for a directory`} {
+		if !strings.Contains(m.statusMessage, want) {
+			t.Fatalf("allow-path error missing %q: %s", want, m.statusMessage)
+		}
+	}
+}

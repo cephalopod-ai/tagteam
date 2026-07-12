@@ -206,6 +206,30 @@ Practical guidance:
 - Start with small prompts and targeted tests when trying a new adapter/model pairing.
 - Treat new modes, new adapters, and unusual cross-vendor combinations as experimental until you have run them in your own environment.
 
+### Error behavior
+
+Tagteam validates host-controlled requirements before launching an agent and
+returns the first invalid input in deterministic argument order. These errors
+name the rejected value, the violated rule, and a valid correction when one is
+available. For example:
+
+```text
+invalid --allow-path "/internal": path must be repo-relative, not absolute; use "internal" for an exact path or "internal/" for a directory
+```
+
+Write scopes accept exact repo-relative files (`README.md`), directory prefixes
+ending in `/` (`docs/` or `./docs/`), and `.` for the whole repository. Absolute
+paths, parent traversal, globs, blanks, backslashes, and normalized duplicates
+are rejected before an adapter starts.
+
+CLI exit codes and persisted `reason_code` / `blocking_reason` values are the
+stable machine-readable contract. OS, Git, network, and vendor CLI details may
+vary and are preserved as diagnostic context rather than normalized into
+misleading text. Semantic objections from agents must be represented in their
+structured surface: reviewer findings, work-plan deferrals, worker
+`remaining_risks`, or round-exhaustion reports. A model's unstructured objection
+does not override host validation or count as a successful run.
+
 ## Install
 
 With a Go toolchain (1.23+):
