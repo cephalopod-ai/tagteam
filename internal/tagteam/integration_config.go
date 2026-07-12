@@ -25,7 +25,7 @@ func PlanIntegration(target string, existing []byte) (IntegrationResult, error) 
 	if integrationUsesJSON(target) {
 		return planJSONIntegration(target, existing)
 	}
-	block := []byte(fmt.Sprintf("%s\n# version: %d\n# Tagteam MCP-compatible CLI: tagteam intel <orient|find|trace|impact|resume|recall|evidence>\n%s\n", integrationBegin, integrationVersion, integrationEnd))
+	block := []byte(fmt.Sprintf("%s\n# version: %d\n# Tagteam MCP server: tagteam mcp\n%s\n", integrationBegin, integrationVersion, integrationEnd))
 	original := append([]byte(nil), existing...)
 	begin, end, err := integrationMarkers(existing)
 	if err != nil {
@@ -112,7 +112,7 @@ func planJSONIntegration(target string, existing []byte) (IntegrationResult, err
 		servers = map[string]any{}
 		raw["mcpServers"] = servers
 	}
-	servers["tagteam"] = map[string]any{"version": integrationVersion, "command": "tagteam", "args": []string{"intel"}}
+	servers["tagteam"] = map[string]any{"version": integrationVersion, "command": "tagteam", "args": []string{"mcp"}}
 	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return IntegrationResult{}, err

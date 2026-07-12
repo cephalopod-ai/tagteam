@@ -101,6 +101,7 @@ tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma codex:gpt-5.6-sol "audit 
 	root.AddCommand(newVerifyInstallCommand(flags))
 	root.AddCommand(newIntelCommand(flags))
 	root.AddCommand(newIntegrateCommand())
+	root.AddCommand(newMCPCommand(flags))
 	return root
 }
 

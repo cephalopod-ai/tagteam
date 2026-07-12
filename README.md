@@ -113,7 +113,7 @@ Included in the `v1.1.0` surface:
 - adversarial coder/adversary mode supports audits and independent review
 - saved run artifacts include briefs, diffs, reviews, tests, and final summaries
 - active runs publish external `active.json` so live views can discover in-flight work without exposing host state to workers
-- command surface now includes `run`, `review`, `fix`, `resume`, `status`, `plan`, `transcript`, `findings`, `transfer`, `tui`, `doctor`, and `init`
+- command surface now includes `run`, `review`, `fix`, `resume`, `status`, `plan`, `transcript`, `findings`, `transfer`, `tui`, `mcp`, `doctor`, and `init`
 - config layering supports repo config, user config, env overrides, flags, and named profiles
 - explicit JSON repair is available through `--repair-json-with-worker` / `json_repair = "worker"`
 - explicit repo instruction files are loaded by default and appended to role prompts
@@ -134,6 +134,7 @@ tagteam findings [--all]
 tagteam findings defer RUN_ID FINDING_ID --reason "..."
 tagteam transfer RUN_ID --test "..." --lint "..."
 tagteam tui [RUN_ID]
+tagteam mcp
 tagteam doctor
 tagteam init
 ```
@@ -143,6 +144,12 @@ other agent CLIs, Tagteam also accepts `-m` / `--model`; because Tagteam is
 multi-agent, that flag selects only the active implementation role (worker,
 coder, or solo model). Use `--supervisor`, `--reviewer`, or `--scout` for the
 other roles.
+
+`tagteam mcp` is a local stdio MCP server. It currently exposes bounded,
+read-only control tools for capabilities, launch validation, status, plans,
+findings, and diagnostics. Starting, resuming, and cancelling runs remain
+unavailable through MCP until Tagteam's durable lifecycle and approval gates
+are complete.
 
 ## Requirements
 
@@ -404,7 +411,7 @@ Relay pre-scout can run configured, read-only `command`, `codebase-memory`, and 
 
 `tagteam intel orient|find|trace|impact|resume|recall|evidence` is the stable JSON/MCP-wrapper command contract. `evidence` writes then validates a Muninn candidate-evidence envelope; `recall` validates a configured Muninn envelope; `resume` validates a configured Dory envelope. `tagteam intel bench` writes deterministic `intel-bench.json` under Tagteam's external runs root by default (use `--run-dir` to override); it intentionally contains no generated timestamp or latency fields. `tagteam intel status` reads sensor artifacts without parsing `final.json`. File contracts for Dory checkpoints, Alexandria observation/consumption events, and Muninn candidate evidence are versioned and require `enabled = true`; they are not network clients, graph dumps, or memory promotion. Dory, Alexandria, and Muninn are not included in this checkout: their operators must consume these versioned JSON file envelopes and own any transport or promotion.
 
-Use `tagteam integrate plan|install|doctor|uninstall --target <codex|claude|cursor|vscode|mcp-json> --path <file>` to manage only Tagteam-owned configuration. `codex` manages a versioned `#` block in the explicit `config.toml` path and `claude` a versioned `#` block in its explicit text/Markdown path. `cursor` (`.cursor/mcp.json`), `vscode` (`.vscode/mcp.json`), and `mcp-json` manage only the versioned `mcpServers.tagteam` entry. `plan` never writes; invalid marker/JSON input is refused; JSON preserves unknown keys but install/uninstall may reformat it.
+Use `tagteam integrate plan|install|doctor|uninstall --target <codex|claude|cursor|vscode|mcp-json> --path <file>` to manage only Tagteam-owned configuration. `codex` manages a versioned `#` block in the explicit `config.toml` path and `claude` a versioned `#` block in its explicit text/Markdown path. `cursor` (`.cursor/mcp.json`), `vscode` (`.vscode/mcp.json`), and `mcp-json` manage only the versioned `mcpServers.tagteam` entry, invoking `tagteam mcp`. `plan` never writes; invalid marker/JSON input is refused; JSON preserves unknown keys but install/uninstall may reformat it.
 
 Scout model failures are explicit and configurable. By default, `scout_failure_policy = "continue"` warns, writes `scout-execution-round-1.json`, and continues without scout context so the coder and supervisor can still run. Use `--strict-scout` or `scout_failure_policy = "fail"` when evaluation or reproducibility should abort before coder edits if the scout invocation, scout JSON contract, or scout context-budget check fails. Retrieval unavailable/timeout/empty/degraded states are separate from scout model failure and continue into the scout pass where possible.
 
