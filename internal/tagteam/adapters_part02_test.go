@@ -155,7 +155,7 @@ func TestGrokBuildCmdCoder(t *testing.T) {
 		"--model", "grok-4.5", "--reasoning-effort", "high",
 		"--output-format", "json", "--no-plan", "--no-subagents", "--no-memory",
 		"--max-turns", "100",
-		"--permission-mode", "acceptEdits",
+		"--always-approve",
 		"--verbatim",
 	}
 	if !reflect.DeepEqual(spec.Argv, want) {

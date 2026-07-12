@@ -316,7 +316,7 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 		// Grok 0.2.93 rejects filtered coder toolsets when its terminal tool has
 		// background execution disabled. Use its complete coder toolset and rely
 		// on Tagteam's write-scope and integrity gates for repository boundaries.
-		argv = append(argv, "--permission-mode", "acceptEdits")
+		argv = append(argv, "--always-approve")
 	case RoleAdversary, RoleSupervisor, RoleReporter, RoleScout:
 		argv = append(argv,
 			"--permission-mode", "dontAsk",
