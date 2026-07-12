@@ -206,6 +206,32 @@ func TestRenderDashboardCommandOverlay(t *testing.T) {
 	}
 }
 
+func TestRenderDashboardCommandOverlayScrollsAllCommandsOnCompactTerminal(t *testing.T) {
+	m := fixtureModel()
+	m.height = 24
+	m.commandMode = true
+	matches := m.matchingSlashCommands()
+	for index, command := range matches {
+		m.commandSelection = index
+		out := renderDashboard(m)
+		if !strings.Contains(out, command.Name) {
+			t.Fatalf("compact command overlay did not scroll to %q at selection %d:\n%s", command.Name, index, out)
+		}
+	}
+}
+
+func TestRenderDashboardCommandOverlayShowsExitAliasesInitially(t *testing.T) {
+	m := fixtureModel()
+	m.height = 24
+	m.commandMode = true
+	out := renderDashboard(m)
+	for _, want := range []string{"/run", "/exit", "/quit"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("initial compact command overlay missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderDashboardModelPickerShowsRolesBeforeTargets(t *testing.T) {
 	m := fixtureModel()
 	m.commandMode = true

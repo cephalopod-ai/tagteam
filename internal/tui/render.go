@@ -248,6 +248,8 @@ func renderSlashCommandLines(model *model, height, width int) []string {
 func slashCommands() []slashCommand {
 	return []slashCommand{
 		{Name: "/run", Description: "Launch the current draft"},
+		{Name: "/exit", Description: "Exit the TUI"},
+		{Name: "/quit", Description: "Exit the TUI"},
 		{Name: "/team", Description: "Choose orchestration mode and assign role models"},
 		{Name: "/model <role> <target>", Description: "Choose a role, then assign its model"},
 		{Name: "/profile <name>", Description: "Apply a named profile or /profile off"},

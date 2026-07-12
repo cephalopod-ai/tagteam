@@ -12,7 +12,7 @@ import (
 	"github.com/cephalopod-ai/tagteam/internal/tagteam"
 )
 
-func (m *model) applyCommand(ctx context.Context, raw string) {
+func (m *model) applyCommand(ctx context.Context, raw string) (action loopAction) {
 	command := strings.TrimSpace(strings.TrimPrefix(raw, "/"))
 	if command == "" {
 		return
@@ -20,6 +20,8 @@ func (m *model) applyCommand(ctx context.Context, raw string) {
 	m.statusMessage = ""
 	name, rest := splitCommand(command)
 	switch name {
+	case "exit", "quit":
+		return actionQuit
 	case "help":
 		m.statusMessage = "type / then search; model, profile, mode, effort, run, watch, and settings are available"
 	case "refresh":
@@ -317,6 +319,7 @@ func (m *model) applyCommand(ctx context.Context, raw string) {
 	if m.statusMessage == "" {
 		m.statusMessage = fmt.Sprintf("updated %s", name)
 	}
+	return actionContinue
 }
 
 func (m *model) watchRun(raw string) error {

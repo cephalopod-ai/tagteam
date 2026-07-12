@@ -226,6 +226,94 @@ func TestCommandPaletteSelectionCompletesCommand(t *testing.T) {
 	}
 }
 
+func TestSlashOpensSearchableCommandPaletteFromDashboard(t *testing.T) {
+	m, err := newModel(RunOptions{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("newModel() error = %v", err)
+	}
+
+	if action := m.handleKey(nil, keyEvent{Kind: keyRune, Rune: '/'}); action != actionContinue {
+		t.Fatalf("slash action = %v, want continue", action)
+	}
+	if !m.commandMode || m.commandBuffer != "" || m.commandSelection != 0 {
+		t.Fatalf("slash did not open a fresh command palette: mode=%t buffer=%q selection=%d", m.commandMode, m.commandBuffer, m.commandSelection)
+	}
+
+	commands := m.matchingSlashCommands()
+	for _, want := range []string{"/exit", "/quit"} {
+		found := false
+		for _, command := range commands {
+			found = found || command.Name == want
+		}
+		if !found {
+			t.Fatalf("command palette did not offer %q: %#v", want, commands)
+		}
+	}
+}
+
+func TestCommandPaletteEmptySubmitDoesNotQuit(t *testing.T) {
+	m, err := newModel(RunOptions{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("newModel() error = %v", err)
+	}
+	m.mutationBlocked = "test"
+
+	m.handleKey(nil, keyEvent{Kind: keyRune, Rune: '/'})
+	if selected, ok := m.selectedSlashCommand(); !ok || selected.Name != "/run" {
+		t.Fatalf("default command = %#v, available=%t; want /run", selected, ok)
+	}
+	if action := m.handleKey(nil, keyEvent{Kind: keyEnter}); action == actionQuit {
+		t.Fatal("empty command palette submission quit the TUI")
+	}
+}
+
+func TestDashboardQuitShortcutRemainsAvailable(t *testing.T) {
+	m, err := newModel(RunOptions{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("newModel() error = %v", err)
+	}
+	if action := m.handleKey(nil, keyEvent{Kind: keyRune, Rune: 'q'}); action != actionQuit {
+		t.Fatalf("dashboard q action = %v, want quit", action)
+	}
+}
+
+func TestCommandPaletteExitCommandsQuitTUI(t *testing.T) {
+	for _, command := range []string{"exit", "quit"} {
+		t.Run(command, func(t *testing.T) {
+			m, err := newModel(RunOptions{Workdir: t.TempDir()})
+			if err != nil {
+				t.Fatalf("newModel() error = %v", err)
+			}
+			m.handleKey(nil, keyEvent{Kind: keyRune, Rune: '/'})
+			for _, key := range command {
+				m.handleKey(nil, keyEvent{Kind: keyRune, Rune: key})
+			}
+
+			if action := m.handleKey(nil, keyEvent{Kind: keyEnter}); action != actionQuit {
+				t.Fatalf("/%s action = %v, want quit", command, action)
+			}
+			if m.commandMode || m.commandBuffer != "" {
+				t.Fatalf("/%s left the palette active: mode=%t buffer=%q", command, m.commandMode, m.commandBuffer)
+			}
+		})
+	}
+}
+
+func TestCommandPalettePartialQuitSelectionQuitsTUI(t *testing.T) {
+	m, err := newModel(RunOptions{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("newModel() error = %v", err)
+	}
+	m.handleKey(nil, keyEvent{Kind: keyRune, Rune: '/'})
+	for _, key := range "qu" {
+		m.handleKey(nil, keyEvent{Kind: keyRune, Rune: key})
+	}
+
+	if action := m.handleKey(nil, keyEvent{Kind: keyEnter}); action != actionQuit {
+		t.Fatalf("/qu action = %v, want quit", action)
+	}
+}
+
 func TestCommandPaletteCompletesModelArgumentAndAppliesSelection(t *testing.T) {
 	m, err := newModel(RunOptions{Workdir: t.TempDir()})
 	if err != nil {

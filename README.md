@@ -748,7 +748,7 @@ Core keyboard affordances:
 - `u` opens recent runs
 - `r` refreshes
 - `p`, `f`, `a`, and `t` toggle detail sections
-- `q` quits
+- `q`, `/exit`, and `/quit` leave the TUI; `Esc` closes the active palette or panel without exiting
 
 The run-detail surface reads `active.json`, `state.json`, `live-progress.json`, `final.json`, and `plan.json` through the same `RunSnapshot` assembly used by status views. While an adapter is active it shows the logical team role, elapsed/idle time, and a tracked-plus-untracked working-diff summary; an invocation queued behind the cross-process Claude lock shows as `waiting` with its queue time. The compose surface remains primary and invokes adapters through the normal runner path.
 

@@ -650,13 +650,9 @@ func (m *model) handleCommandKey(ctx context.Context, event keyEvent) loopAction
 		m.commandMode = false
 		m.commandBuffer = ""
 		if command != "" {
-			m.applyCommand(ctx, command)
+			return m.applyCommand(ctx, command)
 		}
 	case keyRune:
-		if event.Rune == 'q' && m.commandBuffer == "" {
-			m.commandMode = false
-			return actionContinue
-		}
 		m.commandBuffer += string(event.Rune)
 		m.commandSelection = 0
 	}
