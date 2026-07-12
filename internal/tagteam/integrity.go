@@ -175,7 +175,7 @@ func validateInvocationIntegrity(ctx context.Context, req Request, role Role, gi
 		if err != nil {
 			return err
 		}
-		for _, path := range worktreeDelta(gitBefore, after) {
+		for _, path := range worktreeContentDelta(gitBefore, after) {
 			violations = append(violations, "git:"+path)
 		}
 	}

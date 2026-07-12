@@ -412,6 +412,23 @@ func TestValidateConfig_RejectsInvalidEffort(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_GrokReasoningEffortLevels(t *testing.T) {
+	for _, effort := range []string{"low", "medium", "high", "xhigh"} {
+		cfg := DefaultConfig()
+		cfg.Adapters.Grok.ReasoningEffort = effort
+		if err := validateConfig(cfg); err != nil {
+			t.Fatalf("validateConfig(%q) error = %v", effort, err)
+		}
+	}
+	for _, effort := range []string{"none", "minimal"} {
+		cfg := DefaultConfig()
+		cfg.Adapters.Grok.ReasoningEffort = effort
+		if err := validateConfig(cfg); err == nil || !strings.Contains(err.Error(), "adapters.grok.reasoning_effort") {
+			t.Fatalf("validateConfig(%q) error = %v", effort, err)
+		}
+	}
+}
+
 func TestMergeEnvConfig_LegacyCoderAdversaryImpliesAdversarialMode(t *testing.T) {
 	t.Setenv("TAGTEAM_CODER", "codex:gpt-5")
 	t.Setenv("TAGTEAM_ADVERSARY", "codex:gpt-5.6-sol")

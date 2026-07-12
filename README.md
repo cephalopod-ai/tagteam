@@ -179,6 +179,17 @@ Supported adapters in this repo today:
 | `grok` | full; headless Grok CLI 0.2.93 with structured output and role-scoped tools |
 | `openai-compatible` / `oai` | read-only reviewer/scout (first cut) |
 
+The Grok adapter is verified against Grok Build 0.2.93. It invokes root-level
+headless `grok --single <prompt> --cwd <dir>` with optional `--model` and
+`--reasoning-effort`, `--output-format json`, and explicit role permissions:
+coders use `acceptEdits` with `read_file,list_dir,write_file,search_replace,run_terminal_cmd`;
+all read-only roles use `dontAsk` with `read_file,list_dir`. System prompts use
+the verified `--rules` flag. `--json-schema` is emitted only for coder,
+adversary, and supervisor roles; Grok's JSON mode returns one JSON object at
+the end of the headless run, and Tagteam parses the review/scout contracts
+from that object. The prompt is a positional argument, so Grok receives no
+stdin prompt.
+
 ## Authentication
 
 Each vendor CLI adapter (`codex`, `claude`, `agy`, `gosling`, `grok`, etc.) must already be logged in on your machine before you run `tagteam`. `tagteam` does not run vendor login flows, store credentials, or proxy/inject API keys for those CLIs. If an adapter is not authenticated, the run will fail with that CLI's own auth error.
@@ -626,7 +637,7 @@ max_context_tokens = 32768
 reserved_output_tokens = 2048
 ```
 
-Codex and Claude inference effort is configured separately from model identity, following the same provider/model/settings separation used by mature agent CLIs:
+Codex, Claude, and Grok inference effort is configured separately from model identity, following the same provider/model/settings separation used by mature agent CLIs:
 
 ```toml
 [adapters.codex]
@@ -641,6 +652,13 @@ reasoning_effort = "high"
 ```
 
 The equivalent environment variables are `TAGTEAM_CODEX_REASONING_EFFORT`, `TAGTEAM_CLAUDE_EFFORT`, `TAGTEAM_GROK_MODEL`, and `TAGTEAM_GROK_REASONING_EFFORT`. Grok passthrough arguments can be supplied with `adapters.grok.extra_args`, `TAGTEAM_GROK_ARGS`, or `--grok-args`.
+
+Grok reasoning effort accepts `low`, `medium`, `high`, or `xhigh`; the
+default `grok-4.5` model supports `low`, `medium`, and `high`, while `xhigh`
+is available only on Grok models that advertise it. Set Grok targets as
+`grok:<model>` through `--worker`, `--coder`, `--supervisor`, `--reviewer`,
+or `--scout`; the same targets are available in the TUI `/model` picker and
+named profiles.
 
 Claude invocations are serialized across tagteam processes by default because concurrent Claude Code processes can stall or remain pending. Disable this (for example when every run uses isolated Claude configuration) with:
 

@@ -390,7 +390,7 @@ func validateConfig(cfg Config) error {
 	if err := validateChoice("adapters.codex.reasoning_effort", cfg.Adapters.Codex.ReasoningEffort, "none", "minimal", "low", "medium", "high", "xhigh"); err != nil {
 		return err
 	}
-	if err := validateChoice("adapters.grok.reasoning_effort", cfg.Adapters.Grok.ReasoningEffort, "none", "minimal", "low", "medium", "high", "xhigh"); err != nil {
+	if err := validateChoice("adapters.grok.reasoning_effort", cfg.Adapters.Grok.ReasoningEffort, "low", "medium", "high", "xhigh"); err != nil {
 		return err
 	}
 	if err := validateChoice("adapters.claude.effort", cfg.Adapters.Claude.Effort, "low", "medium", "high", "xhigh", "max"); err != nil {

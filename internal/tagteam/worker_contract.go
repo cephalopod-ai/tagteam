@@ -154,16 +154,13 @@ func captureWorktreeSnapshot(ctx context.Context, workdir string) (worktreeSnaps
 		data, readErr := os.ReadFile(absolute)
 		if readErr != nil {
 			if os.IsNotExist(readErr) {
-				snapshot[path] = "deleted"
+				snapshot[path] = "deleted:" + status
 				continue
 			}
 			return nil, readErr
 		}
 		sum := sha256.Sum256(data)
-		// Integrity protects repository content. Index-only transitions such as
-		// staged to unstaged do not change the worktree and must not make a
-		// read-only invocation appear to have edited every dirty file.
-		snapshot[path] = hex.EncodeToString(sum[:])
+		snapshot[path] = status + ":" + hex.EncodeToString(sum[:])
 	}
 	return snapshot, nil
 }
@@ -177,6 +174,35 @@ func worktreeDelta(before, after worktreeSnapshot) []string {
 	}
 	for path, fingerprint := range after {
 		if before[path] != fingerprint {
+			seen[path] = true
+		}
+	}
+	paths := make([]string, 0, len(seen))
+	for path := range seen {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func worktreeContentDelta(before, after worktreeSnapshot) []string {
+	content := func(value string) string {
+		if strings.HasPrefix(value, "deleted:") {
+			return "deleted"
+		}
+		if index := strings.IndexByte(value, ':'); index >= 0 {
+			return value[index+1:]
+		}
+		return value
+	}
+	seen := map[string]bool{}
+	for path, fingerprint := range before {
+		if content(after[path]) != content(fingerprint) {
+			seen[path] = true
+		}
+	}
+	for path, fingerprint := range after {
+		if content(before[path]) != content(fingerprint) {
 			seen[path] = true
 		}
 	}

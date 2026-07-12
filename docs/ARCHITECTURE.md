@@ -43,6 +43,14 @@ orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`
 | CLI exports | `internal/tagteam/cli_exports.go` | Symbols surfaced to the `internal/cli` layer. |
 | Interactive TUI | `internal/tui/render.go`, `internal/tui/state.go`, `internal/tui/tui.go` | Dashboard with recent runs, compose/settings, slash commands, and a scrollable detail pane. Reads `RunSnapshot`/`plan.json` for inspection and invokes `App.Run` for TUI-launched runs. |
 
+Grok 0.2.93 is invoked through the root command's positional headless mode:
+`--single`, `--cwd`, `--model`, `--reasoning-effort`, and `--output-format
+json`, with `--json-schema` limited to roles that have a Tagteam output
+contract. `--rules` carries the role system prompt. Coder invocations use
+`acceptEdits` plus the edit-capable tool set; supervisor, adversary, reporter,
+and scout invocations use `dontAsk` plus `read_file,list_dir`. Non-coder roles
+inherit the runner's restricted environment and provider-auth forwarding.
+
 ## Run modes
 
 - **supervisor** (default): read-only supervisor writes a brief, worker
