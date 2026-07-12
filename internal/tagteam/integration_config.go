@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
 const integrationBegin = "# BEGIN tagteam managed integration"
 const integrationEnd = "# END tagteam managed integration"
+const integrationVersion = 1
 
 type IntegrationResult struct {
 	Target  string `json:"target"`
@@ -19,10 +19,13 @@ type IntegrationResult struct {
 }
 
 func PlanIntegration(target string, existing []byte) (IntegrationResult, error) {
-	if target == "mcp-json" {
+	if !ValidIntegrationTargetForCLI(target) {
+		return IntegrationResult{}, fmt.Errorf("unknown integration target %q", target)
+	}
+	if integrationUsesJSON(target) {
 		return planJSONIntegration(target, existing)
 	}
-	block := []byte(integrationBegin + "\n# Tagteam MCP-compatible CLI: tagteam intel <orient|find|trace|impact|resume|recall|evidence>\n" + integrationEnd + "\n")
+	block := []byte(fmt.Sprintf("%s\n# version: %d\n# Tagteam MCP-compatible CLI: tagteam intel <orient|find|trace|impact|resume|recall|evidence>\n%s\n", integrationBegin, integrationVersion, integrationEnd))
 	original := append([]byte(nil), existing...)
 	begin, end, err := integrationMarkers(existing)
 	if err != nil {
@@ -40,14 +43,20 @@ func PlanIntegration(target string, existing []byte) (IntegrationResult, error) 
 }
 
 func DoctorIntegration(target string, existing []byte) IntegrationResult {
-	if target == "mcp-json" {
+	if !ValidIntegrationTargetForCLI(target) {
+		return IntegrationResult{Target: target, Status: "corrupt", Detail: "unknown integration target"}
+	}
+	if integrationUsesJSON(target) {
+		if len(bytes.TrimSpace(existing)) == 0 {
+			return IntegrationResult{Target: target, Status: "absent"}
+		}
 		var raw map[string]any
 		if json.Unmarshal(existing, &raw) != nil {
 			return IntegrationResult{Target: target, Status: "corrupt", Detail: "invalid JSON"}
 		}
 		servers, _ := raw["mcpServers"].(map[string]any)
 		if _, ok := servers["tagteam"]; ok {
-			return IntegrationResult{Target: target, Status: "installed"}
+			return IntegrationResult{Target: target, Status: "installed", Detail: "JSON formatting may change during install or uninstall"}
 		}
 		return IntegrationResult{Target: target, Status: "absent"}
 	}
@@ -58,11 +67,14 @@ func DoctorIntegration(target string, existing []byte) IntegrationResult {
 	if begin < 0 {
 		return IntegrationResult{Target: target, Status: "absent"}
 	}
-	return IntegrationResult{Target: target, Status: "installed"}
+	return IntegrationResult{Target: target, Status: "installed", Detail: "only the marked Tagteam block is managed"}
 }
 
 func UninstallIntegration(target string, existing []byte) (IntegrationResult, error) {
-	if target == "mcp-json" {
+	if !ValidIntegrationTargetForCLI(target) {
+		return IntegrationResult{}, fmt.Errorf("unknown integration target %q", target)
+	}
+	if integrationUsesJSON(target) {
 		var raw map[string]any
 		if len(existing) == 0 {
 			return IntegrationResult{Target: target, Status: "absent", Content: existing}, nil
@@ -77,7 +89,7 @@ func UninstallIntegration(target string, existing []byte) (IntegrationResult, er
 			return IntegrationResult{}, err
 		}
 		data = append(data, '\n')
-		return IntegrationResult{Target: target, Status: "uninstalled", Changed: !bytes.Equal(data, existing), Content: data}, nil
+		return IntegrationResult{Target: target, Status: "uninstalled", Changed: !bytes.Equal(data, existing), Detail: "JSON formatting may change; unknown keys are preserved", Content: data}, nil
 	}
 	begin, end, err := integrationMarkers(existing)
 	if err != nil {
@@ -100,7 +112,7 @@ func planJSONIntegration(target string, existing []byte) (IntegrationResult, err
 		servers = map[string]any{}
 		raw["mcpServers"] = servers
 	}
-	servers["tagteam"] = map[string]any{"command": "tagteam", "args": []string{"intel"}}
+	servers["tagteam"] = map[string]any{"version": integrationVersion, "command": "tagteam", "args": []string{"intel"}}
 	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return IntegrationResult{}, err
@@ -124,6 +136,17 @@ func integrationMarkers(data []byte) (int, int, error) {
 	}
 	return begin, end, nil
 }
-func validIntegrationTarget(target string) bool {
-	return strings.Contains(" codex claude cursor vscode mcp-json ", " "+target+" ")
+func integrationUsesJSON(target string) bool {
+	return target == "cursor" || target == "vscode" || target == "mcp-json"
+}
+
+// ValidIntegrationTargetForCLI keeps target validation in the core package so
+// CLI callers and direct contract users cannot drift.
+func ValidIntegrationTargetForCLI(target string) bool {
+	switch target {
+	case "codex", "claude", "cursor", "vscode", "mcp-json":
+		return true
+	default:
+		return false
+	}
 }

@@ -43,3 +43,7 @@ func RunsRootForCLI(workdir string) string {
 	}
 	return filepath.Join(workdir, ".tagteam", "runs")
 }
+
+func CodeIntelRepoAllowedForCLI(workdir string, allowed []string) bool {
+	return codeIntelRepoAllowed(workdir, allowed)
+}

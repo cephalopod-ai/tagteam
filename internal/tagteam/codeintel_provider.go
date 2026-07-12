@@ -254,7 +254,10 @@ func configuredCodeIntelProviders(opts RunOptions) ([]CodeIntelProvider, error) 
 }
 
 func aggregateCodeIntelProviders(ctx context.Context, workdir, prompt string, providers []CodeIntelProvider) CodeIntelArtifact {
-	result := CodeIntelArtifact{SchemaVersion: ArtifactSchemaVersion, Status: codeIntelStatusOK, Observations: []CodeIntelObservation{}, Staleness: codeIntelStalenessUnknown, GeneratedAt: time.Now().UTC()}
+	// Leave Status unset until normalization has considered every provider's
+	// observations and errors. In particular, an all-provider failure is an
+	// error rather than a successful empty result.
+	result := CodeIntelArtifact{SchemaVersion: ArtifactSchemaVersion, Observations: []CodeIntelObservation{}, Staleness: codeIntelStalenessUnknown, GeneratedAt: time.Now().UTC()}
 	for _, provider := range providers {
 		if err := provider.Probe(ctx, workdir); err != nil {
 			result.Errors = appendCodeIntelError(result.Errors, provider.Name()+": "+err.Error())

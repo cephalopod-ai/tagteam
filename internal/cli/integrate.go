@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -16,7 +17,7 @@ func newIntegrateCommand() *cobra.Command {
 	root := &cobra.Command{Use: "integrate", Short: "Plan and manage non-destructive Tagteam editor integration blocks", SilenceUsage: true}
 	run := func(action string) func(*cobra.Command, []string) error {
 		return func(cmd *cobra.Command, args []string) error {
-			if !validCLITarget(target) {
+			if !tagteam.ValidIntegrationTargetForCLI(target) {
 				return fmt.Errorf("--target must be codex, claude, cursor, vscode, or mcp-json")
 			}
 			if path == "" {
@@ -45,6 +46,13 @@ func newIntegrateCommand() *cobra.Command {
 					}
 				}
 			}
+			if action == "install" {
+				if result.Changed {
+					result.Status = "installed"
+				} else {
+					result.Status = "unchanged"
+				}
+			}
 			if action == "plan" {
 				fmt.Fprintln(cmd.OutOrStdout(), unifiedDiff(existing, result.Content))
 			}
@@ -59,17 +67,53 @@ func newIntegrateCommand() *cobra.Command {
 	return root
 }
 
-func validCLITarget(target string) bool {
-	for _, candidate := range []string{"codex", "claude", "cursor", "vscode", "mcp-json"} {
-		if target == candidate {
-			return true
-		}
-	}
-	return false
-}
 func unifiedDiff(before, after []byte) string {
 	if bytes.Equal(before, after) {
 		return "(no changes)"
 	}
-	return "--- existing\n+++ planned\n-" + string(before) + "+" + string(after)
+	beforeLines := splitDiffLines(before)
+	afterLines := splitDiffLines(after)
+	lengths := make([][]int, len(beforeLines)+1)
+	for i := range lengths {
+		lengths[i] = make([]int, len(afterLines)+1)
+	}
+	for i := len(beforeLines) - 1; i >= 0; i-- {
+		for j := len(afterLines) - 1; j >= 0; j-- {
+			if beforeLines[i] == afterLines[j] {
+				lengths[i][j] = lengths[i+1][j+1] + 1
+			} else if lengths[i+1][j] >= lengths[i][j+1] {
+				lengths[i][j] = lengths[i+1][j]
+			} else {
+				lengths[i][j] = lengths[i][j+1]
+			}
+		}
+	}
+	var out bytes.Buffer
+	out.WriteString("--- existing\n+++ planned\n")
+	for i, j := 0, 0; i < len(beforeLines) || j < len(afterLines); {
+		if i < len(beforeLines) && j < len(afterLines) && beforeLines[i] == afterLines[j] {
+			out.WriteString(" " + beforeLines[i] + "\n")
+			i++
+			j++
+		} else if j < len(afterLines) && (i == len(beforeLines) || lengths[i][j+1] >= lengths[i+1][j]) {
+			out.WriteString("+" + afterLines[j] + "\n")
+			j++
+		} else {
+			out.WriteString("-" + beforeLines[i] + "\n")
+			i++
+		}
+	}
+	if bytes.HasSuffix(before, []byte("\n")) != bytes.HasSuffix(after, []byte("\n")) {
+		out.WriteString("\\ No newline at end of file\n")
+	}
+	return out.String()
+}
+
+func splitDiffLines(data []byte) []string {
+	text := string(data)
+	text = strings.TrimSuffix(text, "\n")
+	if text == "" {
+		return nil
+	}
+	return strings.Split(text, "\n")
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -23,7 +24,10 @@ func newIntelCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			result := tagteam.RunCodeIntelGateway(context.Background(), cfg, workdir, joinArgs(args), op)
-			data, _ := tagteam.CodeIntelGatewayJSON(result)
+			data, err := tagteam.CodeIntelGatewayJSON(result)
+			if err != nil {
+				return err
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), string(data))
 			return nil
 		}})
@@ -35,7 +39,7 @@ func newIntelCommand(shared *flagState) *cobra.Command {
 		}
 		target := runDir
 		if target == "" {
-			target = filepath.Join(workdir, ".tagteam", "intel")
+			target = filepath.Join(tagteam.RunsRootForCLI(workdir), "intel-bench")
 		}
 		artifact, err := tagteam.RunCodeIntelBench(context.Background(), cfg, workdir, target)
 		if err != nil {
@@ -66,6 +70,9 @@ func newIntelCommand(shared *flagState) *cobra.Command {
 		artifact, err := readIntelArtifact(runDir)
 		if err != nil {
 			return err
+		}
+		if !tagteam.CodeIntelRepoAllowedForCLI(workdir, cfg.CodeIntel.AllowedRepos) {
+			return fmt.Errorf("repository is not in code_intel.allowed_repos")
 		}
 		path, err := tagteam.WriteDoryCheckpoint(context.Background(), workdir, runDir, cfg.CodeIntel.Dory, artifact)
 		if err != nil {
@@ -113,5 +120,5 @@ func joinArgs(args []string) string {
 	if len(args) == 0 {
 		return ""
 	}
-	return fmt.Sprint(args[0])
+	return strings.Join(args, " ")
 }

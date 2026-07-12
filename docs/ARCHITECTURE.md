@@ -30,7 +30,8 @@ orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`
 | Run state / reasons | `internal/tagteam/run_state.go` | Failure classification, exit→reason mapping, role status/loss records, budget state, redacted persistence helpers. |
 | Orchestration decision | `internal/tagteam/orchestration.go` | Host-owned single advisory adjustment (relay↔supervisor) before implementation. |
 | Scout retrieval | `internal/tagteam/retrieval.go` | Bounded, local-only pre-scout retrieval evidence for relay `recon`. |
-| Code-intelligence sensor | `internal/tagteam/codeintel.go`, `codeintel_provider.go` | Opt-in, read-only command boundary; validates revision-bound observations, computes Git staleness, persists `code-intel-round-1.json`, and exposes only fresh derived evidence to the relay scout prompt. |
+| Code-intelligence sensor and bridges | `internal/tagteam/codeintel*.go` | Opt-in, read-only provider registry/gateway; validates revision-bound observations and staleness, persists fresh derived evidence, and emits only versioned Dory/Alexandria/Muninn file envelopes. No external service client or memory promotion is implemented. |
+| Editor integration contracts | `internal/tagteam/integration_config.go`, `internal/cli/integrate.go` | Explicit-path plan/install/doctor/uninstall for marker-based Codex/Claude files and structured Cursor/VS Code/generic MCP JSON `mcpServers.tagteam` entries. |
 | Scout context budget | `internal/tagteam/context_budget.go` | Deterministic `ceil(prompt_bytes/3)` context estimate + policy. |
 | Scout status | `internal/tagteam/scout_status.go` | Scout execution/failure classification. |
 | Prompts | `internal/tagteam/prompts.go` | Role/system/brief/report prompt construction. |

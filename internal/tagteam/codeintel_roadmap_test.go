@@ -87,3 +87,40 @@ func TestGatewayUnavailableIsTruthfulJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCodeIntelBenchRejectsUnallowedRepositoryAndIsDeterministic(t *testing.T) {
+	repo := newCodeIntelGitRepo(t)
+	denied := DefaultConfig()
+	denied.CodeIntel.AllowedRepos = []string{t.TempDir()}
+	if _, err := RunCodeIntelBench(context.Background(), denied, repo, ""); err == nil {
+		t.Fatal("unallowed repository ran benchmark")
+	}
+	first, err := RunCodeIntelBench(context.Background(), DefaultConfig(), repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := RunCodeIntelBench(context.Background(), DefaultConfig(), repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstJSON, _ := json.Marshal(first)
+	secondJSON, _ := json.Marshal(second)
+	if string(firstJSON) != string(secondJSON) {
+		t.Fatalf("benchmark artifact is not deterministic: %s != %s", firstJSON, secondJSON)
+	}
+	if strings.Contains(string(firstJSON), "generated_at") || strings.Contains(string(firstJSON), "latency_ms") {
+		t.Fatalf("benchmark artifact has non-deterministic metadata: %s", firstJSON)
+	}
+}
+
+func TestAggregateCodeIntelProvidersReportsAllFailures(t *testing.T) {
+	repo := newCodeIntelGitRepo(t)
+	provider, err := newNamedCommandCodeIntelProvider("missing", "code-intel-provider-that-does-not-exist", codeIntelTimeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := aggregateCodeIntelProviders(context.Background(), repo, "find", []CodeIntelProvider{provider})
+	if artifact.Status != codeIntelStatusError || len(artifact.Errors) == 0 {
+		t.Fatalf("all-provider failure artifact = %#v", artifact)
+	}
+}

@@ -3,6 +3,7 @@ package tagteam
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,6 +22,7 @@ type CodeIntelGatewayResult struct {
 }
 
 func RunCodeIntelGateway(ctx context.Context, cfg Config, workdir, prompt, operation string) CodeIntelGatewayResult {
+	prompt = redactSecrets(prompt)
 	result := CodeIntelGatewayResult{SchemaVersion: codeIntelEnvelopeSchemaVersion, Operation: operation, Status: codeIntelStatusDisabled, Staleness: codeIntelStalenessUnknown, GeneratedAt: time.Now().UTC()}
 	if !validCodeIntelOperation(operation) {
 		result.Status = codeIntelStatusError
@@ -60,6 +62,10 @@ func RunCodeIntelGateway(ctx context.Context, cfg Config, workdir, prompt, opera
 		return result
 	}
 	artifact := aggregateCodeIntelProviders(ctx, workdir, prompt, capable)
+	if err := runCodeIntelBridgeOperation(ctx, cfg, workdir, prompt, operation, &artifact); err != nil {
+		artifact.Status = codeIntelStatusError
+		artifact.Errors = appendCodeIntelError(artifact.Errors, err.Error())
+	}
 	result.Artifact = &artifact
 	result.Status, result.Staleness, result.Errors = artifact.Status, artifact.Staleness, artifact.Errors
 	return result
@@ -75,7 +81,6 @@ func validCodeIntelOperation(operation string) bool {
 
 type CodeIntelBenchResult struct {
 	Provider         string `json:"provider"`
-	LatencyMS        int64  `json:"latency_ms"`
 	ObservationCount int    `json:"observation_count"`
 	Valid            bool   `json:"valid"`
 	Error            string `json:"error,omitempty"`
@@ -84,11 +89,13 @@ type CodeIntelBenchArtifact struct {
 	SchemaVersion int                    `json:"schema_version"`
 	Tasks         []string               `json:"tasks"`
 	Results       []CodeIntelBenchResult `json:"results"`
-	GeneratedAt   time.Time              `json:"generated_at"`
 }
 
 func RunCodeIntelBench(ctx context.Context, cfg Config, workdir, runDir string) (CodeIntelBenchArtifact, error) {
-	artifact := CodeIntelBenchArtifact{SchemaVersion: codeIntelEnvelopeSchemaVersion, Tasks: []string{"orient", "find", "trace", "impact"}, Results: []CodeIntelBenchResult{}, GeneratedAt: time.Now().UTC()}
+	artifact := CodeIntelBenchArtifact{SchemaVersion: codeIntelEnvelopeSchemaVersion, Tasks: []string{"orient", "find", "trace", "impact"}, Results: []CodeIntelBenchResult{}}
+	if !codeIntelRepoAllowed(workdir, cfg.CodeIntel.AllowedRepos) {
+		return artifact, fmt.Errorf("repository is not in code_intel.allowed_repos")
+	}
 	opts := RunOptions{Workdir: workdir, CodeIntelCommand: cfg.Defaults.CodeIntelCommand, CodeIntel: cfg.CodeIntel}
 	providers, err := configuredCodeIntelProviders(opts)
 	if err != nil {
@@ -96,9 +103,8 @@ func RunCodeIntelBench(ctx context.Context, cfg Config, workdir, runDir string) 
 	}
 	for _, provider := range providers {
 		for _, task := range artifact.Tasks {
-			started := time.Now()
 			observed, observeErr := provider.Observe(ctx, CodeIntelRequest{Workdir: workdir, Prompt: task})
-			result := CodeIntelBenchResult{Provider: provider.Name(), LatencyMS: time.Since(started).Milliseconds(), ObservationCount: len(observed.Observations), Valid: observeErr == nil}
+			result := CodeIntelBenchResult{Provider: provider.Name(), ObservationCount: len(observed.Observations), Valid: observeErr == nil}
 			if observeErr != nil {
 				result.Error = sanitizeCodeIntelText(observeErr.Error(), maxCodeIntelSummaryBytes)
 			}
@@ -111,6 +117,41 @@ func RunCodeIntelBench(ctx context.Context, cfg Config, workdir, runDir string) 
 		}
 	}
 	return artifact, nil
+}
+
+// runCodeIntelBridgeOperation keeps file-envelope operations explicit. These
+// envelopes are opt-in contracts for external systems, never remote calls.
+func runCodeIntelBridgeOperation(ctx context.Context, cfg Config, workdir, prompt, operation string, artifact *CodeIntelArtifact) error {
+	runDir := filepath.Join(RunsRootForCLI(workdir), "code-intel-gateway")
+	switch operation {
+	case "evidence":
+		evidence := make([]RetrievalEvidence, 0)
+		for _, observation := range artifact.Observations {
+			evidence = append(evidence, observation.Evidence...)
+		}
+		if len(evidence) == 0 {
+			return fmt.Errorf("no provider evidence available for Muninn export")
+		}
+		path, err := ExportMuninnCandidateEvidence(ctx, workdir, runDir, "gateway", cfg.CodeIntel.Muninn, MuninnCandidateEvidence{Candidate: prompt, Evidence: evidence})
+		if err != nil {
+			return err
+		}
+		_, err = ImportMuninnCandidateEvidence(path)
+		return err
+	case "recall":
+		if !cfg.CodeIntel.Muninn.Enabled || cfg.CodeIntel.Muninn.Path == "" {
+			return fmt.Errorf("muninn bridge path is required for recall")
+		}
+		_, err := ImportMuninnCandidateEvidence(cfg.CodeIntel.Muninn.Path)
+		return err
+	case "resume":
+		if !cfg.CodeIntel.Dory.Enabled || cfg.CodeIntel.Dory.Path == "" {
+			return fmt.Errorf("dory bridge path is required for resume")
+		}
+		_, _, err := ReadDoryHandoff(cfg.CodeIntel.Dory.Path)
+		return err
+	}
+	return nil
 }
 
 // ReadCodeIntelStatus reads only sensor artifacts and does not reconstruct
