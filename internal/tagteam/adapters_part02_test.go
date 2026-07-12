@@ -145,7 +145,7 @@ func TestGrokBuildCmdCoder(t *testing.T) {
 	if err := os.WriteFile(schemaPath, []byte(`{"type":"object"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	adapter := &GrokAdapter{DefaultModel: "grok-4.5", ReasoningEffort: "high", ExtraArgs: []string{"--no-memory"}}
+	adapter := &GrokAdapter{DefaultModel: "grok-4.5", ReasoningEffort: "high", ExtraArgs: []string{"--verbatim"}}
 	spec, err := adapter.BuildCmd(RoleCoder, Request{Prompt: "make it work", Workdir: "/repo", SchemaPath: schemaPath})
 	if err != nil {
 		t.Fatalf("BuildCmd() error = %v", err)
@@ -153,9 +153,10 @@ func TestGrokBuildCmdCoder(t *testing.T) {
 	want := []string{
 		"grok", "--single", "make it work", "--cwd", "/repo",
 		"--model", "grok-4.5", "--reasoning-effort", "high",
-		"--output-format", "json", "--permission-mode", "acceptEdits",
+		"--output-format", "json", "--no-plan", "--no-subagents", "--no-memory",
+		"--permission-mode", "acceptEdits",
 		"--tools", "read_file,list_dir,write_file,search_replace,run_terminal_cmd",
-		"--json-schema", `{"type":"object"}`, "--no-memory",
+		"--json-schema", `{"type":"object"}`, "--verbatim",
 	}
 	if !reflect.DeepEqual(spec.Argv, want) {
 		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
@@ -179,7 +180,8 @@ func TestGrokBuildCmdAdversaryAndScoutReadOnly(t *testing.T) {
 		want := []string{
 			"grok", "--single", "inspect", "--cwd", "/repo",
 			"--model", "grok-4.5", "--reasoning-effort", "high",
-			"--output-format", "json", "--permission-mode", "dontAsk",
+			"--output-format", "json", "--no-plan", "--no-subagents", "--no-memory",
+			"--permission-mode", "dontAsk",
 			"--tools", "read_file,list_dir",
 		}
 		if role != RoleScout && role != RoleReporter {

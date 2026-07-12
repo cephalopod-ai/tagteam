@@ -304,7 +304,9 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	if a.ReasoningEffort != "" {
 		argv = append(argv, "--reasoning-effort", a.ReasoningEffort)
 	}
-	argv = append(argv, "--output-format", "json")
+	// Tagteam owns planning, role orchestration, and run state. Keeping those
+	// Grok features off also avoids inheriting incompatible local agent config.
+	argv = append(argv, "--output-format", "json", "--no-plan", "--no-subagents", "--no-memory")
 	switch role {
 	case RoleCoder:
 		argv = append(argv,
