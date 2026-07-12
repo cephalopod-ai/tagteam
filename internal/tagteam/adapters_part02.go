@@ -279,6 +279,11 @@ type GrokAdapter struct {
 	ExtraArgs       []string
 }
 
+type grokEnvelope struct {
+	Text             string          `json:"text"`
+	StructuredOutput json.RawMessage `json:"structuredOutput"`
+}
+
 func (a *GrokAdapter) ID() string {
 	return "grok"
 }
@@ -342,9 +347,18 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 }
 
 func (a *GrokAdapter) ParseResult(role Role, raw []byte) (Result, error) {
-	result := Result{Raw: raw, Text: strings.TrimSpace(string(raw))}
+	payload := raw
+	var envelope grokEnvelope
+	if err := json.Unmarshal(raw, &envelope); err == nil {
+		if structured := bytes.TrimSpace(envelope.StructuredOutput); len(structured) > 0 && !bytes.Equal(structured, []byte("null")) {
+			payload = structured
+		} else if envelope.Text != "" {
+			payload = []byte(envelope.Text)
+		}
+	}
+	result := Result{Raw: raw, Text: strings.TrimSpace(string(payload))}
 	if role == RoleAdversary {
-		review, err := parseReviewPayloadLabeled(raw, "grok")
+		review, err := parseReviewPayloadLabeled(payload, "grok")
 		if err != nil {
 			return Result{}, err
 		}
@@ -352,7 +366,7 @@ func (a *GrokAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 		result.Text = review.Summary
 	}
 	if role == RoleScout {
-		scout, err := parseScout(raw)
+		scout, err := parseScout(payload)
 		if err != nil {
 			return Result{}, err
 		}

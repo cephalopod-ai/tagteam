@@ -217,6 +217,18 @@ func TestGrokParseResult(t *testing.T) {
 	}
 }
 
+func TestGrokParseResultUnwrapsCLIEnvelope(t *testing.T) {
+	adapter := &GrokAdapter{}
+	coder, err := adapter.ParseResult(RoleCoder, []byte(`{"text":"{\"schema_version\":1,\"status\":\"completed\"}","structuredOutput":null}`))
+	if err != nil || coder.Text != `{"schema_version":1,"status":"completed"}` {
+		t.Fatalf("coder result = %#v, error = %v", coder, err)
+	}
+	reviewer, err := adapter.ParseResult(RoleAdversary, []byte(`{"text":"ignored","structuredOutput":{"verdict":"pass","summary":"clean","findings":[],"test_suggestions":[]}}`))
+	if err != nil || reviewer.Review == nil || reviewer.Review.Summary != "clean" {
+		t.Fatalf("reviewer result = %#v, error = %v", reviewer, err)
+	}
+}
+
 func TestGrokDetectNonZeroExit(t *testing.T) {
 	oldLookPath := execLookPath
 	oldCommandContext := execCommandContext
