@@ -93,6 +93,7 @@ type AdapterConfigSet struct {
 	CodexOSS         CodexConfig            `toml:"codex-oss"`
 	Agy              AgyConfig              `toml:"agy"`
 	Gosling          GoslingConfig          `toml:"gosling"`
+	Grok             GrokConfig             `toml:"grok"`
 	OpenAICompatible OpenAICompatibleConfig `toml:"openai_compatible"`
 }
 
@@ -126,6 +127,14 @@ type AgyConfig struct {
 
 type GoslingConfig struct {
 	DefaultModel         string   `toml:"default_model"`
+	MaxContextTokens     *int     `toml:"max_context_tokens"`
+	ReservedOutputTokens *int     `toml:"reserved_output_tokens"`
+	ExtraArgs            []string `toml:"extra_args"`
+}
+
+type GrokConfig struct {
+	DefaultModel         string   `toml:"default_model"`
+	ReasoningEffort      string   `toml:"reasoning_effort"`
 	MaxContextTokens     *int     `toml:"max_context_tokens"`
 	ReservedOutputTokens *int     `toml:"reserved_output_tokens"`
 	ExtraArgs            []string `toml:"extra_args"`
@@ -220,6 +229,7 @@ type FlagInputs struct {
 	ClaudeArgsRaw           string
 	AgyArgsRaw              string
 	GoslingArgsRaw          string
+	GrokArgsRaw             string
 	OpenAICompatibleArgsRaw string
 }
 
@@ -302,6 +312,7 @@ type RunOptions struct {
 	ClaudeArgs                []string
 	AgyArgs                   []string
 	GoslingArgs               []string
+	GrokArgs                  []string
 	OpenAICompatibleArgs      []string
 	EnvOverlay                map[string]string
 	ConfigSources             []string

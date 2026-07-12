@@ -176,11 +176,12 @@ Supported adapters in this repo today:
 | `claude` / Claude Code | read-only supervisor or adversary; worker/coder and scout assignments are rejected |
 | `agy` | full |
 | `gosling` | coder-only |
+| `grok` | full; headless Grok CLI 0.2.93 with structured output and role-scoped tools |
 | `openai-compatible` / `oai` | read-only reviewer/scout (first cut) |
 
 ## Authentication
 
-Each vendor CLI adapter (`codex`, `claude`, `agy`, `gosling`, etc.) must already be logged in on your machine before you run `tagteam`. `tagteam` does not run vendor login flows, store credentials, or proxy/inject API keys for those CLIs. If an adapter is not authenticated, the run will fail with that CLI's own auth error.
+Each vendor CLI adapter (`codex`, `claude`, `agy`, `gosling`, `grok`, etc.) must already be logged in on your machine before you run `tagteam`. `tagteam` does not run vendor login flows, store credentials, or proxy/inject API keys for those CLIs. If an adapter is not authenticated, the run will fail with that CLI's own auth error.
 
 This note applies to the vendor CLI adapters; the separate `openai-compatible` adapter uses its documented `api_key_env` setting.
 
@@ -633,9 +634,13 @@ reasoning_effort = "high"
 
 [adapters.claude]
 effort = "high"
+
+[adapters.grok]
+default_model = "grok-4.5"
+reasoning_effort = "high"
 ```
 
-The equivalent environment variables are `TAGTEAM_CODEX_REASONING_EFFORT` and `TAGTEAM_CLAUDE_EFFORT`.
+The equivalent environment variables are `TAGTEAM_CODEX_REASONING_EFFORT`, `TAGTEAM_CLAUDE_EFFORT`, `TAGTEAM_GROK_MODEL`, and `TAGTEAM_GROK_REASONING_EFFORT`. Grok passthrough arguments can be supplied with `adapters.grok.extra_args`, `TAGTEAM_GROK_ARGS`, or `--grok-args`.
 
 Claude invocations are serialized across tagteam processes by default because concurrent Claude Code processes can stall or remain pending. Disable this (for example when every run uses isolated Claude configuration) with:
 

@@ -563,6 +563,10 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	if err != nil {
 		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("parse --gosling-args: %w", err)}
 	}
+	grokArgs, err := mergePassthrough(cfg.Adapters.Grok.ExtraArgs, flags.GrokArgsRaw)
+	if err != nil {
+		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("parse --grok-args: %w", err)}
+	}
 	openAICompatibleArgs, err := mergePassthrough(cfg.Adapters.OpenAICompatible.ExtraArgs, flags.OpenAICompatibleArgsRaw)
 	if err != nil {
 		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("parse --openai-compatible-args: %w", err)}
@@ -642,6 +646,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		ClaudeArgs:                claudeArgs,
 		AgyArgs:                   agyArgs,
 		GoslingArgs:               goslingArgs,
+		GrokArgs:                  grokArgs,
 		OpenAICompatibleArgs:      openAICompatibleArgs,
 		EnvOverlay:                cloneStringMap(cfg.EnvOverlay),
 		ConfigSources:             sources,

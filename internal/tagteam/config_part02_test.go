@@ -3,6 +3,7 @@ package tagteam
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -614,5 +615,55 @@ func TestResolveOptions_GoslingPassthrough(t *testing.T) {
 		if opts.GoslingArgs[i] != want[i] {
 			t.Fatalf("gosling args[%d] = %q, want %q", i, opts.GoslingArgs[i], want[i])
 		}
+	}
+}
+
+func TestDefaultConfig_Grok(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Adapters.Grok.DefaultModel != "grok-4.5" || cfg.Adapters.Grok.ReasoningEffort != "high" {
+		t.Fatalf("grok defaults = %#v", cfg.Adapters.Grok)
+	}
+}
+
+func TestMergeEnvConfig_Grok(t *testing.T) {
+	t.Setenv("TAGTEAM_GROK_MODEL", "grok-test")
+	t.Setenv("TAGTEAM_GROK_REASONING_EFFORT", "low")
+	t.Setenv("TAGTEAM_GROK_ARGS", `--output-format json --no-memory`)
+	cfg := DefaultConfig()
+	mergeEnvConfig(&cfg, nil)
+	if cfg.Adapters.Grok.DefaultModel != "grok-test" || cfg.Adapters.Grok.ReasoningEffort != "low" {
+		t.Fatalf("grok env config = %#v", cfg.Adapters.Grok)
+	}
+	want := []string{"--output-format", "json", "--no-memory"}
+	if !reflect.DeepEqual(cfg.Adapters.Grok.ExtraArgs, want) {
+		t.Fatalf("grok args = %#v, want %#v", cfg.Adapters.Grok.ExtraArgs, want)
+	}
+}
+
+func TestResolveOptions_GrokPassthrough(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Adapters.Grok.ExtraArgs = []string{"--no-memory"}
+	opts, err := ResolveOptions(cfg, []string{"defaults"}, FlagInputs{
+		GrokArgsRaw: "--output-format json",
+		Timeout:     15 * time.Minute,
+	}, map[string]bool{}, "ship it")
+	if err != nil {
+		t.Fatalf("ResolveOptions() error = %v", err)
+	}
+	want := []string{"--no-memory", "--output-format", "json"}
+	if !reflect.DeepEqual(opts.GrokArgs, want) {
+		t.Fatalf("grok args = %#v, want %#v", opts.GrokArgs, want)
+	}
+}
+
+func TestMergeConfig_GrokPrecedence(t *testing.T) {
+	cfg := DefaultConfig()
+	mergeConfig(&cfg, Config{Adapters: AdapterConfigSet{Grok: GrokConfig{
+		DefaultModel:    "grok-config",
+		ReasoningEffort: "medium",
+		ExtraArgs:       []string{"--no-memory"},
+	}}})
+	if cfg.Adapters.Grok.DefaultModel != "grok-config" || cfg.Adapters.Grok.ReasoningEffort != "medium" || !reflect.DeepEqual(cfg.Adapters.Grok.ExtraArgs, []string{"--no-memory"}) {
+		t.Fatalf("merged grok config = %#v", cfg.Adapters.Grok)
 	}
 }

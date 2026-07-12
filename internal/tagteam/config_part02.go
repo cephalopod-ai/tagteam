@@ -312,6 +312,17 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 			cfg.Adapters.Gosling.ExtraArgs = parsed
 		}
 	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_GROK_ARGS"); ok {
+		if parsed, err := shlex.Split(value); err == nil {
+			cfg.Adapters.Grok.ExtraArgs = parsed
+		}
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_GROK_MODEL"); ok {
+		cfg.Adapters.Grok.DefaultModel = value
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_GROK_REASONING_EFFORT"); ok {
+		cfg.Adapters.Grok.ReasoningEffort = value
+	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_OPENAI_COMPATIBLE_BASE_URL"); ok {
 		cfg.Adapters.OpenAICompatible.BaseURL = value
 	}
@@ -369,6 +380,7 @@ func validateConfig(cfg Config) error {
 		{"adapters.codex-oss", cfg.Adapters.CodexOSS.MaxContextTokens, cfg.Adapters.CodexOSS.ReservedOutputTokens},
 		{"adapters.agy", cfg.Adapters.Agy.MaxContextTokens, cfg.Adapters.Agy.ReservedOutputTokens},
 		{"adapters.gosling", cfg.Adapters.Gosling.MaxContextTokens, cfg.Adapters.Gosling.ReservedOutputTokens},
+		{"adapters.grok", cfg.Adapters.Grok.MaxContextTokens, cfg.Adapters.Grok.ReservedOutputTokens},
 		{"adapters.openai_compatible", cfg.Adapters.OpenAICompatible.MaxContextTokens, cfg.Adapters.OpenAICompatible.ReservedOutputTokens},
 	} {
 		if err := check(item.name, item.max, item.reserved); err != nil {
@@ -376,6 +388,9 @@ func validateConfig(cfg Config) error {
 		}
 	}
 	if err := validateChoice("adapters.codex.reasoning_effort", cfg.Adapters.Codex.ReasoningEffort, "none", "minimal", "low", "medium", "high", "xhigh"); err != nil {
+		return err
+	}
+	if err := validateChoice("adapters.grok.reasoning_effort", cfg.Adapters.Grok.ReasoningEffort, "none", "minimal", "low", "medium", "high", "xhigh"); err != nil {
 		return err
 	}
 	if err := validateChoice("adapters.claude.effort", cfg.Adapters.Claude.Effort, "low", "medium", "high", "xhigh", "max"); err != nil {

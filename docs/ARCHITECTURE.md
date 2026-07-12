@@ -20,7 +20,7 @@ orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`
 | CLI surface | `internal/cli/root.go`, `internal/cli/tui.go` | Defines commands including `resume`, `transfer`, `findings defer`, and `verify-install`, flag parsing, output formatting, and TUI run selection. |
 | App / run loop | `internal/tagteam/runner.go` | `App` type; `Run`, `Review`, `Fix`, `Doctor`; the round loop, role dispatch, env policy, artifact writing. |
 | Config resolution | `internal/tagteam/config.go` | Layered config (flags > shell env > `.env` overlay > repo `.tagteam.toml` > user config > defaults), profiles, `ResolveOptions`. |
-| Adapters | `internal/tagteam/adapters.go` | Adapter interface + `codex`, `codex-oss`, `claude`, `agy`, `gosling`, `openai-compatible`; `Registry`, command construction, capability sets. |
+| Adapters | `internal/tagteam/adapters.go`, `internal/tagteam/adapters_part02.go` | Adapter interface + `codex`, `codex-oss`, `claude`, `agy`, `gosling`, `grok`, `openai-compatible`; `Registry`, command construction, capability sets. |
 | Types | `internal/tagteam/types.go` | `Mode`, `Role`, `ReasonCode`, `RunOptions`, `FinalRun`, `RunState`, exit codes, JSON contracts. |
 | Artifact store | `internal/tagteam/artifact_store.go`, `durable_io.go` | Derives repository identity, maintains `.tagteam/repo.json`, migrates legacy state, and atomically persists external artifacts. |
 | Active run pointer | `internal/tagteam/active_run.go` | Persists external `active.json` for in-flight run discovery and failure cleanup. |

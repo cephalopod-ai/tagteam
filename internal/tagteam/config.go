@@ -141,6 +141,11 @@ func DefaultConfig() Config {
 				DefaultModel: "",
 				ExtraArgs:    []string{},
 			},
+			Grok: GrokConfig{
+				DefaultModel:    "grok-4.5",
+				ReasoningEffort: "high",
+				ExtraArgs:       []string{},
+			},
 			OpenAICompatible: OpenAICompatibleConfig{
 				BaseURL:      "http://127.0.0.1:11434/v1",
 				DefaultModel: "gemma4:latest",
@@ -398,6 +403,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 	src.Adapters.CodexOSS.ExtraArgs = nil
 	src.Adapters.Agy.ExtraArgs = nil
 	src.Adapters.Gosling.ExtraArgs = nil
+	src.Adapters.Grok.ExtraArgs = nil
 	src.Adapters.OpenAICompatible.BaseURL = ""
 	src.Adapters.OpenAICompatible.APIKeyEnv = ""
 	src.Adapters.OpenAICompatible.ExtraHeaders = nil
@@ -669,6 +675,16 @@ func mergeConfig(dst *Config, src Config) {
 		dst.Adapters.Gosling.ExtraArgs = append([]string{}, src.Adapters.Gosling.ExtraArgs...)
 	}
 	mergeContextBudget(&dst.Adapters.Gosling.MaxContextTokens, &dst.Adapters.Gosling.ReservedOutputTokens, src.Adapters.Gosling.MaxContextTokens, src.Adapters.Gosling.ReservedOutputTokens)
+	if src.Adapters.Grok.DefaultModel != "" {
+		dst.Adapters.Grok.DefaultModel = src.Adapters.Grok.DefaultModel
+	}
+	if src.Adapters.Grok.ReasoningEffort != "" {
+		dst.Adapters.Grok.ReasoningEffort = src.Adapters.Grok.ReasoningEffort
+	}
+	if len(src.Adapters.Grok.ExtraArgs) > 0 {
+		dst.Adapters.Grok.ExtraArgs = append([]string{}, src.Adapters.Grok.ExtraArgs...)
+	}
+	mergeContextBudget(&dst.Adapters.Grok.MaxContextTokens, &dst.Adapters.Grok.ReservedOutputTokens, src.Adapters.Grok.MaxContextTokens, src.Adapters.Grok.ReservedOutputTokens)
 	if src.Adapters.OpenAICompatible.BaseURL != "" {
 		dst.Adapters.OpenAICompatible.BaseURL = src.Adapters.OpenAICompatible.BaseURL
 	}

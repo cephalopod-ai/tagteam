@@ -269,3 +269,86 @@ func (a *GoslingAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 
 	return result, nil
 }
+
+// GrokAdapter invokes Grok's root-level single-turn mode. The root command's
+// --single mode is headless and accepts the prompt as an argument, so Grok
+// does not receive a stdin prompt like the other CLI adapters.
+type GrokAdapter struct {
+	DefaultModel    string
+	ReasoningEffort string
+	ExtraArgs       []string
+}
+
+func (a *GrokAdapter) ID() string {
+	return "grok"
+}
+
+func (a *GrokAdapter) Capabilities() CapabilitySet {
+	return CapabilitySet{SupportsSchema: true}
+}
+
+func (a *GrokAdapter) Detect(ctx context.Context) (VersionInfo, error) {
+	return detectBinary(ctx, "grok", []string{"--version"}, "install grok / grok login")
+}
+
+func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
+	model := req.Model
+	if model == "" {
+		model = a.DefaultModel
+	}
+	prompt := strings.TrimSuffix(string(promptStdin(req)), "\n")
+	argv := []string{"grok", "--single", prompt, "--cwd", req.Workdir}
+	if model != "" {
+		argv = append(argv, "--model", model)
+	}
+	if a.ReasoningEffort != "" {
+		argv = append(argv, "--reasoning-effort", a.ReasoningEffort)
+	}
+	argv = append(argv, "--output-format", "json")
+	switch role {
+	case RoleCoder:
+		argv = append(argv,
+			"--permission-mode", "acceptEdits",
+			"--tools", "read_file,list_dir,write_file,search_replace,run_terminal_cmd",
+		)
+	case RoleAdversary, RoleSupervisor, RoleReporter, RoleScout:
+		argv = append(argv,
+			"--permission-mode", "dontAsk",
+			"--tools", "read_file,list_dir",
+		)
+	default:
+		return nil, fmt.Errorf("unsupported role %q", role)
+	}
+	if (role == RoleCoder || role == RoleAdversary || role == RoleSupervisor) && req.SchemaPath != "" {
+		schemaBytes, err := osReadFile(req.SchemaPath)
+		if err != nil {
+			return nil, err
+		}
+		argv = append(argv, "--json-schema", string(schemaBytes))
+	}
+	if req.SystemPrompt != "" {
+		argv = append(argv, "--rules", req.SystemPrompt)
+	}
+	argv = append(argv, a.ExtraArgs...)
+	return &CommandSpec{Argv: argv, Dir: req.Workdir, Output: req.OutputPath}, nil
+}
+
+func (a *GrokAdapter) ParseResult(role Role, raw []byte) (Result, error) {
+	result := Result{Raw: raw, Text: strings.TrimSpace(string(raw))}
+	if role == RoleAdversary {
+		review, err := parseReviewPayloadLabeled(raw, "grok")
+		if err != nil {
+			return Result{}, err
+		}
+		result.Review = review
+		result.Text = review.Summary
+	}
+	if role == RoleScout {
+		scout, err := parseScout(raw)
+		if err != nil {
+			return Result{}, err
+		}
+		result.Scout = scout
+	}
+	return result, nil
+}

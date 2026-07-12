@@ -462,7 +462,7 @@ func validateRoleTarget(role Role, target RoleTarget) error {
 func (a *App) Doctor(ctx context.Context, opts RunOptions) (map[string]VersionInfo, error) {
 	registry := Registry(a.Config, opts)
 	status := map[string]VersionInfo{}
-	for _, key := range []string{"codex", "codex-oss", "claude", "agy", "gosling", "openai-compatible"} {
+	for _, key := range []string{"codex", "codex-oss", "claude", "agy", "gosling", "grok", "openai-compatible"} {
 		info, err := registry[key].Detect(ctx)
 		if err != nil {
 			return nil, err

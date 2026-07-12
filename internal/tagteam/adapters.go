@@ -50,6 +50,11 @@ func Registry(cfg Config, opts RunOptions) map[string]Adapter {
 			DefaultModel: cfg.Adapters.Gosling.DefaultModel,
 			ExtraArgs:    opts.GoslingArgs,
 		},
+		"grok": &GrokAdapter{
+			DefaultModel:    cfg.Adapters.Grok.DefaultModel,
+			ReasoningEffort: cfg.Adapters.Grok.ReasoningEffort,
+			ExtraArgs:       opts.GrokArgs,
+		},
 		"openai-compatible": openAICompatible,
 		"oai":               openAICompatible,
 	}

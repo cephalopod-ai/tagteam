@@ -1,7 +1,12 @@
 package tagteam
 
 import (
+	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -132,5 +137,107 @@ func TestDecodeEmbeddedJSONReturnsBaseErrorWhenNothingMatches(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("expected a single decode attempt for prose without objects, got %d", calls)
+	}
+}
+
+func TestGrokBuildCmdCoder(t *testing.T) {
+	schemaPath := filepath.Join(t.TempDir(), "schema.json")
+	if err := os.WriteFile(schemaPath, []byte(`{"type":"object"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &GrokAdapter{DefaultModel: "grok-4.5", ReasoningEffort: "high", ExtraArgs: []string{"--no-memory"}}
+	spec, err := adapter.BuildCmd(RoleCoder, Request{Prompt: "make it work", Workdir: "/repo", SchemaPath: schemaPath})
+	if err != nil {
+		t.Fatalf("BuildCmd() error = %v", err)
+	}
+	want := []string{
+		"grok", "--single", "make it work", "--cwd", "/repo",
+		"--model", "grok-4.5", "--reasoning-effort", "high",
+		"--output-format", "json", "--permission-mode", "acceptEdits",
+		"--tools", "read_file,list_dir,write_file,search_replace,run_terminal_cmd",
+		"--json-schema", `{"type":"object"}`, "--no-memory",
+	}
+	if !reflect.DeepEqual(spec.Argv, want) {
+		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
+	}
+	if len(spec.Stdin) != 0 {
+		t.Fatalf("stdin = %q, want empty", string(spec.Stdin))
+	}
+}
+
+func TestGrokBuildCmdAdversaryAndScoutReadOnly(t *testing.T) {
+	schemaPath := filepath.Join(t.TempDir(), "schema.json")
+	if err := os.WriteFile(schemaPath, []byte(`{"type":"object"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &GrokAdapter{DefaultModel: "grok-4.5", ReasoningEffort: "high"}
+	for _, role := range []Role{RoleAdversary, RoleSupervisor, RoleReporter, RoleScout} {
+		spec, err := adapter.BuildCmd(role, Request{Prompt: "inspect", Workdir: "/repo", SchemaPath: schemaPath})
+		if err != nil {
+			t.Fatalf("BuildCmd(%s) error = %v", role, err)
+		}
+		want := []string{
+			"grok", "--single", "inspect", "--cwd", "/repo",
+			"--model", "grok-4.5", "--reasoning-effort", "high",
+			"--output-format", "json", "--permission-mode", "dontAsk",
+			"--tools", "read_file,list_dir",
+		}
+		if role != RoleScout && role != RoleReporter {
+			want = append(want, "--json-schema", `{"type":"object"}`)
+		}
+		if !reflect.DeepEqual(spec.Argv, want) {
+			t.Fatalf("%s argv mismatch\nwant: %#v\ngot:  %#v", role, want, spec.Argv)
+		}
+	}
+}
+
+func TestGrokBuildCmdRejectsUnknownRole(t *testing.T) {
+	_, err := (&GrokAdapter{}).BuildCmd(Role("invalid"), Request{Prompt: "x", Workdir: "/repo"})
+	if err == nil || !strings.Contains(err.Error(), `unsupported role "invalid"`) {
+		t.Fatalf("BuildCmd() error = %v", err)
+	}
+}
+
+func TestGrokParseResult(t *testing.T) {
+	adapter := &GrokAdapter{}
+	textResult, err := adapter.ParseResult(RoleCoder, []byte("implemented"))
+	if err != nil || textResult.Text != "implemented" {
+		t.Fatalf("coder result = %#v, error = %v", textResult, err)
+	}
+	reviewResult, err := adapter.ParseResult(RoleAdversary, []byte(`{"verdict":"pass","summary":"looks good","findings":[],"test_suggestions":[]}`))
+	if err != nil || reviewResult.Review == nil || reviewResult.Review.Summary != "looks good" {
+		t.Fatalf("review result = %#v, error = %v", reviewResult, err)
+	}
+	scoutResult, err := adapter.ParseResult(RoleScout, []byte(`{"summary":"found it","relevant_files":["main.go"]}`))
+	if err != nil || scoutResult.Scout == nil || scoutResult.Scout.Summary != "found it" {
+		t.Fatalf("scout result = %#v, error = %v", scoutResult, err)
+	}
+}
+
+func TestGrokDetectNonZeroExit(t *testing.T) {
+	oldLookPath := execLookPath
+	oldCommandContext := execCommandContext
+	defer func() {
+		execLookPath = oldLookPath
+		execCommandContext = oldCommandContext
+	}()
+	execLookPath = func(file string) (string, error) {
+		if file == "grok" {
+			return "/mock/bin/grok", nil
+		}
+		return "", os.ErrNotExist
+	}
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if name == "grok" {
+			return exec.CommandContext(ctx, "false")
+		}
+		return exec.CommandContext(ctx, name, args...)
+	}
+	info, err := (&GrokAdapter{}).Detect(context.Background())
+	if err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+	if !info.Found || info.Runnable || !strings.Contains(info.Hint, "probe failed") {
+		t.Fatalf("unexpected detection result: %#v", info)
 	}
 }

@@ -49,6 +49,8 @@ func scoutContextLimitForAdapter(cfg Config, adapter string) ScoutContextLimit {
 		return contextLimitFromConfig(cfg.Adapters.Agy.MaxContextTokens, cfg.Adapters.Agy.ReservedOutputTokens)
 	case "gosling":
 		return contextLimitFromConfig(cfg.Adapters.Gosling.MaxContextTokens, cfg.Adapters.Gosling.ReservedOutputTokens)
+	case "grok":
+		return contextLimitFromConfig(cfg.Adapters.Grok.MaxContextTokens, cfg.Adapters.Grok.ReservedOutputTokens)
 	case "openai-compatible", "oai":
 		return contextLimitFromConfig(cfg.Adapters.OpenAICompatible.MaxContextTokens, cfg.Adapters.OpenAICompatible.ReservedOutputTokens)
 	default:
