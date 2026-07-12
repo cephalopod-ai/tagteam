@@ -200,6 +200,9 @@ func LoadConfigWithOptions(workdir string, opts LoadConfigOptions) (Config, []st
 	}
 
 	mergeEnvConfig(&cfg, cfg.EnvOverlay)
+	if err := normalizeTestPresets(&cfg); err != nil {
+		return Config{}, nil, err
+	}
 	if err := validateConfig(cfg); err != nil {
 		return Config{}, nil, err
 	}
@@ -411,6 +414,9 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 	// Repo-local subprocesses and external bridge paths are authority-bearing.
 	// They are accepted only with --trust-repo-config.
 	src.CodeIntel = CodeIntelConfig{}
+	// Named test presets resolve shell commands; never accept them from
+	// untrusted repo config even when the name matches a trusted preset.
+	src.TestPresets = nil
 	return src
 }
 
@@ -700,6 +706,15 @@ func mergeConfig(dst *Config, src Config) {
 	}
 	if len(src.Adapters.OpenAICompatible.ExtraArgs) > 0 {
 		dst.Adapters.OpenAICompatible.ExtraArgs = append([]string{}, src.Adapters.OpenAICompatible.ExtraArgs...)
+	}
+	if src.TestPresets != nil {
+		if dst.TestPresets == nil {
+			dst.TestPresets = map[string]TestPresetConfig{}
+		}
+		for key, preset := range src.TestPresets {
+			// Later trusted layers fully replace an earlier entry with the same key.
+			dst.TestPresets[key] = preset
+		}
 	}
 }
 

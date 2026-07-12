@@ -572,7 +572,18 @@ func (r *ControlRuntime) optionsForLaunch(spec ControlLaunchSpec) (RunOptions, e
 		return RunOptions{}, fmt.Errorf("unsupported control mode %q", spec.Team.Mode)
 	}
 	if spec.TestPreset != "" {
-		return RunOptions{}, fmt.Errorf("test_preset %q is unavailable until trusted preset resolution is implemented", spec.TestPreset)
+		// Name is already bound into the start action digest; resolve the
+		// command solely from the host-trusted registry (never raw caller input).
+		preset, ok := r.config.TestPresets[spec.TestPreset]
+		if !ok {
+			return RunOptions{}, fmt.Errorf("unknown test_preset %q", spec.TestPreset)
+		}
+		flags.Test = preset.Command
+		changed["test"] = true
+		if preset.IdentityRegex != "" {
+			flags.TestIdentityRegex = preset.IdentityRegex
+			changed["test-identity-regex"] = true
+		}
 	}
 	opts, err := ResolveOptions(r.config, r.sources, flags, changed, spec.Prompt)
 	if err != nil {

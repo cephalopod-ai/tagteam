@@ -436,6 +436,9 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	if changed["test"] {
 		testCmd = flags.Test
 	}
+	if changed["test-identity-regex"] {
+		testIdentityRegex = flags.TestIdentityRegex
+	}
 	if changed["lint"] {
 		lintCmd = flags.Lint
 	}

@@ -620,10 +620,20 @@ func ParseRoleTarget(raw string) (RoleTarget, error) {
 	return target, nil
 }
 
+// TestPresetConfig is one named entry in the host-trusted test preset registry.
+// Names resolve only from user config / built-in defaults (never raw MCP input
+// or untrusted repo .tagteam.toml). Lookup is exact-match on the normalized
+// name (no case folding).
+type TestPresetConfig struct {
+	Command       string `toml:"command"`
+	IdentityRegex string `toml:"identity_regex,omitempty"`
+}
+
 type Config struct {
-	Defaults   DefaultsConfig           `toml:"defaults"`
-	Profiles   map[string]ProfileConfig `toml:"profiles"`
-	Adapters   AdapterConfigSet         `toml:"adapters"`
-	CodeIntel  CodeIntelConfig          `toml:"code_intel"`
-	EnvOverlay map[string]string        `toml:"-"`
+	Defaults    DefaultsConfig              `toml:"defaults"`
+	Profiles    map[string]ProfileConfig    `toml:"profiles"`
+	Adapters    AdapterConfigSet            `toml:"adapters"`
+	CodeIntel   CodeIntelConfig             `toml:"code_intel"`
+	TestPresets map[string]TestPresetConfig `toml:"test_presets"`
+	EnvOverlay  map[string]string           `toml:"-"`
 }

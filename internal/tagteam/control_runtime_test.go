@@ -167,3 +167,96 @@ func controlStartFixture(t *testing.T, repo string) ControlStartRequest {
 	request.Approval = ControlApproval{ActionDigest: digest, ApprovedAt: now.Add(-time.Second), ExpiresAt: now.Add(5 * time.Minute), Nonce: "operator-approved-nonce"}
 	return request
 }
+
+func TestControlRuntimeResolvesTrustedTestPresetIntoRunOptions(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	cfg := DefaultConfig()
+	cfg.Defaults.Test = "make default-test"
+	cfg.TestPresets = map[string]TestPresetConfig{
+		"go-test": {
+			Command:       "go test ./...",
+			IdentityRegex: `FAIL:\s+(\S+)`,
+		},
+	}
+	runtime := NewControlRuntime(ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}, cfg, nil)
+	spec := controlLaunchFixture(t, repo)
+	spec.TestPreset = "go-test"
+	opts, err := runtime.optionsForLaunch(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.TestCmd != "go test ./..." {
+		t.Fatalf("TestCmd = %q, want preset command", opts.TestCmd)
+	}
+	if opts.TestIdentityRegex != `FAIL:\s+(\S+)` {
+		t.Fatalf("TestIdentityRegex = %q", opts.TestIdentityRegex)
+	}
+}
+
+func TestControlRuntimeEmptyTestPresetFallsBackToTrustedDefaults(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	cfg := DefaultConfig()
+	cfg.Defaults.Test = "make default-test"
+	cfg.TestPresets = map[string]TestPresetConfig{
+		"go-test": {Command: "go test ./..."},
+	}
+	runtime := NewControlRuntime(ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}, cfg, nil)
+	spec := controlLaunchFixture(t, repo)
+	spec.TestPreset = ""
+	opts, err := runtime.optionsForLaunch(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.TestCmd != "make default-test" {
+		t.Fatalf("TestCmd = %q, want trusted default", opts.TestCmd)
+	}
+}
+
+func TestControlRuntimeUnknownTestPresetIsDeterministic(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	cfg := DefaultConfig()
+	cfg.TestPresets = map[string]TestPresetConfig{
+		"go-test": {Command: "go test ./..."},
+	}
+	runtime := NewControlRuntime(ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}, cfg, nil)
+	spec := controlLaunchFixture(t, repo)
+	spec.TestPreset = "no-such-preset"
+	_, err := runtime.optionsForLaunch(spec)
+	if err == nil || err.Error() != `unknown test_preset "no-such-preset"` {
+		t.Fatalf("error = %v, want deterministic unknown test_preset message", err)
+	}
+	if strings.Contains(err.Error(), "go-test") || strings.Contains(err.Error(), "go test") {
+		t.Fatalf("error leaked registry contents: %v", err)
+	}
+}
+
+func TestControlStartActionDigestBindsPresetNameNotResolvedCommand(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	request := ControlStartRequest{
+		SchemaVersion:  ControlContractVersion,
+		Launch:         controlLaunchFixture(t, repo),
+		IdempotencyKey: "session-1-generation-1",
+	}
+	request.Launch.TestPreset = "go-test"
+	first, err := ControlStartActionDigest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Resolution changes only RunOptions; the digest is independent of the
+	// host registry command that a name maps to.
+	second, err := ControlStartActionDigest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("digests diverged without launch change: %q %q", first, second)
+	}
+	request.Launch.TestPreset = "unit"
+	third, err := ControlStartActionDigest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == third {
+		t.Fatal("start digest did not bind test_preset name")
+	}
+}

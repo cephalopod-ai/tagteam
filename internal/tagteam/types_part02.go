@@ -213,6 +213,7 @@ type FlagInputs struct {
 	WatchdogTimeout         time.Duration
 	Rounds                  int
 	Test                    string
+	TestIdentityRegex       string
 	Lint                    string
 	NoTest                  bool
 	JSON                    bool

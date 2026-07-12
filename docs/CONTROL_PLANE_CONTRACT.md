@@ -70,8 +70,13 @@ unless the operator explicitly passes `--allow-dev-build`.
 - Prompts, role identifiers, time budgets, rounds, changed-file lists, status
   messages, plan entries, findings, and page sizes are bounded.
 - Recovery policy is `assist`; model-authored commands and raw test commands
-  are not part of the contract. Tests are selected by a future trusted preset
-  registry.
+  are not part of the contract. Tests are selected by a named `test_preset`
+  that resolves only from host-trusted configuration (`[test_presets]` in user
+  config / built-in defaults, or trusted repo config with
+  `--trust-repo-config`). Untrusted repo `.tagteam.toml` cannot define or
+  influence presets. Lookup is exact-match on the normalized preset name (no
+  case folding). The approval digest binds the preset **name**, not the
+  resolved command.
 - Start approvals bind the normalized launch plus operation and idempotency key,
   expire within 30 minutes, and are retained under the resolved state root to
   reject nonce replay across server restarts. The MCP host remains responsible
@@ -81,9 +86,11 @@ unless the operator explicitly passes `--allow-dev-build`.
 - A persisted, unfinalized start reservation blocks another start for the same
   worktree until that approval expires. This closes the gap before the runner
   has written `active.json`.
-- A start with no configured trusted test preset uses Tagteam's normal trusted
-  config defaults. Non-empty `test_preset` references are rejected until a
-  trusted preset registry exists.
+- A start with an empty `test_preset` uses Tagteam's normal trusted config
+  defaults for the test command. A non-empty name is looked up in the trusted
+  registry: unknown names fail deterministically (`unknown test_preset "…"`)
+  without leaking registry contents; known names set the run's test command
+  (and optional identity regex) from the preset entry only.
 
 ## Deferred transport and lifecycle work
 

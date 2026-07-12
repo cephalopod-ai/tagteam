@@ -543,7 +543,20 @@ tagteam fix
 
 If a `.env` file exists in the selected workdir, `tagteam` parses it as a small, line-oriented dotenv subset: `KEY=VALUE`, optional `export`, inline comments outside quotes, single-quoted raw values, and double-quoted escape sequences such as `\n`. `.env` is a convenience source for local development; it is not a full shell parser, and explicit shell exports still win.
 
-Repo-local `.tagteam.toml` is loaded in untrusted mode by default. It can set ordinary role/model defaults, but high-authority settings such as `defaults.test`, `git_safety`, `code_intel_command`, adapter `extra_args`, Claude `coder_allowed_tools` / `bare` / `serialize`, and `openai-compatible` `base_url`, `api_key_env`, `extra_headers`, or `extra_args` require `--trust-repo-config`.
+Repo-local `.tagteam.toml` is loaded in untrusted mode by default. It can set ordinary role/model defaults, but high-authority settings such as `defaults.test`, `git_safety`, `code_intel_command`, `[test_presets]`, adapter `extra_args`, Claude `coder_allowed_tools` / `bare` / `serialize`, and `openai-compatible` `base_url`, `api_key_env`, `extra_headers`, or `extra_args` require `--trust-repo-config`. Untrusted repo config never contributes `[test_presets]` entries (they are stripped entirely).
+
+### Trusted test presets (MCP / control plane)
+
+MCP starts may select a test command only by **name** via `test_preset`. Named presets resolve from host-trusted configuration — primarily user config under `[test_presets.<name>]` — never from raw model/MCP command strings. Untrusted repo `.tagteam.toml` cannot inject presets; with `--trust-repo-config`, a trusted repo file may define them the same way as other high-authority keys. Names are exact-match identifiers (no case folding). Empty `test_preset` keeps Tagteam's normal trusted `defaults.test` / profile defaults. Unknown names fail closed with a stable error.
+
+```toml
+[test_presets.go-test]
+command = "go test ./..."
+identity_regex = "FAIL:\\s+(\\S+)"   # optional; must compile with a capture group
+
+[test_presets.unit]
+command = "make unit"
+```
 
 User config path:
 

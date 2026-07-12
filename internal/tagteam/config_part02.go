@@ -3,6 +3,7 @@ package tagteam
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -395,6 +396,68 @@ func validateConfig(cfg Config) error {
 	}
 	if err := validateChoice("adapters.claude.effort", cfg.Adapters.Claude.Effort, "low", "medium", "high", "xhigh", "max"); err != nil {
 		return err
+	}
+	if err := validateTestPresets(cfg.TestPresets); err != nil {
+		return err
+	}
+	return nil
+}
+
+// normalizeTestPresets trims keys/commands from trusted config and rewrites the
+// registry under exact-match normalized names. Fail closed on empty commands,
+// control characters, over-length keys, or collisions after trim.
+func normalizeTestPresets(cfg *Config) error {
+	if cfg == nil || len(cfg.TestPresets) == 0 {
+		return nil
+	}
+	out := make(map[string]TestPresetConfig, len(cfg.TestPresets))
+	for key, preset := range cfg.TestPresets {
+		name := strings.TrimSpace(key)
+		if name == "" || len(name) > controlMaxRoleBytes || containsControl(name) {
+			return fmt.Errorf("test_presets key %q must be a non-empty identifier no longer than %d bytes", key, controlMaxRoleBytes)
+		}
+		if _, exists := out[name]; exists {
+			return fmt.Errorf("test_presets: duplicate name %q after normalization", name)
+		}
+		command := strings.TrimSpace(preset.Command)
+		if command == "" {
+			return fmt.Errorf("test_presets.%s.command is required", name)
+		}
+		if containsControl(command) {
+			return fmt.Errorf("test_presets.%s.command must not contain control characters", name)
+		}
+		identity := strings.TrimSpace(preset.IdentityRegex)
+		if identity != "" {
+			compiled, err := regexp.Compile(identity)
+			if err != nil || compiled.NumSubexp() < 1 {
+				return fmt.Errorf("test_presets.%s.identity_regex must compile and contain a capture group", name)
+			}
+		}
+		out[name] = TestPresetConfig{Command: command, IdentityRegex: identity}
+	}
+	cfg.TestPresets = out
+	return nil
+}
+
+// validateTestPresets requires registry entries already be normalized (exact-match
+// keys, no case folding) so in-memory configs fail closed the same way as loaded ones.
+func validateTestPresets(presets map[string]TestPresetConfig) error {
+	for key, preset := range presets {
+		if key == "" || strings.TrimSpace(key) != key || len(key) > controlMaxRoleBytes || containsControl(key) {
+			return fmt.Errorf("test_presets key %q must be a normalized identifier no longer than %d bytes", key, controlMaxRoleBytes)
+		}
+		if preset.Command == "" || strings.TrimSpace(preset.Command) != preset.Command || containsControl(preset.Command) {
+			return fmt.Errorf("test_presets.%s.command must be a non-empty normalized command", key)
+		}
+		if preset.IdentityRegex != "" {
+			if strings.TrimSpace(preset.IdentityRegex) != preset.IdentityRegex {
+				return fmt.Errorf("test_presets.%s.identity_regex must be normalized", key)
+			}
+			compiled, err := regexp.Compile(preset.IdentityRegex)
+			if err != nil || compiled.NumSubexp() < 1 {
+				return fmt.Errorf("test_presets.%s.identity_regex must compile and contain a capture group", key)
+			}
+		}
 	}
 	return nil
 }
