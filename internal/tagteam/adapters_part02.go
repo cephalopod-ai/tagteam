@@ -321,7 +321,9 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	default:
 		return nil, fmt.Errorf("unsupported role %q", role)
 	}
-	if (role == RoleCoder || role == RoleAdversary || role == RoleSupervisor) && req.SchemaPath != "" {
+	// Grok's schema-constrained single-turn mode finalizes before a coder can
+	// complete tool calls. Tagteam validates the coder envelope after execution.
+	if (role == RoleAdversary || role == RoleSupervisor) && req.SchemaPath != "" {
 		schemaBytes, err := osReadFile(req.SchemaPath)
 		if err != nil {
 			return nil, err

@@ -155,7 +155,7 @@ func TestGrokBuildCmdCoder(t *testing.T) {
 		"--model", "grok-4.5", "--reasoning-effort", "high",
 		"--output-format", "json", "--no-plan", "--no-subagents", "--no-memory",
 		"--permission-mode", "acceptEdits",
-		"--json-schema", `{"type":"object"}`, "--verbatim",
+		"--verbatim",
 	}
 	if !reflect.DeepEqual(spec.Argv, want) {
 		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
