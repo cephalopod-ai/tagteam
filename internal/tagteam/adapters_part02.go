@@ -306,7 +306,11 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	}
 	// Tagteam owns planning, role orchestration, and run state. Keeping those
 	// Grok features off also avoids inheriting incompatible local agent config.
-	argv = append(argv, "--output-format", "json", "--no-plan", "--no-subagents", "--no-memory")
+	argv = append(argv,
+		"--output-format", "json",
+		"--no-plan", "--no-subagents", "--no-memory",
+		"--max-turns", "100",
+	)
 	switch role {
 	case RoleCoder:
 		// Grok 0.2.93 rejects filtered coder toolsets when its terminal tool has

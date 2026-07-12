@@ -154,6 +154,7 @@ func TestGrokBuildCmdCoder(t *testing.T) {
 		"grok", "--single", "make it work", "--cwd", "/repo",
 		"--model", "grok-4.5", "--reasoning-effort", "high",
 		"--output-format", "json", "--no-plan", "--no-subagents", "--no-memory",
+		"--max-turns", "100",
 		"--permission-mode", "acceptEdits",
 		"--verbatim",
 	}
@@ -180,6 +181,7 @@ func TestGrokBuildCmdAdversaryAndScoutReadOnly(t *testing.T) {
 			"grok", "--single", "inspect", "--cwd", "/repo",
 			"--model", "grok-4.5", "--reasoning-effort", "high",
 			"--output-format", "json", "--no-plan", "--no-subagents", "--no-memory",
+			"--max-turns", "100",
 			"--permission-mode", "dontAsk",
 			"--tools", "read_file,list_dir",
 		}
