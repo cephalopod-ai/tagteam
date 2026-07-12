@@ -12,9 +12,37 @@ import (
 
 const (
 	liveProgressArtifact        = "live-progress.json"
+	hostActivityArtifact        = "host-activity.json"
 	preexistingWorktreeArtifact = "preexisting-worktree.json"
 	liveProgressCaptureTimeout  = 2 * time.Second
 )
+
+// HostActivity is host-owned telemetry for work that does not run through an
+// adapter. It keeps status useful during preflight tests and preserves exact
+// attribution when a host command mutates the repository.
+type HostActivity struct {
+	SchemaVersion int       `json:"schema_version"`
+	Actor         string    `json:"actor"`
+	Phase         string    `json:"phase"`
+	Status        string    `json:"status"`
+	Command       string    `json:"command,omitempty"`
+	OutputPath    string    `json:"output_path,omitempty"`
+	Elapsed       string    `json:"elapsed,omitempty"`
+	ChangedFiles  []string  `json:"changed_files,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	StartedAt     time.Time `json:"started_at"`
+	FinishedAt    time.Time `json:"finished_at,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+func writeHostActivity(runDir string, activity HostActivity) error {
+	if runDir == "" {
+		return nil
+	}
+	activity.SchemaVersion = ArtifactSchemaVersion
+	activity.UpdatedAt = time.Now().UTC()
+	return writeJSONAtomic(filepath.Join(runDir, hostActivityArtifact), activity)
+}
 
 type PreexistingWorktree struct {
 	SchemaVersion int       `json:"schema_version"`

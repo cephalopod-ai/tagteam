@@ -288,7 +288,7 @@ cd my-project
 tagteam "add a --json flag to the export command and cover it with a test"
 ```
 
-With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `agy:Gemini 3.5 Flash (Medium)`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, and diff summary, or afterward to see the latest completed run. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
+With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `agy:Gemini 3.5 Flash (Medium)`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
 
 Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
 
@@ -685,7 +685,7 @@ State changes are atomic and journaled through `state.json` plus `events.jsonl`.
 - `bundle-<role>-round-N/` (host-owned review/supervisor input bundle)
 - `test-round-N.txt`
 - `deliveries/<invocation-id>.stdout.txt` / `.stderr.txt` / `.json`
-- `timeout-calibration.json`, `live-progress.json`
+- `timeout-calibration.json`, `live-progress.json`, `host-activity.json`
 - `recovery-round-N.json` and the preserved partial patch when recovery is required
 - `quality-gates-round-N.json`, `findings.json`
 - `post-scout-execution-round-N.json` (relay post-scout host-owned success/failure status)

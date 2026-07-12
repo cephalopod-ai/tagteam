@@ -128,6 +128,32 @@ func TestBuildRunSnapshot_RunningStateOnly(t *testing.T) {
 	}
 }
 
+func TestBuildRunSnapshotProjectsHostActivity(t *testing.T) {
+	workdir, runDir, _ := newRunDirForSnapshotTest(t)
+	activity := HostActivity{
+		SchemaVersion: ArtifactSchemaVersion,
+		Actor:         "tagteam-host",
+		Phase:         "baseline-test",
+		Status:        "integrity_violation",
+		Command:       "go test ./...",
+		OutputPath:    filepath.Join(runDir, "baseline-test.txt"),
+		ChangedFiles:  []string{"registry.yaml"},
+		StartedAt:     time.Now().Add(-time.Second),
+		UpdatedAt:     time.Now(),
+	}
+	if err := writeJSONWithNewline(filepath.Join(runDir, hostActivityArtifact), activity); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := BuildRunSnapshot(workdir, runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.HostActivity == nil || snapshot.HostActivity.Status != "integrity_violation" || len(snapshot.HostActivity.ChangedFiles) != 1 {
+		t.Fatalf("host activity not projected: %#v", snapshot.HostActivity)
+	}
+}
+
 func TestBuildRunSnapshot_CompletedFinalRun(t *testing.T) {
 	workdir, runDir, runID := newRunDirForSnapshotTest(t)
 	state := RunState{RunID: runID, Mode: ModeSupervisor, Status: "running", Phase: "round-1", CurrentRound: 1}

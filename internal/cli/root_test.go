@@ -150,3 +150,31 @@ func TestRenderRunSnapshotIncludesQueueContext(t *testing.T) {
 		t.Fatalf("queue context missing from status output:\n%s", got)
 	}
 }
+
+func TestRenderRunSnapshotIncludesHostActivity(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	renderRunSnapshot(cmd, tagteam.RunSnapshot{HostActivity: &tagteam.HostActivity{
+		Actor:        "tagteam-host",
+		Phase:        "baseline-test",
+		Status:       "integrity_violation",
+		Elapsed:      "3s",
+		Command:      "pytest -q",
+		OutputPath:   "/tmp/run/baseline-test.txt",
+		ChangedFiles: []string{"working/registry.yaml", "archived/registry.yaml"},
+		Error:        "repository mutation",
+	}}, false)
+
+	got := out.String()
+	for _, want := range []string{
+		"host actor=tagteam-host phase=baseline-test status=integrity_violation elapsed=3s",
+		"host_command=pytest -q output=/tmp/run/baseline-test.txt",
+		"host_mutated_files=working/registry.yaml,archived/registry.yaml",
+		"host_error=repository mutation",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("status output missing %q\nfull output:\n%s", want, got)
+		}
+	}
+}

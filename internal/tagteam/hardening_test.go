@@ -41,16 +41,25 @@ func TestRunBaselineTestRejectsTrackedWorktreeMutation(t *testing.T) {
 	runGit(t, repo, "add", "tracked.txt")
 	runGit(t, repo, "commit", "-m", "init")
 
+	runDir := t.TempDir()
 	_, err := runBaselineTest(context.Background(), RunOptions{
 		Workdir: repo,
 		TestCmd: "sh -c 'printf mutation > tracked.txt'",
 		Timeout: 10 * time.Second,
-	}, t.TempDir())
+	}, runDir)
 	if err == nil || !IsIntegrityViolation(err) {
 		t.Fatalf("runBaselineTest() error = %T %v, want integrity violation", err, err)
 	}
 	if !strings.Contains(err.Error(), "baseline-test:tracked.txt") {
 		t.Fatalf("baseline mutation diagnostic = %v", err)
+	}
+	var activity HostActivity
+	readJSONFile(t, filepath.Join(runDir, hostActivityArtifact), &activity)
+	if activity.Actor != "tagteam-host" || activity.Phase != "baseline-test" || activity.Status != "integrity_violation" {
+		t.Fatalf("baseline host activity = %#v", activity)
+	}
+	if !reflect.DeepEqual(activity.ChangedFiles, []string{"tracked.txt"}) || activity.OutputPath == "" || activity.Elapsed == "" {
+		t.Fatalf("baseline mutation attribution = %#v", activity)
 	}
 }
 

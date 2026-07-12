@@ -523,6 +523,7 @@ type RunSnapshot struct {
 	RoundsRequested  int                   `json:"rounds_requested,omitempty"`
 	RoleStatuses     map[string]RoleStatus `json:"role_statuses,omitempty"`
 	LiveProgress     *LiveProgress         `json:"live_progress,omitempty"`
+	HostActivity     *HostActivity         `json:"host_activity,omitempty"`
 	PlanSummary      *PlanSummary          `json:"plan_summary,omitempty"`
 	LatestDiffPath   string                `json:"latest_diff_path,omitempty"`
 	LatestReviewPath string                `json:"latest_review_path,omitempty"`

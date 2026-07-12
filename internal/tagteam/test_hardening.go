@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/shlex"
 )
@@ -159,25 +160,57 @@ func runBaselineTest(ctx context.Context, opts RunOptions, runDir string) (*Test
 	if opts.TestCmd == "" || opts.NoTest {
 		return nil, nil
 	}
+	started := time.Now().UTC()
+	path := filepath.Join(runDir, "baseline-test.txt")
+	activity := HostActivity{
+		Actor:      "tagteam-host",
+		Phase:      "baseline-test",
+		Status:     "running",
+		Command:    opts.TestCmd,
+		OutputPath: path,
+		StartedAt:  started,
+	}
+	_ = writeHostActivity(runDir, activity)
+	finish := func(status string, changed []string, cause error) {
+		activity.Status = status
+		activity.Elapsed = shortDuration(time.Since(started))
+		activity.ChangedFiles = append([]string(nil), changed...)
+		activity.FinishedAt = time.Now().UTC()
+		if cause != nil {
+			activity.Error = cause.Error()
+		}
+		_ = writeHostActivity(runDir, activity)
+	}
 	before, err := captureWorktreeSnapshot(ctx, opts.Workdir)
 	if err != nil {
-		return nil, fmt.Errorf("capture worktree before baseline test: %w", err)
+		wrapped := fmt.Errorf("capture worktree before baseline test: %w", err)
+		finish("failed", nil, wrapped)
+		return nil, wrapped
 	}
-	path := filepath.Join(runDir, "baseline-test.txt")
 	test, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, path, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
 	if err != nil {
+		finish("failed", nil, err)
 		return nil, err
 	}
 	after, err := captureWorktreeSnapshot(ctx, opts.Workdir)
 	if err != nil {
-		return nil, fmt.Errorf("capture worktree after baseline test: %w", err)
+		wrapped := fmt.Errorf("capture worktree after baseline test: %w", err)
+		finish("failed", nil, wrapped)
+		return nil, wrapped
 	}
 	if changed := worktreeDelta(before, after); len(changed) > 0 {
 		paths := make([]string, 0, len(changed))
 		for _, changedPath := range changed {
 			paths = append(paths, "baseline-test:"+changedPath)
 		}
-		return nil, &IntegrityViolationError{Paths: paths}
+		violation := &IntegrityViolationError{Paths: paths}
+		finish("integrity_violation", changed, violation)
+		return nil, violation
 	}
+	status := "failed"
+	if test.Passed {
+		status = "passed"
+	}
+	finish(status, nil, nil)
 	return &test, nil
 }

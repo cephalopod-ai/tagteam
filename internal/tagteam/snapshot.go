@@ -81,6 +81,15 @@ func BuildRunSnapshot(workdir, runDir string) (RunSnapshot, error) {
 			}
 		}
 	}
+	if data, err := os.ReadFile(filepath.Join(runDir, hostActivityArtifact)); err == nil {
+		var activity HostActivity
+		if json.Unmarshal(data, &activity) == nil {
+			snapshot.HostActivity = &activity
+			if activity.UpdatedAt.After(snapshot.UpdatedAt) {
+				snapshot.UpdatedAt = activity.UpdatedAt
+			}
+		}
+	}
 	if data, err := os.ReadFile(filepath.Join(runDir, preexistingWorktreeArtifact)); err == nil {
 		var preexisting PreexistingWorktree
 		if json.Unmarshal(data, &preexisting) == nil {

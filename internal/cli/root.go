@@ -462,6 +462,19 @@ func renderRunSnapshot(cmd *cobra.Command, snapshot tagteam.RunSnapshot, asJSON 
 			fmt.Fprintf(cmd.OutOrStdout(), "queued_for=%s holder_pid=%d\n", progress.WaitingFor, progress.HolderPID)
 		}
 	}
+	if snapshot.HostActivity != nil {
+		activity := snapshot.HostActivity
+		fmt.Fprintf(cmd.OutOrStdout(), "host actor=%s phase=%s status=%s elapsed=%s\n", activity.Actor, activity.Phase, activity.Status, activity.Elapsed)
+		if activity.Command != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "host_command=%s output=%s\n", activity.Command, activity.OutputPath)
+		}
+		if len(activity.ChangedFiles) > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "host_mutated_files=%s\n", strings.Join(activity.ChangedFiles, ","))
+		}
+		if activity.Error != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "host_error=%s\n", activity.Error)
+		}
+	}
 	if snapshot.Degraded {
 		fmt.Fprintf(cmd.OutOrStdout(), "degraded=true reason=%s\n", snapshot.DegradedReason)
 	}
