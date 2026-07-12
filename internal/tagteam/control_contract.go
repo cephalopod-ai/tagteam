@@ -24,6 +24,9 @@ const (
 	controlMaxPageSize     = 100
 	controlMaxChangedFiles = 128
 	controlMaxTextBytes    = 4096
+	// ControlApprovalMaxLifetime keeps MCP approval records short-lived while
+	// allowing a host to collect an explicit confirmation after preparation.
+	ControlApprovalMaxLifetime = 30 * time.Minute
 )
 
 type ControlCompleteness string
@@ -81,7 +84,14 @@ type ControlRunHandle struct {
 type ControlLaunchValidation struct {
 	SchemaVersion int               `json:"schema_version"`
 	Normalized    ControlLaunchSpec `json:"normalized"`
-	ActionDigest  string            `json:"action_digest"`
+	LaunchDigest  string            `json:"launch_digest"`
+}
+
+type ControlStartPreparation struct {
+	SchemaVersion              int               `json:"schema_version"`
+	Normalized                 ControlLaunchSpec `json:"normalized"`
+	ActionDigest               string            `json:"action_digest"`
+	ApprovalMaxLifetimeSeconds int64             `json:"approval_max_lifetime_seconds"`
 }
 
 type ControlStartRequest struct {
@@ -181,7 +191,7 @@ func (s ControlService) Capabilities() ControlCapabilitySet {
 	return ControlCapabilitySet{
 		SchemaVersion:   ControlContractVersion,
 		ProducerVersion: normalizedProducerVersion(s.ProducerVersion),
-		Capabilities:    []string{"capabilities", "validate_launch", "status", "plan", "findings", "diagnostics"},
+		Capabilities:    []string{"capabilities", "validate_launch", "prepare_start", "status", "plan", "findings", "diagnostics"},
 	}
 }
 
@@ -194,7 +204,23 @@ func (s ControlService) ValidateLaunch(spec ControlLaunchSpec) (ControlLaunchVal
 	if err != nil {
 		return ControlLaunchValidation{}, err
 	}
-	return ControlLaunchValidation{SchemaVersion: ControlContractVersion, Normalized: normalized, ActionDigest: digest}, nil
+	return ControlLaunchValidation{SchemaVersion: ControlContractVersion, Normalized: normalized, LaunchDigest: digest}, nil
+}
+
+func PrepareControlStart(request ControlStartRequest) (ControlStartPreparation, error) {
+	if request.SchemaVersion != ControlContractVersion {
+		return ControlStartPreparation{}, fmt.Errorf("unsupported control schema_version %d (want %d)", request.SchemaVersion, ControlContractVersion)
+	}
+	normalized, err := NormalizeControlLaunch(request.Launch)
+	if err != nil {
+		return ControlStartPreparation{}, err
+	}
+	request.Launch = normalized
+	digest, err := ControlStartActionDigest(request)
+	if err != nil {
+		return ControlStartPreparation{}, err
+	}
+	return ControlStartPreparation{SchemaVersion: ControlContractVersion, Normalized: normalized, ActionDigest: digest, ApprovalMaxLifetimeSeconds: int64(ControlApprovalMaxLifetime / time.Second)}, nil
 }
 
 // NormalizeControlLaunch validates caller input and returns the canonical

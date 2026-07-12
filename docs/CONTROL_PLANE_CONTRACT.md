@@ -1,7 +1,7 @@
 # Control Plane Contract
 
-**Status:** draft producer contract and local read-only MCP stdio transport are
-implemented. Mutating controller operations remain disabled.
+**Status:** draft producer contract, local MCP stdio transport, and approved
+idempotent start are implemented. Resume and cancel remain disabled.
 
 Tagteam owns a versioned control-plane contract in
 `internal/tagteam/control_contract.go`. It is the anti-corruption boundary for
@@ -18,21 +18,31 @@ state model rather than introducing a second run state machine.
 - Dedicated start, resume, and cancel digest constructors additionally bind the
   operation, idempotency key, or run identity so approvals cannot be replayed
   across actions.
+- `PrepareControlStart` returns the start-specific digest and maximum approval
+  lifetime, so MCP clients never have to reconstruct approval hashing.
 - `Status` projects the authoritative `RunSnapshot` assembled from existing
   run artifacts and supplies a stable snapshot digest.
 - `Plan` and `Findings` return bounded cursor pages from `plan.json` and
   `findings.json`.
 - `Diagnostics` verifies repository identity and resolves the state root
   without creating runtime state.
+- `tagteam_prepare_start` exposes that validation to MCP clients without
+  creating runtime state.
+- `Start` reserves a durable run ID, consumes a matching short-lived approval
+  nonce, launches Tagteam through its normal configuration and runner, and
+  persists a terminal artifact if preflight fails before the runner can do so.
 
-The capability list intentionally excludes `start`, `prepare_resume`, `resume`,
-and `cancel`. Their request/result types are defined so consumers can review the
+The capability list intentionally excludes `prepare_resume`, `resume`, and
+`cancel`. Their request/result types are defined so consumers can review the
 draft shape, but no handler returns canned success or delegates to arbitrary
 shell input.
 
 `tagteam mcp` implements MCP protocol revision `2025-11-25` over stdio. It
-advertises exactly the implemented read tools and returns both structured JSON
-and bounded text content. The server does not write repository or run state.
+advertises exactly the implemented tools and returns both structured JSON and
+bounded text content. `tagteam_prepare_start` is read-only; `tagteam_start` is
+marked destructive and idempotent for MCP clients, and is the only mutating
+tool currently exposed. An unverified binary keeps the server read-only unless
+the operator explicitly passes `--allow-dev-build`.
 
 ## Authority and validation
 
@@ -51,15 +61,26 @@ and bounded text content. The server does not write repository or run state.
 - Recovery policy is `assist`; model-authored commands and raw test commands
   are not part of the contract. Tests are selected by a future trusted preset
   registry.
-- Approval records are action-bound, expiring values. Enforcement and durable
-  nonce replay protection must exist before mutating operations are advertised.
+- Start approvals bind the normalized launch plus operation and idempotency key,
+  expire within 30 minutes, and are retained under the resolved state root to
+  reject nonce replay across server restarts. The MCP host remains responsible
+  for collecting explicit user confirmation before it sends an approval record;
+  Tagteam verifies the record's scope and single use but cannot attest to its
+  human origin.
+- A persisted, unfinalized start reservation blocks another start for the same
+  worktree until that approval expires. This closes the gap before the runner
+  has written `active.json`.
+- A start with no configured trusted test preset uses Tagteam's normal trusted
+  config defaults. Non-empty `test_preset` references are rejected until a
+  trusted preset registry exists.
 
 ## Deferred transport and lifecycle work
 
 The MCP adapter is a thin transport over this boundary. Before it can advertise
-mutating tools, Tagteam still needs one durable lifecycle owner,
-immediate run-handle semantics, idempotency storage, action-bound approval
-verification, cancellation ownership, and non-mutating resume assessment.
+resume or cancel, Tagteam still needs cancellation ownership after restart and
+non-mutating resume assessment. The approval-ledger lock fails closed if a stale
+owner remains after an abnormal process exit; this is surfaced as a recoverable
+start error rather than launching without replay protection.
 Unknown contract versions and malformed persisted artifacts must fail with
 typed, recoverable errors rather than inferred success.
 

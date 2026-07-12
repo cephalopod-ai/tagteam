@@ -17,7 +17,10 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		defer cancel()
 	}
 	editorLabel, reviewerLabel := roleLabels(opts.Mode)
-	runID := newRunID()
+	runID, err := runIDForOptions(opts)
+	if err != nil {
+		return FinalRun{}, err
+	}
 	logProgress(opts, "run %s preflight started workdir=%s", runID, opts.Workdir)
 	baseline, cleanup, err := preflight(opts, runID)
 	if err != nil {
@@ -789,9 +792,6 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	if err := a.finalizeReviewedRun(opts, runDir, budget, latestDiffArtifact, executionPlan, selectedPackage, &final); err != nil {
 		return final, err
 	}
-	// See the equivalent comment in Review: only mark the active-run pointer
-	// completed once every artifact this function persists (execution plan,
-	// then final.json/latest.json) has actually been written.
 	runCompleted = true
 	if final.ExitCode != ExitSuccess {
 		return final, &ExitError{Code: final.ExitCode, Err: fmt.Errorf("run completed with exit code %d", final.ExitCode)}

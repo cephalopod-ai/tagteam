@@ -15,7 +15,10 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 		defer cancel()
 	}
 	editorLabel, _ := roleLabels(opts.Mode)
-	runID := newRunID()
+	runID, err := runIDForOptions(opts)
+	if err != nil {
+		return FinalRun{}, err
+	}
 	logProgress(opts, "run %s preflight started workdir=%s", runID, opts.Workdir)
 	baseline, cleanup, err := preflight(opts, runID)
 	if err != nil {

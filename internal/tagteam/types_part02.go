@@ -226,6 +226,9 @@ type FlagInputs struct {
 type RunOptions struct {
 	Prompt  string
 	Workdir string
+	// RunID is an optional host-reserved identifier. Normal CLI runs leave it
+	// empty and receive a timestamp identifier from the runner.
+	RunID string
 	// StateRoot overrides the default ~/.local/state/tagteam artifact root.
 	StateRoot    string
 	ResumedFrom  string

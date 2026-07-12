@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMCPStdioServerServesBoundedReadTools(t *testing.T) {
@@ -26,13 +27,20 @@ func TestMCPStdioServerServesBoundedReadTools(t *testing.T) {
 	}
 	tools := responses[1]["result"].(map[string]any)["tools"].([]any)
 	foundStart := false
+	foundPrepareStart := false
 	for _, tool := range tools {
-		if tool.(map[string]any)["name"] == "tagteam_start" {
+		switch tool.(map[string]any)["name"] {
+		case "tagteam_start":
 			foundStart = true
+		case "tagteam_prepare_start":
+			foundPrepareStart = true
 		}
 	}
 	if foundStart {
 		t.Fatal("MCP server advertised an unavailable start tool")
+	}
+	if !foundPrepareStart {
+		t.Fatal("MCP server did not advertise prepare_start")
 	}
 	diagnostics := responses[2]["result"].(map[string]any)["structuredContent"].(map[string]any)
 	if diagnostics["status"] != "ready" {
@@ -72,12 +80,76 @@ func TestMCPStdioServerValidatesLaunchWithoutStartingIt(t *testing.T) {
 		t.Fatalf("launch validation = %#v", result)
 	}
 	structured := result["structuredContent"].(map[string]any)
-	if _, ok := structured["action_digest"].(string); !ok {
-		t.Fatalf("missing action digest: %#v", structured)
+	if _, ok := structured["launch_digest"].(string); !ok {
+		t.Fatalf("missing launch digest: %#v", structured)
 	}
 }
 
+func TestMCPStdioServerPreparesTheApprovalBoundStartDigest(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	service := ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}
+	request := ControlStartRequest{SchemaVersion: ControlContractVersion, Launch: controlLaunchFixture(t, repo), IdempotencyKey: "session-1-generation-1"}
+	responses := runMCPStdio(t, service,
+		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}},
+		map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tagteam_prepare_start", "arguments": request}},
+	)
+	prepared := responses[1]["result"].(map[string]any)["structuredContent"].(map[string]any)
+	if _, ok := prepared["action_digest"].(string); !ok {
+		t.Fatalf("prepared start = %#v", prepared)
+	}
+}
+
+func TestMCPStdioServerAdvertisesStartOnlyWithLifecycleRuntime(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	service := ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}
+	runtime := NewControlRuntime(service, DefaultConfig(), nil)
+	responses := runMCPStdioWithRuntime(t, service, runtime,
+		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}},
+		map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": map[string]any{}},
+	)
+	tools := responses[1]["result"].(map[string]any)["tools"].([]any)
+	for _, tool := range tools {
+		if tool.(map[string]any)["name"] == "tagteam_start" {
+			return
+		}
+	}
+	t.Fatalf("runtime tool list did not include start: %#v", tools)
+}
+
+func TestMCPStdioServerStartsApprovedRunWithDurableHandle(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	service := ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}
+	runtime := NewControlRuntime(service, DefaultConfig(), nil)
+	request := controlStartFixture(t, repo)
+	responses := runMCPStdioWithRuntime(t, service, runtime,
+		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}},
+		map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tagteam_start", "arguments": request}},
+	)
+	result := responses[1]["result"].(map[string]any)
+	if result["isError"] != false {
+		t.Fatalf("start result = %#v", result)
+	}
+	handle := result["structuredContent"].(map[string]any)
+	runID, ok := handle["run_id"].(string)
+	if !ok || runID == "" {
+		t.Fatalf("start handle = %#v", handle)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err := runtime.Status(runID)
+		if err == nil && status.Run.Status == string(RunStatusFailed) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("MCP-started run %q did not persist its terminal preflight failure", runID)
+}
+
 func runMCPStdio(t *testing.T, service ControlService, messages ...map[string]any) []map[string]any {
+	return runMCPStdioWithRuntime(t, service, nil, messages...)
+}
+
+func runMCPStdioWithRuntime(t *testing.T, service ControlService, runtime *ControlRuntime, messages ...map[string]any) []map[string]any {
 	t.Helper()
 	var input bytes.Buffer
 	for _, message := range messages {
@@ -90,6 +162,9 @@ func runMCPStdio(t *testing.T, service ControlService, messages ...map[string]an
 	}
 	var output bytes.Buffer
 	server := NewMCPStdioServer(service, &input, &output)
+	if runtime != nil {
+		server.WithRuntime(runtime)
+	}
 	if err := server.Serve(context.Background()); err != nil {
 		t.Fatal(err)
 	}

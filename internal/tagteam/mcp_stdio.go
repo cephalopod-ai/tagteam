@@ -16,6 +16,7 @@ const (
 
 type MCPStdioServer struct {
 	service ControlService
+	runtime *ControlRuntime
 	in      io.Reader
 	out     io.Writer
 	mu      sync.Mutex
@@ -25,8 +26,13 @@ func NewMCPStdioServer(service ControlService, in io.Reader, out io.Writer) *MCP
 	return &MCPStdioServer{service: service, in: in, out: out}
 }
 
-// Serve runs a newline-delimited MCP stdio session. It intentionally exposes
-// only control operations with implemented, non-mutating handlers.
+func (s *MCPStdioServer) WithRuntime(runtime *ControlRuntime) *MCPStdioServer {
+	s.runtime = runtime
+	return s
+}
+
+// Serve runs a newline-delimited MCP stdio session. It exposes only bounded,
+// implemented control operations; start requires the explicit runtime gate.
 func (s *MCPStdioServer) Serve(ctx context.Context) error {
 	scanner := bufio.NewScanner(s.in)
 	scanner.Buffer(make([]byte, 0, 64*1024), mcpMaxMessageBytes)
@@ -57,11 +63,15 @@ func (s *MCPStdioServer) Serve(ctx context.Context) error {
 				continue
 			}
 			initialized = true
+			instructions := "Use Tagteam control tools for bounded status and diagnostics. Start, resume, and cancel are unavailable in this server configuration."
+			if s.runtime != nil {
+				instructions = "Use Tagteam control tools for bounded status and diagnostics. Call prepare_start, collect explicit user approval for its digest, then call start. Resume and cancel are not available in this server revision."
+			}
 			if err := s.writeResult(request.ID, map[string]any{
 				"protocolVersion": MCPProtocolVersion,
 				"capabilities":    map[string]any{"tools": map[string]any{}},
 				"serverInfo":      map[string]string{"name": "tagteam", "version": normalizedProducerVersion(s.service.ProducerVersion)},
-				"instructions":    "Use Tagteam control tools for bounded status and diagnostics. Start, resume, and cancel are not available in this server revision.",
+				"instructions":    instructions,
 			}); err != nil {
 				return err
 			}
@@ -85,7 +95,7 @@ func (s *MCPStdioServer) Serve(ctx context.Context) error {
 			if request.ID == nil {
 				continue
 			}
-			if err := s.writeResult(request.ID, map[string]any{"tools": mcpControlTools()}); err != nil {
+			if err := s.writeResult(request.ID, map[string]any{"tools": mcpControlTools(s.runtime != nil)}); err != nil {
 				return err
 			}
 		case "tools/call":
@@ -100,7 +110,7 @@ func (s *MCPStdioServer) Serve(ctx context.Context) error {
 			if request.ID == nil {
 				continue
 			}
-			result, err := s.callTool(request.Params)
+			result, err := s.callTool(ctx, request.Params)
 			if err != nil {
 				result = mcpToolFailure(err)
 			}
@@ -121,13 +131,16 @@ func (s *MCPStdioServer) Serve(ctx context.Context) error {
 	return nil
 }
 
-func (s *MCPStdioServer) callTool(raw json.RawMessage) (map[string]any, error) {
+func (s *MCPStdioServer) callTool(ctx context.Context, raw json.RawMessage) (map[string]any, error) {
 	var call mcpToolCall
 	if err := json.Unmarshal(raw, &call); err != nil {
 		return nil, fmt.Errorf("invalid tools/call parameters")
 	}
 	switch call.Name {
 	case "tagteam_capabilities":
+		if s.runtime != nil {
+			return mcpToolSuccess(s.runtime.Capabilities())
+		}
 		return mcpToolSuccess(s.service.Capabilities())
 	case "tagteam_validate_launch":
 		var spec ControlLaunchSpec
@@ -139,6 +152,16 @@ func (s *MCPStdioServer) callTool(raw json.RawMessage) (map[string]any, error) {
 			return nil, err
 		}
 		return mcpToolSuccess(result)
+	case "tagteam_prepare_start":
+		var request ControlStartRequest
+		if err := json.Unmarshal(call.Arguments, &request); err != nil {
+			return nil, fmt.Errorf("invalid start preparation request")
+		}
+		result, err := PrepareControlStart(request)
+		if err != nil {
+			return nil, err
+		}
+		return mcpToolSuccess(result)
 	case "tagteam_status":
 		var input struct {
 			RunID string `json:"run_id"`
@@ -146,7 +169,13 @@ func (s *MCPStdioServer) callTool(raw json.RawMessage) (map[string]any, error) {
 		if err := json.Unmarshal(call.Arguments, &input); err != nil {
 			return nil, fmt.Errorf("invalid status arguments")
 		}
-		result, err := s.service.Status(input.RunID)
+		var result ControlStatus
+		var err error
+		if s.runtime != nil {
+			result, err = s.runtime.Status(input.RunID)
+		} else {
+			result, err = s.service.Status(input.RunID)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -179,6 +208,19 @@ func (s *MCPStdioServer) callTool(raw json.RawMessage) (map[string]any, error) {
 		return mcpToolSuccess(result)
 	case "tagteam_diagnostics":
 		result, err := s.service.Diagnostics()
+		if err != nil {
+			return nil, err
+		}
+		return mcpToolSuccess(result)
+	case "tagteam_start":
+		if s.runtime == nil {
+			return nil, fmt.Errorf("Tagteam start is unavailable in this server configuration")
+		}
+		var request ControlStartRequest
+		if err := json.Unmarshal(call.Arguments, &request); err != nil {
+			return nil, fmt.Errorf("invalid start request")
+		}
+		result, err := s.runtime.Start(ctx, request)
 		if err != nil {
 			return nil, err
 		}
@@ -259,16 +301,21 @@ func mcpToolFailure(err error) map[string]any {
 	}
 }
 
-func mcpControlTools() []map[string]any {
+func mcpControlTools(includeStart bool) []map[string]any {
 	readOnly := map[string]bool{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
-	return []map[string]any{
+	tools := []map[string]any{
 		mcpTool("tagteam_capabilities", "Read Tagteam control-plane capabilities.", map[string]any{"type": "object", "additionalProperties": false}, readOnly),
 		mcpTool("tagteam_validate_launch", "Validate and normalize a Tagteam launch without starting it.", mcpLaunchSchema(), readOnly),
+		mcpTool("tagteam_prepare_start", "Validate an idempotent start and return the exact digest requiring user approval.", mcpStartPreparationSchema(), readOnly),
 		mcpTool("tagteam_status", "Read bounded status for one Tagteam run.", mcpRunSchema(false), readOnly),
 		mcpTool("tagteam_plan", "Read a bounded page of a run plan.", mcpRunSchema(true), readOnly),
 		mcpTool("tagteam_findings", "Read a bounded page of persisted findings.", mcpRunSchema(true), readOnly),
 		mcpTool("tagteam_diagnostics", "Verify repository identity and state-root access without writing state.", map[string]any{"type": "object", "additionalProperties": false}, readOnly),
 	}
+	if includeStart {
+		tools = append(tools, mcpTool("tagteam_start", "Start one approved, idempotent Tagteam run and return its durable run handle.", mcpStartSchema(), map[string]bool{"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false}))
+	}
+	return tools
 }
 
 func mcpLaunchSchema() map[string]any {
@@ -286,6 +333,43 @@ func mcpLaunchSchema() map[string]any {
 			"time_budget":     map[string]any{"type": "object"},
 			"test_preset":     map[string]any{"type": "string"},
 			"recovery_policy": map[string]any{"type": "string", "const": "assist"},
+		},
+	}
+}
+
+func mcpStartSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"schema_version", "launch", "idempotency_key", "approval"},
+		"properties": map[string]any{
+			"schema_version":  map[string]any{"type": "integer", "const": ControlContractVersion},
+			"launch":          mcpLaunchSchema(),
+			"idempotency_key": map[string]any{"type": "string", "minLength": 1, "maxLength": controlMaxRoleBytes},
+			"approval": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"action_digest", "approved_at", "expires_at", "nonce"},
+				"properties": map[string]any{
+					"action_digest": map[string]any{"type": "string", "minLength": 64, "maxLength": 64},
+					"approved_at":   map[string]any{"type": "string", "format": "date-time"},
+					"expires_at":    map[string]any{"type": "string", "format": "date-time"},
+					"nonce":         map[string]any{"type": "string", "minLength": 1, "maxLength": controlMaxRoleBytes},
+				},
+			},
+		},
+	}
+}
+
+func mcpStartPreparationSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"schema_version", "launch", "idempotency_key"},
+		"properties": map[string]any{
+			"schema_version":  map[string]any{"type": "integer", "const": ControlContractVersion},
+			"launch":          mcpLaunchSchema(),
+			"idempotency_key": map[string]any{"type": "string", "minLength": 1, "maxLength": controlMaxRoleBytes},
 		},
 	}
 }

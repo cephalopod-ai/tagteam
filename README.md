@@ -145,11 +145,17 @@ multi-agent, that flag selects only the active implementation role (worker,
 coder, or solo model). Use `--supervisor`, `--reviewer`, or `--scout` for the
 other roles.
 
-`tagteam mcp` is a local stdio MCP server. It currently exposes bounded,
-read-only control tools for capabilities, launch validation, status, plans,
-findings, and diagnostics. Starting, resuming, and cancelling runs remain
-unavailable through MCP until Tagteam's durable lifecycle and approval gates
-are complete.
+`tagteam mcp` is a local stdio MCP server. It exposes bounded tools for
+capabilities, launch validation, start preparation, approved/idempotent starts,
+status, plans, findings, and diagnostics. `prepare_start` returns the exact
+action digest that `start` requires after user confirmation. `start` is marked
+destructive for MCP clients and requires an expiring, single-use approval
+record. Resume and cancel remain unavailable through MCP pending their
+lifecycle gates.
+
+Released binaries can expose `start` normally. Development or otherwise
+unverified builds keep MCP read-only unless the operator starts the server with
+`tagteam mcp --allow-dev-build`; this matches Tagteam's existing mutation gate.
 
 ## Requirements
 

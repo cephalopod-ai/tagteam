@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+func runIDForOptions(opts RunOptions) (string, error) {
+	runID := opts.RunID
+	if runID == "" {
+		runID = newRunID()
+	}
+	if err := validateRunID(runID); err != nil {
+		return "", &ExitError{Code: ExitInvalidArguments, Err: err}
+	}
+	return runID, nil
+}
+
 func (a *App) recoverRoundEditorFailure(
 	ctx context.Context,
 	opts RunOptions,

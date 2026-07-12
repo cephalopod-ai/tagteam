@@ -117,6 +117,22 @@ func TestControlMutatingDigestsBindOperationAndIdentity(t *testing.T) {
 	}
 }
 
+func TestPrepareControlStartReturnsTheBoundStartDigest(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	request := ControlStartRequest{SchemaVersion: ControlContractVersion, Launch: controlLaunchFixture(t, repo), IdempotencyKey: "session-1-generation-1"}
+	prepared, err := PrepareControlStart(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := ControlStartActionDigest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.ActionDigest != expected || prepared.ApprovalMaxLifetimeSeconds != int64(ControlApprovalMaxLifetime/time.Second) {
+		t.Fatalf("prepared start = %#v", prepared)
+	}
+}
+
 func TestNormalizeControlLaunchRejectsTraversalAndRoleConfusion(t *testing.T) {
 	repo, _ := createResumeFixtureRepo(t)
 	spec := controlLaunchFixture(t, repo)

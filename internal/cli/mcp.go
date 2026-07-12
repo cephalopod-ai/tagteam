@@ -20,11 +20,22 @@ func newMCPCommand(shared *flagState) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve MCP workdir: %w", err)
 			}
-			server := tagteam.NewMCPStdioServer(tagteam.ControlService{
+			service := tagteam.ControlService{
 				RepositoryRoot:  workdir,
 				StateRoot:       shared.StateRoot,
 				ProducerVersion: Version,
-			}, cmd.InOrStdin(), cmd.OutOrStdout())
+			}
+			server := tagteam.NewMCPStdioServer(service, cmd.InOrStdin(), cmd.OutOrStdout())
+			if err := requireVerifiedInstallation(shared); err == nil {
+				changed := collectChangedFlags(cmd)
+				cfg, sources, configErr := tagteam.LoadConfigWithOptions(workdir, tagteam.LoadConfigOptions{
+					TrustRepoConfig: shared.TrustRepoConfig && changed["trust-repo-config"],
+				})
+				if configErr != nil {
+					return fmt.Errorf("load MCP start configuration: %w", configErr)
+				}
+				server.WithRuntime(tagteam.NewControlRuntime(service, cfg, sources))
+			}
 			return server.Serve(cmd.Context())
 		},
 	}

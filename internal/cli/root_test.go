@@ -74,6 +74,37 @@ func TestMCPCommandUsesLocalStdioSurface(t *testing.T) {
 	}
 }
 
+func TestMCPCommandGatesStartOnVerifiedInstallation(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+	}, "\n") + "\n"
+	for _, test := range []struct {
+		name      string
+		args      []string
+		wantStart bool
+	}{
+		{name: "unverified read only", args: []string{"mcp", "--workdir", t.TempDir()}, wantStart: false},
+		{name: "explicit development override", args: []string{"mcp", "--allow-dev-build", "--workdir", t.TempDir()}, wantStart: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := NewRootCommand()
+			var out bytes.Buffer
+			cmd.SetIn(strings.NewReader(input))
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs(test.args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(out.String(), `"name":"tagteam_start"`); got != test.wantStart {
+				t.Fatalf("start advertisement = %t, want %t; output=%s", got, test.wantStart, out.String())
+			}
+		})
+	}
+}
+
 func TestVersionCommandAndFlag(t *testing.T) {
 	t.Run("version subcommand", func(t *testing.T) {
 		cmd := NewRootCommand()
