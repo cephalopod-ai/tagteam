@@ -24,9 +24,14 @@
 
 ## Deferred: MCP control plane and optional Run Steward
 
-**Status:** Producer contract, local MCP transport, approved idempotent start,
-resume, and cancel, and non-mutating resume assessment are implemented. The
-remaining lifecycle work is bounded ownership and transport hardening.
+**Status:** The MCP MVP gates are complete: the producer contract, local MCP
+stdio transport, approved idempotent start/resume/cancel with full cross-action
+approval-replay protection and typed error recovery, non-mutating resume
+assessment, and the acceptance playtest suite are implemented. The optional
+advisory Run Steward (immediate-horizon items below) is now implemented as a
+local-first, strictly-advisory tier with a deterministic fallback. The
+remaining Future-vision items (tagteamd daemon, capability provenance, remote
+auth, fleet summaries) are in progress.
 
 The goal is to let any MCP-capable host launch and monitor Tagteam without
 turning model output into shell commands. A deterministic controller remains
@@ -60,36 +65,68 @@ own recovery action.
 - [x] Add bounded scout evidence for symlink topology where it helps explain
   scope, while keeping canonical real-path resolution and enforcement in the
   host controller.
-- [ ] Bind start, resume, and cancel approvals to the normalized action,
+- [x] Bind start, resume, and cancel approvals to the normalized action,
   repository identity, selected roles, scope, run identity, and an expiry or
-  nonce. A changed action requires a new approval.
-- [ ] Add an optional local-first Run Steward interface. Feed it only bounded,
+  nonce. A changed action requires a new approval. Approval nonces are now
+  single-use across every action: start and resume reject a nonce already
+  consumed by any start, resume, or cancel (matching the cancel path), closing
+  the cross-action replay gap. Regression tests cover every cross-action pair
+  and prove the start digest binds roles, scope, prompt, rounds, and budget.
+- [x] Add an optional local-first Run Steward interface. Feed it only bounded,
   sanitized `RunObservation` records and require a schema-validated advisory
   result with an enum action such as wait, inspect, notify, prepare-resume,
-  ask-user, or report-issue.
-- [ ] Make deterministic status and error templates the final fallback. A
+  ask-user, or report-issue. Implemented in `steward.go`; projected from the
+  authoritative `RunSnapshot` (status/phase/reason codes/counts only — no
+  prompts, diffs, file paths, or model reasoning) and surfaced advisory-only
+  through the read-only `tagteam_advise` MCP tool.
+- [x] Make deterministic status and error templates the final fallback. A
   missing, invalid, slow, or rate-limited steward must never delay or alter the
-  Tagteam run.
-- [ ] Default the steward tier to a separately configured local Ollama model.
+  Tagteam run. `DeterministicSteward` maps every status to a safe action;
+  `AdviseWithFallback` runs any model steward under a strict timeout and falls
+  back to the template on error, timeout, or schema-invalid output, never
+  blocking the run.
+- [x] Default the steward tier to a separately configured local Ollama model.
   Cloud or CLI-backed stewards are optional escalation targets and must run at
   lower priority with call, token, timeout, and deduplication budgets so they
-  do not contend with worker or reviewer invocations.
-- [ ] Prevent recursion and duplicate observers: one steward lease per run,
+  do not contend with worker or reviewer invocations. `[steward]` config
+  defaults to a disabled local OpenAI-compatible (Ollama) endpoint; enabling it
+  builds a `BudgetedSteward` with per-run call, timeout, and dedup budgets.
+- [x] Prevent recursion and duplicate observers: one steward lease per run,
   no Tagteam invocation from the steward, and no inherited arbitrary MCP or
-  repository-write tools.
-- [ ] Add contract, process-lifecycle, hostile-output, approval-replay,
+  repository-write tools. `ModelSteward` sends a text-only chat request with no
+  tool/function surface (recursion prevented by construction); a per-run
+  `steward.lease` enforces a single observer.
+- [x] Add contract, process-lifecycle, hostile-output, approval-replay,
   concurrency, cancellation, restart, malformed-JSON, and weak-model
   playtests. Verify that an MCP host can recover from every returned error
-  without reading source code.
+  without reading source code. Start now returns typed `ControlStartError`
+  reason codes like resume and cancel, so every MCP lifecycle failure surfaces
+  a stable structured `code`/`recoverable` pair over stdio. New playtests cover
+  malformed persisted JSON (ledger and run artifacts), concurrent start
+  requests, hostile run identities at the lifecycle entry points, weak/failed
+  adapter terminal records, and equivalence of the normalized launch and
+  terminal records between the direct CLI and MCP paths.
 
 ### Future vision
 
-- [ ] Separate durable process ownership into a local `tagteamd`-style service
+- [~] Separate durable process ownership into a local `tagteamd`-style service
   with the MCP endpoint as a thin client transport. Add leases, reconnectable
   event streams, multi-client arbitration, and safe cancellation after the
-  originating host exits.
-- [ ] Add capability/version provenance and quarantine when tool schemas,
+  originating host exits. **Partially implemented:** `mcp_daemon.go` +
+  `tagteam mcp --socket <path>` host one shared `ControlRuntime` over a unix
+  socket; the MCP endpoint is a thin client transport, so runs are owned by the
+  daemon and survive a client disconnect, multiple clients attach concurrently
+  (serialized through the runtime's mutex and run lock), and existing
+  file-backed cancellation gives safe cancellation after the originating client
+  exits. **Remaining:** reconnectable push event streams and formal
+  multi-client arbitration beyond serialization.
+- [x] Add capability/version provenance and quarantine when tool schemas,
   side effects, or the Tagteam binary change outside the approved baseline.
+  `provenance.go` fingerprints the producer version, contract version, and MCP
+  tool-schema digest. The first lifecycle mutation records the approved baseline
+  (trust on first use); a later start, resume, or cancel whose surface differs —
+  a new binary or changed/added tool schema — fails closed with the typed
+  `capability_quarantined` error until an operator removes the baseline file.
 - [ ] Support authenticated remote deployment only after local stdio behavior,
   workload identity, repository authorization, credential scope, and audit
   logging are proven.

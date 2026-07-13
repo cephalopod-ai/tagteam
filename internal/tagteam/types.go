@@ -639,5 +639,6 @@ type Config struct {
 	Adapters    AdapterConfigSet            `toml:"adapters"`
 	CodeIntel   CodeIntelConfig             `toml:"code_intel"`
 	TestPresets map[string]TestPresetConfig `toml:"test_presets"`
+	Steward     StewardConfig               `toml:"steward"`
 	EnvOverlay  map[string]string           `toml:"-"`
 }

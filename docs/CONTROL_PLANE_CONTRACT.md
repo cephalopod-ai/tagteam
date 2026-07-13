@@ -39,20 +39,41 @@ state model rather than introducing a second run state machine.
 - `Start` reserves a durable run ID, consumes a matching short-lived approval
   nonce, launches Tagteam through its normal configuration and runner, and
   persists a terminal artifact if preflight fails before the runner can do so.
+  Every start failure surfaces a typed `ControlStartError` with a stable reason
+  code and `recoverable` flag, mirroring resume and cancel, so an MCP host can
+  recover without parsing prose.
 - `Cancel` consumes a matching short-lived approval nonce and cancels a live run
   only when this MCP runtime owns its cancellation context. A live run owned by
   another runtime returns the typed `run_not_owned` error instead of reporting
   success; a stale process owner is handled through the durable cancellation
   request and persisted cancelled status.
+- `Advise` returns a bounded, advisory Run Steward recommendation for one run. It
+  projects the authoritative snapshot into a sanitized `RunObservation` (status,
+  phase, reason codes, and counts only — never prompts, diffs, file paths, or
+  model reasoning) and returns a schema-validated advisory action (`wait`,
+  `inspect`, `notify`, `prepare_resume`, `ask_user`, or `report_issue`). It is
+  strictly read-only and advisory: a missing, slow, invalid, or over-budget
+  steward falls back to a deterministic template, and the controller never gates
+  execution on the advisory. Exposed as the read-only `tagteam_advise` MCP tool
+  when the lifecycle runtime is enabled. The optional model tier is a local-first
+  OpenAI-compatible endpoint queried with a text-only request (no tool surface),
+  bounded by per-run call/timeout/dedup budgets and a single-observer lease, so
+  the steward cannot invoke Tagteam or inherit MCP/repository-write tools.
 
 The base capability list intentionally excludes lifecycle mutations; the
 enabled lifecycle runtime adds `start`, `resume`, and `cancel` only when those
 handlers are available. No handler returns canned success or delegates to
 arbitrary shell input.
 
-`tagteam mcp` implements MCP protocol revision `2025-11-25` over stdio. It
-advertises exactly the implemented tools and returns both structured JSON and
-bounded text content. `tagteam_prepare_start` and `tagteam_prepare_resume` are
+`tagteam mcp` implements MCP protocol revision `2025-11-25` over stdio, or over
+a local unix socket with `tagteam mcp --socket <path>`. In socket mode the
+process is a small local daemon hosting one shared `ControlRuntime`: the MCP
+endpoint is a thin client transport, so runs are owned by the daemon and survive
+a client disconnect, multiple clients can attach concurrently (serialized
+through the runtime's mutex and run lock), and existing file-backed cancellation
+provides safe cancellation after the originating client exits. It advertises
+exactly the implemented tools and returns both structured JSON and bounded text
+content. `tagteam_prepare_start` and `tagteam_prepare_resume` are
 read-only; `tagteam_start`, `tagteam_resume`, and `tagteam_cancel` are marked
 destructive and idempotent for MCP clients. An unverified binary keeps the
 server read-only unless the operator explicitly passes `--allow-dev-build`.
@@ -128,6 +149,13 @@ server read-only unless the operator explicitly passes `--allow-dev-build`.
   for collecting explicit user confirmation before it sends an approval record;
   Tagteam verifies the record's scope and single use but cannot attest to its
   human origin.
+- Approval nonces are single-use across every action. Start, resume, and cancel
+  each consult the whole approval ledger, so a nonce already consumed by any
+  start, resume, or cancel is refused (`approval_nonce_replayed`) rather than
+  replayed for a different action. Resume and cancel digests bind the operation,
+  canonical repository identity, and run identity; the persisted run fixes the
+  roles and scope those actions inherit. A changed action always produces a new
+  digest and therefore requires a new approval.
 - A persisted, unfinalized start reservation blocks another start for the same
   worktree until that approval expires. This closes the gap before the runner
   has written `active.json`.
@@ -136,6 +164,14 @@ server read-only unless the operator explicitly passes `--allow-dev-build`.
   registry: unknown names fail deterministically (`unknown test_preset "…"`)
   without leaking registry contents; known names set the run's test command
   (and optional identity regex) from the preset entry only.
+- Capability/version provenance is enforced before every lifecycle mutation. The
+  runtime fingerprints the producer (binary) version, contract version, and a
+  digest of the advertised MCP tool schemas. The first start/resume/cancel for a
+  worktree records that fingerprint as the approved baseline (trust on first
+  use); a later mutation whose surface differs — a new binary or changed/added
+  tool schema — fails closed with the typed `capability_quarantined` error until
+  an operator re-approves by removing `capability-baseline.json`. A malformed
+  baseline quarantines rather than being silently trusted.
 
 ## Deferred transport and lifecycle work
 

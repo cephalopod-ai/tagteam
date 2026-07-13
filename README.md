@@ -570,6 +570,23 @@ identity_regex = "FAIL:\\s+(\\S+)"   # optional; must compile with a capture gro
 command = "make unit"
 ```
 
+### Advisory Run Steward (MCP / control plane)
+
+An optional, local-first **Run Steward** can summarize a run's progress and recommend a next action for the operator. It is **strictly advisory**: it reads only a bounded, sanitized `RunObservation` (status, phase, reason codes, and counts — never prompts, diffs, file paths, or model reasoning) and returns a schema-validated advisory whose `action` is one of `wait`, `inspect`, `notify`, `prepare_resume`, `ask_user`, or `report_issue`. It cannot edit the repository, change scope or roles, dismiss findings, run commands, or approve recovery, and the controller never gates execution on it.
+
+Hosts read it through the read-only `tagteam_advise` MCP tool. The steward is **disabled by default**; when disabled, missing, slow, invalid, or over budget, a deterministic template steward is the guaranteed fallback, so a run never depends on a model. Enabling it points the default tier at a local OpenAI-compatible endpoint (e.g. Ollama) with conservative per-run call, timeout, and deduplication budgets, and a per-run lease keeps a single observer. The model request is text-only with no tool/function surface, so the steward cannot invoke Tagteam or inherit MCP/repository-write tools.
+
+```toml
+[steward]
+enabled = true
+base_url = "http://127.0.0.1:11434/v1"   # local OpenAI-compatible (Ollama)
+api_key_env = ""                          # optional; env var name holding the key
+model = "gemma4:latest"                   # required to enable the model tier
+timeout_seconds = 10                      # per-advisory cap; run never blocks past it
+max_calls_per_run = 20                    # per-run call budget
+min_interval_seconds = 5                  # dedup identical observations within this window
+```
+
 User config path:
 
 - macOS/Linux: `~/.config/tagteam/config.toml`
