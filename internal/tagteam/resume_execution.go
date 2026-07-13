@@ -22,9 +22,10 @@ type resumeRuntime struct {
 	selectedPackage  *WorkPackage
 	executionPlan    *ExecutionPlan
 	repoInstructions string
+	pathGate         *controlResumePathGate
 }
 
-func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir string, meta Meta, state RunState, saved FinalRun, prior *Review, currentDiffHash string, controlSafe bool) (final FinalRun, err error) {
+func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir string, meta Meta, state RunState, saved FinalRun, prior *Review, currentDiffHash string, gate *controlResumePathGate) (final FinalRun, err error) {
 	if opts.Rounds <= 0 {
 		opts.Rounds = saved.RoundsRequested
 	}
@@ -40,6 +41,11 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 		}
 	}
 
+	if current, rebindErr := rebindControlResumeRunDir(gate, runDir, nil); rebindErr != nil {
+		return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	} else {
+		runDir = current
+	}
 	final = prepareResumedFinal(saved, opts, meta, state, runDir)
 	budget := &InvocationBudget{Max: opts.MaxRoleInvocations}
 	opts.InvocationBudget = budget
@@ -58,11 +64,18 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 			final.Status = RunStatusFailed
 		}
 		applyInvocationBudget(&final, budget)
+		// Deferred failure persistence must not write through a replaced run dir.
+		if current, rebindErr := rebindControlResumeRunDir(gate, runDir, &final, "state.json", "final.json"); rebindErr != nil {
+			err = &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("run directory path changed during failure persistence: %v (original: %v)", rebindErr, err)}
+			return
+		} else {
+			runDir = current
+		}
 		_ = writeRunState(runDir, RunState{RunID: state.RunID, Mode: opts.Mode, Status: string(final.Status), Phase: final.Phase, CurrentRound: max(1, state.CurrentRound), LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode, RecoveryStatus: "resume_failed"})
 		_ = a.persistFinal(opts.Workdir, final)
 	}()
 
-	runtime, err := a.prepareResumeRuntime(ctx, opts, runDir, &final, controlSafe)
+	rt, err := a.prepareResumeRuntime(ctx, opts, runDir, &final, gate)
 	if err != nil {
 		return final, err
 	}
@@ -74,6 +87,9 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 		if phase != PhasePlanning {
 			return quarantineResumedExecution(final, "baseline test evidence is missing after planning")
 		}
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, &final); err != nil {
+			return final, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		baselineTest, baselineErr := runBaselineTest(ctx, opts, runDir)
 		if baselineErr != nil {
 			return final, baselineErr
@@ -82,18 +98,21 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 	}
 
 	round := max(1, state.CurrentRound)
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, &final, "state.json"); err != nil {
+		return final, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	_ = writeRunState(runDir, RunState{RunID: state.RunID, Mode: opts.Mode, Status: "running", Phase: string(phase), CurrentRound: round, LatestDiffPath: state.LatestDiffPath, LatestReviewPath: state.LatestReviewPath, RecoveryStatus: "resuming"})
 	if phase == PhasePlanning {
-		if err := a.resumePlanning(ctx, opts, runDir, &runtime, &final); err != nil {
+		if err := a.resumePlanning(ctx, opts, runDir, &rt, &final); err != nil {
 			return final, err
 		}
 		phase = PhaseImplementing
 	}
 
 	if opts.Mode == ModeSolo {
-		final, err = a.resumeSoloRun(ctx, opts, state, phase, round, currentDiffHash, runtime, final, budget)
+		final, err = a.resumeSoloRun(ctx, opts, state, phase, round, currentDiffHash, rt, final, budget)
 	} else {
-		final, err = a.resumeReviewedRun(ctx, opts, state, phase, round, currentDiffHash, prior, runtime, final, budget)
+		final, err = a.resumeReviewedRun(ctx, opts, state, phase, round, currentDiffHash, prior, rt, final, budget)
 	}
 	if final.FinishedAt.IsZero() {
 		return final, err
@@ -144,9 +163,10 @@ func prepareResumedFinal(saved FinalRun, opts RunOptions, meta Meta, state RunSt
 	return final
 }
 
-func (a *App) prepareResumeRuntime(ctx context.Context, opts RunOptions, runDir string, final *FinalRun, controlSafe bool) (resumeRuntime, error) {
+func (a *App) prepareResumeRuntime(ctx context.Context, opts RunOptions, runDir string, final *FinalRun, gate *controlResumePathGate) (resumeRuntime, error) {
+	controlSafe := gate != nil
 	editorLabel, reviewerLabel := roleLabels(opts.Mode)
-	runtime := resumeRuntime{editorLabel: editorLabel, reviewerLabel: reviewerLabel}
+	runtime := resumeRuntime{editorLabel: editorLabel, reviewerLabel: reviewerLabel, pathGate: gate}
 	registry := Registry(a.Config, opts)
 	runtime.registry = registry
 	var err error
@@ -169,11 +189,17 @@ func (a *App) prepareResumeRuntime(ctx context.Context, opts RunOptions, runDir 
 		}
 		final.Scout = opts.Scout
 	}
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "repo-instructions.md", "repo-instructions.json"); err != nil {
+		return runtime, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	runtime.repoInstructions, err = loadAndPersistRepoInstructions(ctx, opts, runDir)
 	if err != nil {
 		return runtime, err
 	}
 	if controlSafe {
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
+			return runtime, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		runtime.relay, err = loadResumeRelayContextControl(runDir)
 		if err != nil {
 			return runtime, err
@@ -189,6 +215,9 @@ func (a *App) prepareResumeRuntime(ctx context.Context, opts RunOptions, runDir 
 		}
 	}
 	if controlSafe {
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
+			return runtime, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		if plan, planErr := readControlExecutionPlanOptional(runDir); planErr != nil {
 			return runtime, planErr
 		} else if plan != nil {
@@ -296,12 +325,17 @@ func readOptionalJSON(path string, out any) error {
 }
 
 func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string, runtime *resumeRuntime, final *FinalRun) error {
+	gate := runtime.pathGate
 	if opts.Mode == ModeAdversarial || opts.Mode == ModeSolo {
 		return nil
 	}
 	if opts.Mode == ModeRelay && runtime.relay.Scout.Summary == "" {
+		var err error
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "scout-round-1.json"); err != nil {
+			return &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		path := filepath.Join(runDir, "scout-round-1.json")
-		result, err := a.runAdapter(ctx, runtime.scout, RoleScout, Request{Context: ctx, Prompt: withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", ""), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Scout.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: path, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed scout", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes}, opts.DryRun)
+		result, err := a.runAdapter(ctx, runtime.scout, RoleScout, Request{Context: ctx, Prompt: withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", ""), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Scout.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: path, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed scout", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 		if err != nil {
 			return err
 		}
@@ -323,6 +357,10 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 		final.SelectedPackage = &selected
 		final.RemainingPackages = plan.RemainingPackageTitles()
 		if runtime.executionPlan == nil {
+			var planErr error
+			if runDir, planErr = rebindControlResumeRunDir(gate, runDir, final, "plan.json"); planErr != nil {
+				return &ExitError{Code: ExitPreflightFailed, Err: planErr}
+			}
 			runtime.executionPlan = newExecutionPlanFromWorkPlan(final.RunID, opts.Mode, plan, "supervisor-resume")
 			if err := persistExecutionPlan(runDir, runtime.executionPlan); err != nil {
 				return err
@@ -331,12 +369,20 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 	}
 	if strings.TrimSpace(runtime.relay.Brief) == "" {
 		if runtime.workPlan != nil && runtime.selectedPackage != nil {
+			var err error
+			if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "supervisor-brief.md"); err != nil {
+				return &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
 			runtime.relay.Brief = BuildWorkPackageBrief(*runtime.workPlan, *runtime.selectedPackage)
 			if err := writeFileDurable(filepath.Join(runDir, "supervisor-brief.md"), []byte(runtime.relay.Brief), 0o644, true); err != nil {
 				return err
 			}
 		} else {
-			result, err := a.runAdapter(ctx, runtime.reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{Context: ctx, Prompt: withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-brief.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed supervisor brief", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes}, opts.DryRun)
+			var err error
+			if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "supervisor-brief.md"); err != nil {
+				return &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
+			result, err := a.runAdapter(ctx, runtime.reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{Context: ctx, Prompt: withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-brief.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed supervisor brief", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 			if err != nil {
 				return err
 			}
@@ -344,7 +390,11 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 		}
 	}
 	if opts.Mode == ModeRelay && strings.TrimSpace(runtime.relay.Instructions) == "" {
-		result, err := a.runAdapter(ctx, runtime.reviewer, RoleSupervisor, Request{Context: ctx, Prompt: withRepoInstructions(BuildRelaySupervisorInstructionsPrompt(opts.Prompt, runtime.relay.Brief, runtime.relay.Scout), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-instructions.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed relay instructions", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes}, opts.DryRun)
+		var err error
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "supervisor-instructions.md"); err != nil {
+			return &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+		result, err := a.runAdapter(ctx, runtime.reviewer, RoleSupervisor, Request{Context: ctx, Prompt: withRepoInstructions(BuildRelaySupervisorInstructionsPrompt(opts.Prompt, runtime.relay.Brief, runtime.relay.Scout), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-instructions.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed relay instructions", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 		if err != nil {
 			return err
 		}
@@ -354,13 +404,18 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 }
 
 func (a *App) resumeWorkPlan(ctx context.Context, opts RunOptions, runDir string, runtime resumeRuntime) (WorkPlan, error) {
+	gate := runtime.pathGate
+	var err error
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, nil, "supervisor-work-plan.json", "work-plan-schema.json"); err != nil {
+		return WorkPlan{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	path := filepath.Join(runDir, "supervisor-work-plan.json")
 	schemaPath := filepath.Join(runDir, "work-plan-schema.json")
 	if err := writeFileDurable(schemaPath, []byte(WorkPlanSchema), 0o644, true); err != nil {
 		return WorkPlan{}, err
 	}
 	prompt := withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package), runtime.repoInstructions)
-	result, err := a.runAdapter(ctx, runtime.reviewer, RoleSupervisor, Request{Context: ctx, Prompt: prompt, EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: path, SchemaPath: schemaPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed work plan", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes}, opts.DryRun)
+	result, err := a.runAdapter(ctx, runtime.reviewer, RoleSupervisor, Request{Context: ctx, Prompt: prompt, EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: path, SchemaPath: schemaPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed work plan", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 	if err != nil {
 		return WorkPlan{}, err
 	}
@@ -371,6 +426,10 @@ func (a *App) resumeWorkPlan(ctx context.Context, opts RunOptions, runDir string
 	if err := validateWorkPlanBudget(plan, int64(opts.Timeout.Seconds()*0.8)); err != nil {
 		return WorkPlan{}, err
 	}
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, nil, "supervisor-work-plan.json"); err != nil {
+		return WorkPlan{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	path = filepath.Join(runDir, "supervisor-work-plan.json")
 	if err := writeJSONWithNewline(path, plan); err != nil {
 		return WorkPlan{}, err
 	}

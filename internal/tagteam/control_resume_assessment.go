@@ -96,7 +96,7 @@ func (s ControlService) PrepareResume(ctx context.Context, request ControlResume
 	if state.DiffHash != "" && state.DiffHash != currentDiffHash && phase != PhaseImplementing && phase != PhaseRepairing {
 		return controlResumeUnavailable(assessment, "diff_mismatch", fmt.Sprintf("worktree diff hash changed after completed %s phase", phase)), nil
 	}
-	if err := verifyResumeArtifacts(runDir, state, true); err != nil {
+	if err := verifyResumeArtifacts(runDir, state, true, nil); err != nil {
 		return controlResumeUnavailable(assessment, "artifacts_invalid", err.Error()), nil
 	}
 	if state.DiffHash != "" && state.DiffHash != currentDiffHash {

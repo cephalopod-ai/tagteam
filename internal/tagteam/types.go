@@ -244,6 +244,10 @@ type Request struct {
 	ProgressStdout        *invocationStream
 	ProgressStderr        *invocationStream
 	ProgressLastActivity  *time.Time
+	// controlResumeGate is set only for MCP ResumeControl adapter requests.
+	// When non-nil, shared mutation helpers re-resolve the runs-root boundary
+	// immediately before host writes and dispatch. Nil for normal CLI resume.
+	controlResumeGate *controlResumePathGate
 }
 
 type InvocationBudget struct {

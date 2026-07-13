@@ -115,6 +115,11 @@ func (a *App) recoverEditorFailure(
 	before worktreeSnapshot,
 	final *FinalRun,
 ) (Result, RoleTarget, Adapter, error) {
+	gate := controlResumeGateFrom(ctx)
+	var err error
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
+		return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	after, snapshotErr := captureWorktreeSnapshot(context.Background(), opts.Workdir)
 	if snapshotErr != nil {
 		return Result{}, originalTarget, originalAdapter, failure
@@ -122,10 +127,16 @@ func (a *App) recoverEditorFailure(
 	if len(worktreeDelta(before, after)) == 0 {
 		return a.retryZeroDeltaEditorWithFallback(ctx, opts, round, runDir, baseline, workerSchemaPath, originalRequest, originalTarget, originalAdapter, registry, failure, after, final)
 	}
+	if err := guardControlResumeWritePath(gate, filepath.Join(runDir, "state.json")); err != nil {
+		return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseRepairing), CurrentRound: round, RecoveryStatus: "checkpointing", RoleStatuses: final.RoleStatuses})
-	diff, err := captureDiffArtifact(context.Background(), opts.Workdir, baseline, runDir, round)
+	diff, err := captureDiffArtifact(ctx, opts.Workdir, baseline, runDir, round)
 	if err != nil {
 		return Result{}, originalTarget, originalAdapter, failure
+	}
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
+		return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
 	artifact := RecoveryArtifact{
 		SchemaVersion: ArtifactSchemaVersion,
@@ -139,6 +150,9 @@ func (a *App) recoverEditorFailure(
 		UpdatedAt:     time.Now().UTC(),
 	}
 	if opts.TestCmd != "" && !opts.NoTest {
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("recovery-test-round-%d.txt", round)); err != nil {
+			return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		testPath := filepath.Join(runDir, fmt.Sprintf("recovery-test-round-%d.txt", round))
 		test, _ := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, testPath, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
 		artifact.Test = &test
@@ -151,8 +165,14 @@ func (a *App) recoverEditorFailure(
 		allowed["continue_with_fallback"] = true
 	}
 	decision := RecoveryDecision{SchemaVersion: ArtifactSchemaVersion, Decision: "quarantine", Reason: "recovery supervisor unavailable or invalid", Evidence: []string{failure.Error()}}
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "recovery-decision-schema.json", fmt.Sprintf("recovery-decision-round-%d.json", round)); err != nil {
+		return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	decisionPath := filepath.Join(runDir, fmt.Sprintf("recovery-decision-round-%d.json", round))
 	schemaPath := filepath.Join(runDir, "recovery-decision-schema.json")
+	if err := guardControlResumeWritePath(gate, schemaPath); err != nil {
+		return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	_ = writeFileDurable(schemaPath, []byte(RecoveryDecisionSchema+"\n"), 0o644, false)
 	if reviewer != nil {
 		result, decisionErr := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
@@ -199,7 +219,14 @@ func (a *App) recoverEditorFailure(
 	}
 	artifact.Selected = selectedTarget
 	artifact.UpdatedAt = time.Now().UTC()
-	_ = writeJSONWithNewline(filepath.Join(runDir, fmt.Sprintf("recovery-round-%d.json", round)), artifact)
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("recovery-round-%d.json", round)); err != nil {
+		return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	artifactPath := filepath.Join(runDir, fmt.Sprintf("recovery-round-%d.json", round))
+	if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
+		return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	_ = writeJSONWithNewline(artifactPath, artifact)
 	if artifact.Status == "quarantined" {
 		final.Status = RunStatusQuarantined
 		setFinalBlocking(final, ReasonQuarantined, decision.Reason)
@@ -208,6 +235,9 @@ func (a *App) recoverEditorFailure(
 
 	recoveryContext := fmt.Sprintf("Recovery context: preserve the existing partial diff at %s. %s the requested work and address the recorded failure and focused-test evidence.", diff.PatchPath, map[bool]string{true: "Repair", false: "Continue"}[decision.Decision == "repair"])
 	retryPrompt := prependRecoveryContext(originalRequest.Prompt, recoveryContext)
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("worker-recovery-round-%d.json", round)); err != nil {
+		return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	retryOutput := filepath.Join(runDir, fmt.Sprintf("worker-recovery-round-%d.json", round))
 	retryRequest := originalRequest
 	retryRequest.Context = ctx
@@ -217,7 +247,7 @@ func (a *App) recoverEditorFailure(
 	retryRequest.Workdir = opts.Workdir
 	retryRequest.RunDir = runDir
 	retryRequest.OutputPath = retryOutput
-	retryRequest.SchemaPath = workerSchemaPath
+	retryRequest.SchemaPath = filepath.Join(runDir, filepath.Base(workerSchemaPath))
 	retryRequest.ResumeID = map[bool]string{true: sessionID, false: ""}[decision.Decision == "repair"]
 	retryRequest.Timeout = opts.Timeout
 	retryRequest.WatchdogTimeout = opts.WatchdogTimeout
@@ -232,14 +262,28 @@ func (a *App) recoverEditorFailure(
 	if retryErr != nil {
 		artifact.Status = "quarantined"
 		artifact.UpdatedAt = time.Now().UTC()
-		_ = writeJSONWithNewline(filepath.Join(runDir, fmt.Sprintf("recovery-round-%d.json", round)), artifact)
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("recovery-round-%d.json", round)); err != nil {
+			return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+		artifactPath = filepath.Join(runDir, fmt.Sprintf("recovery-round-%d.json", round))
+		if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
+			return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+		_ = writeJSONWithNewline(artifactPath, artifact)
 		final.Status = RunStatusQuarantined
 		setFinalBlocking(final, ReasonQuarantined, retryErr.Error())
 		return Result{}, selectedTarget, selectedAdapter, retryErr
 	}
 	artifact.Status = "recovered"
 	artifact.UpdatedAt = time.Now().UTC()
-	_ = writeJSONWithNewline(filepath.Join(runDir, fmt.Sprintf("recovery-round-%d.json", round)), artifact)
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("recovery-round-%d.json", round)); err != nil {
+		return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	artifactPath = filepath.Join(runDir, fmt.Sprintf("recovery-round-%d.json", round))
+	if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
+		return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	_ = writeJSONWithNewline(artifactPath, artifact)
 	return result, selectedTarget, selectedAdapter, nil
 }
 
@@ -256,6 +300,7 @@ func (a *App) retryZeroDeltaEditorWithFallback(
 	beforeFallback worktreeSnapshot,
 	final *FinalRun,
 ) (Result, RoleTarget, Adapter, error) {
+	gate := controlResumeGateFrom(ctx)
 	if !policyAttemptsReplacement(opts.LossPolicy.Worker) || len(fallbackTargetsForRole(opts, roleLabelsEditor(opts.Mode), originalTarget)) == 0 {
 		return Result{}, originalTarget, originalAdapter, failure
 	}
@@ -287,7 +332,14 @@ func (a *App) retryZeroDeltaEditorWithFallback(
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	var rebindErr error
+	if runDir, rebindErr = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("recovery-round-%d.json", round)); rebindErr != nil {
+		return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	}
 	artifactPath := filepath.Join(runDir, fmt.Sprintf("recovery-round-%d.json", round))
+	if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
+		return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	_ = writeJSONWithNewline(artifactPath, artifact)
 
 	retryRequest := originalRequest
@@ -296,9 +348,12 @@ func (a *App) retryZeroDeltaEditorWithFallback(
 	retryRequest.EnvOverlay = opts.EnvOverlay
 	retryRequest.Model = selectedTarget.Model
 	retryRequest.Workdir = opts.Workdir
+	if runDir, rebindErr = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("worker-fallback-round-%d.json", round)); rebindErr != nil {
+		return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	}
 	retryRequest.RunDir = runDir
 	retryRequest.OutputPath = filepath.Join(runDir, fmt.Sprintf("worker-fallback-round-%d.json", round))
-	retryRequest.SchemaPath = workerSchemaPath
+	retryRequest.SchemaPath = filepath.Join(runDir, filepath.Base(workerSchemaPath))
 	retryRequest.ResumeID = ""
 	retryRequest.Timeout = opts.Timeout
 	retryRequest.WatchdogTimeout = opts.WatchdogTimeout
@@ -315,6 +370,13 @@ func (a *App) retryZeroDeltaEditorWithFallback(
 		if snapshotErr == nil && len(worktreeDelta(beforeFallback, afterFallback)) > 0 {
 			artifact.Status = "quarantined"
 			artifact.UpdatedAt = time.Now().UTC()
+			if runDir, rebindErr = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("recovery-round-%d.json", round)); rebindErr != nil {
+				return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+			}
+			artifactPath = filepath.Join(runDir, fmt.Sprintf("recovery-round-%d.json", round))
+			if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
+				return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
 			_ = writeJSONWithNewline(artifactPath, artifact)
 			final.Status = RunStatusQuarantined
 			setFinalBlocking(final, ReasonQuarantined, "fallback editor failed after changing the worktree")
@@ -322,11 +384,25 @@ func (a *App) retryZeroDeltaEditorWithFallback(
 		}
 		artifact.Status = "failed"
 		artifact.UpdatedAt = time.Now().UTC()
+		if runDir, rebindErr = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("recovery-round-%d.json", round)); rebindErr != nil {
+			return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+		}
+		artifactPath = filepath.Join(runDir, fmt.Sprintf("recovery-round-%d.json", round))
+		if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
+			return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		_ = writeJSONWithNewline(artifactPath, artifact)
 		return Result{}, selectedTarget, selectedAdapter, retryErr
 	}
 	artifact.Status = "recovered"
 	artifact.UpdatedAt = time.Now().UTC()
+	if runDir, rebindErr = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("recovery-round-%d.json", round)); rebindErr != nil {
+		return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	}
+	artifactPath = filepath.Join(runDir, fmt.Sprintf("recovery-round-%d.json", round))
+	if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
+		return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	_ = writeJSONWithNewline(artifactPath, artifact)
 	return result, selectedTarget, selectedAdapter, nil
 }

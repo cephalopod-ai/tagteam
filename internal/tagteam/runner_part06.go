@@ -30,49 +30,16 @@ func sanitizeArtifactName(raw string) string {
 	return out
 }
 
-func writeOutputContractArtifacts(req Request, role Role, result Result, raw []byte) (string, error) {
-	if req.OutputPath == "" {
-		return "", nil
-	}
-	rawPath := req.OutputPath + ".raw"
-	if err := writeRedactedBytes(rawPath, raw, req.EnvOverlay); err != nil {
-		return rawPath, err
-	}
-	switch role {
-	case RoleCoder:
-		if result.Worker != nil {
-			if err := writeJSONWithNewline(req.OutputPath+".parsed.json", result.Worker); err != nil {
-				return rawPath, err
-			}
-		}
-	case RoleAdversary:
-		if result.Review != nil {
-			normalizeReview(result.Review)
-			if err := writeJSONWithNewline(req.OutputPath+".parsed.json", result.Review); err != nil {
-				return rawPath, err
-			}
-		}
-	case RoleScout:
-		if result.Scout != nil {
-			normalizeScout(result.Scout)
-			if err := writeJSONWithNewline(req.OutputPath+".parsed.json", result.Scout); err != nil {
-				return rawPath, err
-			}
-		}
-	}
-	return rawPath, nil
-}
-
-func writeValidationErrorArtifact(req Request, err error) string {
-	if req.OutputPath == "" || err == nil {
-		return ""
-	}
-	path := req.OutputPath + ".validation-error.txt"
-	_ = writeFileDurable(path, []byte(redactSecretsWithOverlay(err.Error(), req.EnvOverlay)+"\n"), 0o644, true)
-	return path
-}
-
 func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Request, dryRun bool) (result Result, runErr error) {
+	if err := bindControlResumeRequest(ctx, &req); err != nil {
+		return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	if controlResumeBeforeAdapterHook != nil && req.controlResumeGate != nil {
+		controlResumeBeforeAdapterHook()
+		if err := bindControlResumeRequest(ctx, &req); err != nil {
+			return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+	}
 	if err := req.Budget.Before(string(role), req.Phase); err != nil {
 		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: err}
 	}
@@ -108,11 +75,11 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		if err != nil {
 			return Result{}, &ExitError{Code: ExitInvalidArguments, Err: err}
 		}
-		record, recordPath, err := startDeliveryRecord(adapter, role, req, dryRun, spec)
+		record, recordPath, err := startDeliveryRecord(adapter, role, &req, dryRun, spec)
 		if err != nil {
 			return Result{}, err
 		}
-		recordInvocationState(req, record)
+		recordInvocationState(&req, record)
 		if !dryRun && req.Workdir != "" {
 			refreshed, snapshotErr := captureIntegritySnapshot(req)
 			if snapshotErr != nil {
@@ -146,7 +113,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 					DoNotBlock:        true,
 				}
 			}
-			finishDeliveryRecord(recordPath, record, "dry-run", nil)
+			finishDeliveryRecord(req, recordPath, record, "dry-run", nil)
 			return result, nil
 		}
 		req.InvocationID = record.InvocationID
@@ -189,6 +156,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			}
 			_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, started, status)
 		}()
+		if err := rebindRequestControlResume(&req); err != nil {
+			return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		result, err := direct.RunDirect(role, req)
 		if err != nil {
 			if !watchdogDeadline.IsZero() && errors.Is(directCtx.Err(), context.DeadlineExceeded) && !time.Now().Before(watchdogDeadline) {
@@ -199,10 +169,14 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 				record.CancellationCause = directCtx.Err().Error()
 			}
 			if record.StderrPath != "" {
+				if err := guardControlResumeWritePath(req.controlResumeGate, record.StderrPath); err != nil {
+					finishDeliveryRecord(req, recordPath, record, "failed", err)
+					return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+				}
 				_ = writeRedactedBytes(record.StderrPath, []byte(err.Error()+"\n"), req.EnvOverlay)
 				record.StderrBytes = int64(len(err.Error()) + 1)
 			}
-			finishDeliveryRecord(recordPath, record, "failed", err)
+			finishDeliveryRecord(req, recordPath, record, "failed", err)
 			return Result{}, err
 		}
 		raw := result.Raw
@@ -210,37 +184,45 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			raw = []byte(result.Text)
 		}
 		if record.StdoutPath != "" {
+			if err := guardControlResumeWritePath(req.controlResumeGate, record.StdoutPath); err != nil {
+				finishDeliveryRecord(req, recordPath, record, "failed", err)
+				return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
 			_ = writeRedactedBytes(record.StdoutPath, raw, req.EnvOverlay)
 			record.StdoutBytes = int64(len(raw))
 		}
 		if int64(len(raw)) > maxOutputBytes(req) {
 			err := &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("%s output exceeded max_output_bytes=%d", adapter.ID(), maxOutputBytes(req))}
-			finishDeliveryRecord(recordPath, record, "failed", err)
+			finishDeliveryRecord(req, recordPath, record, "failed", err)
 			return Result{}, err
 		}
 		if err := validateWorkerResultForRequest(ctx, req, &result, before); err != nil {
 			record.ValidationErrorPath = writeValidationErrorArtifact(req, err)
 			_, _ = writeOutputContractArtifacts(req, role, result, raw)
-			finishDeliveryRecord(recordPath, record, "failed", err)
+			finishDeliveryRecord(req, recordPath, record, "failed", err)
 			return Result{}, err
 		}
 		if role == RoleAdversary && result.Review != nil {
 			if err := result.Review.ValidateCurrent(); err != nil {
 				contractErr := &OutputContractError{Err: err}
 				record.ValidationErrorPath = writeValidationErrorArtifact(req, contractErr)
-				finishDeliveryRecord(recordPath, record, "failed", contractErr)
+				finishDeliveryRecord(req, recordPath, record, "failed", contractErr)
 				return Result{}, contractErr
 			}
 		}
 		if req.OutputPath != "" && !fileExists(req.OutputPath) {
+			if err := guardControlResumeWritePath(req.controlResumeGate, req.OutputPath); err != nil {
+				finishDeliveryRecord(req, recordPath, record, "failed", err)
+				return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
 			if writeErr := writeRedactedBytes(req.OutputPath, raw, req.EnvOverlay); writeErr != nil {
-				finishDeliveryRecord(recordPath, record, "failed", writeErr)
+				finishDeliveryRecord(req, recordPath, record, "failed", writeErr)
 				return Result{}, writeErr
 			}
 		}
 		rawPath, artifactErr := writeOutputContractArtifacts(req, role, result, raw)
 		if artifactErr != nil {
-			finishDeliveryRecord(recordPath, record, "failed", artifactErr)
+			finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
 			return Result{}, artifactErr
 		}
 		record.RawOutputPath = rawPath
@@ -249,18 +231,18 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		}
 		normalizeReview(result.Review)
 		normalizeScout(result.Scout)
-		finishDeliveryRecord(recordPath, record, "completed", nil)
+		finishDeliveryRecord(req, recordPath, record, "completed", nil)
 		return result, nil
 	}
 	spec, err := adapter.BuildCmd(role, req)
 	if err != nil {
 		return Result{}, &ExitError{Code: ExitInvalidArguments, Err: err}
 	}
-	record, recordPath, err := startDeliveryRecord(adapter, role, req, dryRun, spec)
+	record, recordPath, err := startDeliveryRecord(adapter, role, &req, dryRun, spec)
 	if err != nil {
 		return Result{}, err
 	}
-	recordInvocationState(req, record)
+	recordInvocationState(&req, record)
 	if !dryRun && req.Workdir != "" {
 		refreshed, snapshotErr := captureIntegritySnapshot(req)
 		if snapshotErr != nil {
@@ -294,7 +276,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 				DoNotBlock:        true,
 			}
 		}
-		finishDeliveryRecord(recordPath, record, "dry-run", nil)
+		finishDeliveryRecord(req, recordPath, record, "dry-run", nil)
 		return result, nil
 	}
 	req.InvocationID = record.InvocationID
@@ -322,7 +304,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		})
 		if lockErr != nil {
 			_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, waitStarted, "failed")
-			finishDeliveryRecord(recordPath, record, "failed", lockErr)
+			finishDeliveryRecord(req, recordPath, record, "failed", lockErr)
 			return Result{}, lockErr
 		}
 		defer release()
@@ -339,15 +321,18 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	if len(spec.Stdin) > 0 {
 		cmd.Stdin = bytes.NewReader(spec.Stdin)
 	}
+	if err := rebindRequestControlResume(&req); err != nil {
+		return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	stdout, err := newInvocationStream(record.StdoutPath, maxOutputBytes(req), req.EnvOverlay)
 	if err != nil {
-		finishDeliveryRecord(recordPath, record, "failed", err)
+		finishDeliveryRecord(req, recordPath, record, "failed", err)
 		return Result{}, err
 	}
 	stderr, err := newInvocationStream(record.StderrPath, maxOutputBytes(req), req.EnvOverlay)
 	if err != nil {
 		_ = stdout.Close()
-		finishDeliveryRecord(recordPath, record, "failed", err)
+		finishDeliveryRecord(req, recordPath, record, "failed", err)
 		return Result{}, err
 	}
 	cmd.Stdout = stdout
@@ -424,13 +409,18 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			}
 		}
 	}()
+	if err := rebindRequestControlResume(&req); err != nil {
+		close(done)
+		<-watchdogStopped
+		return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	if err := cmd.Run(); err != nil {
 		close(done)
 		<-watchdogStopped
 		finishInvocationStreams(&record, stdout, stderr)
 		if stdout.Exceeded() || stderr.Exceeded() {
 			limitErr := &ExitError{Code: ExitAdapterFailure, Err: outputLimitError(adapter.ID(), maxOutputBytes(req))}
-			finishDeliveryRecord(recordPath, record, "failed", limitErr)
+			finishDeliveryRecord(req, recordPath, record, "failed", limitErr)
 			return Result{}, limitErr
 		}
 		wasStalled := false
@@ -474,7 +464,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			cause = fmt.Errorf("%w: %s", errInvocationStalled, cause)
 		}
 		runErr := &ExitError{Code: ExitAdapterFailure, Err: cause}
-		finishDeliveryRecord(recordPath, record, "failed", runErr)
+		finishDeliveryRecord(req, recordPath, record, "failed", runErr)
 		return Result{}, runErr
 	}
 	close(done)
@@ -484,14 +474,14 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	logRequestProgress(req, "%s process completed elapsed=%s", phase, shortDuration(time.Since(started)))
 	if stdout.Exceeded() || stderr.Exceeded() {
 		limitErr := &ExitError{Code: ExitAdapterFailure, Err: outputLimitError(adapter.ID(), maxOutputBytes(req))}
-		finishDeliveryRecord(recordPath, record, "failed", limitErr)
+		finishDeliveryRecord(req, recordPath, record, "failed", limitErr)
 		return Result{}, limitErr
 	}
 	raw := stdout.Bytes()
 	if req.OutputPath != "" && fileExists(req.OutputPath) {
 		if info, statErr := os.Stat(req.OutputPath); statErr == nil && info.Size() > maxOutputBytes(req) {
 			err := &ExitError{Code: ExitAdapterFailure, Err: outputLimitError(adapter.ID(), maxOutputBytes(req))}
-			finishDeliveryRecord(recordPath, record, "failed", err)
+			finishDeliveryRecord(req, recordPath, record, "failed", err)
 			return Result{}, err
 		}
 		var readErr error
@@ -505,46 +495,54 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	}
 	if int64(len(raw)) > maxOutputBytes(req) {
 		err := &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("%s output exceeded max_output_bytes=%d", adapter.ID(), maxOutputBytes(req))}
-		finishDeliveryRecord(recordPath, record, "failed", err)
+		finishDeliveryRecord(req, recordPath, record, "failed", err)
 		return Result{}, err
 	}
 	if req.OutputPath != "" && !fileExists(req.OutputPath) {
+		if err := guardControlResumeWritePath(req.controlResumeGate, req.OutputPath); err != nil {
+			finishDeliveryRecord(req, recordPath, record, "failed", err)
+			return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		if writeErr := writeRedactedBytes(req.OutputPath, raw, req.EnvOverlay); writeErr != nil {
-			finishDeliveryRecord(recordPath, record, "failed", writeErr)
+			finishDeliveryRecord(req, recordPath, record, "failed", writeErr)
 			return Result{}, writeErr
 		}
 	}
 	result, err = adapter.ParseResult(role, raw)
 	if err != nil {
 		record.ValidationErrorPath = writeValidationErrorArtifact(req, err)
-		finishDeliveryRecord(recordPath, record, "failed", err)
+		finishDeliveryRecord(req, recordPath, record, "failed", err)
 		return Result{}, err
 	}
 	if err := validateWorkerResultForRequest(ctx, req, &result, before); err != nil {
 		record.ValidationErrorPath = writeValidationErrorArtifact(req, err)
 		_, _ = writeOutputContractArtifacts(req, role, result, raw)
-		finishDeliveryRecord(recordPath, record, "failed", err)
+		finishDeliveryRecord(req, recordPath, record, "failed", err)
 		return Result{}, err
 	}
 	if role == RoleAdversary && result.Review != nil {
 		if err := result.Review.ValidateCurrent(); err != nil {
 			contractErr := &OutputContractError{Err: err}
 			record.ValidationErrorPath = writeValidationErrorArtifact(req, contractErr)
-			finishDeliveryRecord(recordPath, record, "failed", contractErr)
+			finishDeliveryRecord(req, recordPath, record, "failed", contractErr)
 			return Result{}, contractErr
 		}
 	}
 	normalizeReview(result.Review)
 	normalizeScout(result.Scout)
 	if role == RoleScout && req.OutputPath != "" && result.Scout != nil {
+		if err := guardControlResumeWritePath(req.controlResumeGate, req.OutputPath); err != nil {
+			finishDeliveryRecord(req, recordPath, record, "failed", err)
+			return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		if err := writeJSONWithNewline(req.OutputPath, result.Scout); err != nil {
-			finishDeliveryRecord(recordPath, record, "failed", err)
+			finishDeliveryRecord(req, recordPath, record, "failed", err)
 			return Result{}, err
 		}
 	}
 	rawPath, artifactErr := writeOutputContractArtifacts(req, role, result, raw)
 	if artifactErr != nil {
-		finishDeliveryRecord(recordPath, record, "failed", artifactErr)
+		finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
 		return Result{}, artifactErr
 	}
 	record.RawOutputPath = rawPath
@@ -552,7 +550,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		record.ParsedPath = req.OutputPath + ".parsed.json"
 	}
 	result.Command = spec.Argv
-	finishDeliveryRecord(recordPath, record, "completed", nil)
+	finishDeliveryRecord(req, recordPath, record, "completed", nil)
 	return result, nil
 }
 
@@ -747,52 +745,4 @@ func selectRunnableRoleAdapter(ctx context.Context, registry map[string]Adapter,
 		final.RoleStatuses[role] = status
 		return primary, adapter, err
 	}
-}
-
-func runTestCommand(ctx context.Context, workdir, testCmd string, timeout time.Duration, outputPath string, dryRun bool, envOverlay map[string]string, maxBytes int64, identityRegex string) (TestRun, error) {
-	if dryRun {
-		return TestRun{Command: testCmd, Passed: true, Output: "dry-run"}, nil
-	}
-	if maxBytes <= 0 {
-		maxBytes = 2 * 1024 * 1024
-	}
-	runCtx := ctx
-	cancel := func() {}
-	if timeout > 0 {
-		runCtx, cancel = context.WithTimeout(ctx, timeout)
-	}
-	defer cancel()
-	cmd := exec.CommandContext(runCtx, "/bin/sh", "-lc", testCmd)
-	prepareProcessTree(cmd)
-	cmd.Dir = workdir
-	stateRoot, tempDir, isolationErr := isolatedTestDirectories(outputPath)
-	if isolationErr != nil {
-		return TestRun{}, isolationErr
-	}
-	cmd.Env = mergeCommandEnv(envOverlay, []string{
-		"TAGTEAM_STATE_ROOT=" + stateRoot,
-		"XDG_STATE_HOME=" + stateRoot,
-		"TMPDIR=" + tempDir,
-		"TMP=" + tempDir,
-		"TEMP=" + tempDir,
-	})
-	var out boundedBuffer
-	out.limit = maxBytes
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err := cmd.Run()
-	output := out.Bytes()
-	if out.Exceeded() {
-		err = outputLimitError("test command", maxBytes)
-	}
-	testRun := TestRun{
-		Command:           testCmd,
-		Output:            redactSecretsWithOverlay(string(output), envOverlay),
-		Passed:            err == nil,
-		FailureIdentities: extractFailureIdentitiesWithRegex(string(output), identityRegex),
-		StateRoot:         stateRoot,
-		TempDir:           tempDir,
-	}
-	_ = writeRedactedBytes(outputPath, output, envOverlay)
-	return testRun, nil
 }

@@ -370,24 +370,25 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 			reviewPrompt += "\n\nJSON schema:\n" + ReviewSchema
 		}
 		req := Request{
-			Context:         ctx,
-			Prompt:          reviewPrompt,
-			EnvOverlay:      opts.EnvOverlay,
-			Model:           target.Model,
-			Workdir:         opts.Workdir,
-			RunDir:          runDir,
-			OutputPath:      outputPath,
-			SchemaPath:      schemaPath,
-			Passthrough:     opts.ClaudeArgs,
-			Timeout:         opts.Timeout,
-			WatchdogTimeout: opts.WatchdogTimeout,
-			MaxOutputBytes:  opts.MaxOutputBytes,
-			Phase:           fmt.Sprintf("round %d %s %s", round, reviewerLabel, roleTargetString(target)),
-			ProgressRole:    Role(reviewerLabel),
-			InputMode:       input.Mode,
-			Quiet:           opts.Quiet,
-			Verbose:         opts.Verbose,
-			Budget:          opts.InvocationBudget,
+			Context:           ctx,
+			Prompt:            reviewPrompt,
+			EnvOverlay:        opts.EnvOverlay,
+			Model:             target.Model,
+			Workdir:           opts.Workdir,
+			RunDir:            runDir,
+			OutputPath:        outputPath,
+			SchemaPath:        schemaPath,
+			Passthrough:       opts.ClaudeArgs,
+			Timeout:           opts.Timeout,
+			WatchdogTimeout:   opts.WatchdogTimeout,
+			MaxOutputBytes:    opts.MaxOutputBytes,
+			Phase:             fmt.Sprintf("round %d %s %s", round, reviewerLabel, roleTargetString(target)),
+			ProgressRole:      Role(reviewerLabel),
+			InputMode:         input.Mode,
+			Quiet:             opts.Quiet,
+			Verbose:           opts.Verbose,
+			Budget:            opts.InvocationBudget,
+			controlResumeGate: controlResumeGateFrom(ctx),
 		}
 		req.Stdin = input.Stdin
 		result, err := a.runAdapter(ctx, adapter, RoleAdversary, req, opts.DryRun)
@@ -582,7 +583,10 @@ func maxOutputBytes(req Request) int64 {
 	return 2 * 1024 * 1024
 }
 
-func startDeliveryRecord(adapter Adapter, role Role, req Request, dryRun bool, spec *CommandSpec) (DeliveryRecord, string, error) {
+func startDeliveryRecord(adapter Adapter, role Role, req *Request, dryRun bool, spec *CommandSpec) (DeliveryRecord, string, error) {
+	if err := rebindRequestControlResume(req, "deliveries"); err != nil {
+		return DeliveryRecord{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	started := time.Now().UTC()
 	name := fmt.Sprintf("%s-%s-%s", started.Format("20060102T150405.000000000Z"), sanitizeArtifactName(string(role)), sanitizeArtifactName(adapter.ID()))
 	record := DeliveryRecord{
@@ -617,6 +621,9 @@ func startDeliveryRecord(adapter Adapter, role Role, req Request, dryRun bool, s
 		return record, "", err
 	}
 	promptPath := filepath.Join(dir, name+".prompt.md")
+	if err := guardControlResumeWritePath(req.controlResumeGate, promptPath); err != nil {
+		return record, "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	if err := writeRedactedBytes(promptPath, []byte(req.Prompt), req.EnvOverlay); err != nil {
 		return record, "", err
 	}
@@ -624,10 +631,85 @@ func startDeliveryRecord(adapter Adapter, role Role, req Request, dryRun bool, s
 	record.StdoutPath = filepath.Join(dir, name+".stdout.txt")
 	record.StderrPath = filepath.Join(dir, name+".stderr.txt")
 	recordPath := filepath.Join(dir, name+".json")
+	if err := guardControlResumeWritePath(req.controlResumeGate, recordPath); err != nil {
+		return record, "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	if err := writeJSONWithNewline(recordPath, record); err != nil {
 		return record, "", err
 	}
 	return record, recordPath, nil
+}
+
+func writeOutputContractArtifacts(req Request, role Role, result Result, raw []byte) (string, error) {
+	if err := rebindRequestControlResume(&req); err != nil {
+		return "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	if req.OutputPath == "" {
+		return "", nil
+	}
+	if err := guardControlResumeWritePath(req.controlResumeGate, req.OutputPath); err != nil {
+		return "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	rawPath := req.OutputPath + ".raw"
+	if err := guardControlResumeWritePath(req.controlResumeGate, rawPath); err != nil {
+		return rawPath, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	if err := writeRedactedBytes(rawPath, raw, req.EnvOverlay); err != nil {
+		return rawPath, err
+	}
+	switch role {
+	case RoleCoder:
+		if result.Worker != nil {
+			parsedPath := req.OutputPath + ".parsed.json"
+			if err := guardControlResumeWritePath(req.controlResumeGate, parsedPath); err != nil {
+				return rawPath, &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
+			if err := writeJSONWithNewline(parsedPath, result.Worker); err != nil {
+				return rawPath, err
+			}
+		}
+	case RoleAdversary:
+		if result.Review != nil {
+			normalizeReview(result.Review)
+			parsedPath := req.OutputPath + ".parsed.json"
+			if err := guardControlResumeWritePath(req.controlResumeGate, parsedPath); err != nil {
+				return rawPath, &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
+			if err := writeJSONWithNewline(parsedPath, result.Review); err != nil {
+				return rawPath, err
+			}
+		}
+	case RoleScout:
+		if result.Scout != nil {
+			normalizeScout(result.Scout)
+			parsedPath := req.OutputPath + ".parsed.json"
+			if err := guardControlResumeWritePath(req.controlResumeGate, parsedPath); err != nil {
+				return rawPath, &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
+			if err := writeJSONWithNewline(parsedPath, result.Scout); err != nil {
+				return rawPath, err
+			}
+		}
+	}
+	return rawPath, nil
+}
+
+func writeValidationErrorArtifact(req Request, cause error) string {
+	if cause == nil || req.OutputPath == "" {
+		return ""
+	}
+	if err := rebindRequestControlResume(&req); err != nil {
+		return ""
+	}
+	if err := guardControlResumeWritePath(req.controlResumeGate, req.OutputPath); err != nil {
+		return ""
+	}
+	path := req.OutputPath + ".validation-error.txt"
+	if err := guardControlResumeWritePath(req.controlResumeGate, path); err != nil {
+		return ""
+	}
+	_ = writeFileDurable(path, []byte(redactSecretsWithOverlay(cause.Error(), req.EnvOverlay)+"\n"), 0o644, true)
+	return path
 }
 
 func promptInArgv(prompt string, spec *CommandSpec) bool {
@@ -642,8 +724,11 @@ func promptInArgv(prompt string, spec *CommandSpec) bool {
 	return false
 }
 
-func finishDeliveryRecord(path string, record DeliveryRecord, status string, err error) {
+func finishDeliveryRecord(req Request, path string, record DeliveryRecord, status string, err error) {
 	if path == "" {
+		return
+	}
+	if guardErr := guardControlResumeWritePath(req.controlResumeGate, path); guardErr != nil {
 		return
 	}
 	record.FinishedAt = time.Now().UTC()

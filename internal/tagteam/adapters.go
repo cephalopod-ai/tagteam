@@ -12,6 +12,10 @@ import (
 	"strings"
 )
 
+// testRegistryOverrides is a test-only seam merged into Registry when non-nil.
+// Production keeps it nil.
+var testRegistryOverrides map[string]Adapter
+
 func Registry(cfg Config, opts RunOptions) map[string]Adapter {
 	openAICompatible := &OpenAICompatibleAdapter{
 		BaseURL:      cfg.Adapters.OpenAICompatible.BaseURL,
@@ -21,7 +25,7 @@ func Registry(cfg Config, opts RunOptions) map[string]Adapter {
 		ExtraArgs:    opts.OpenAICompatibleArgs,
 		EnvOverlay:   opts.EnvOverlay,
 	}
-	return map[string]Adapter{
+	reg := map[string]Adapter{
 		"codex": &CodexAdapter{
 			IDValue:         "codex",
 			DefaultModel:    cfg.Adapters.Codex.DefaultModel,
@@ -58,6 +62,10 @@ func Registry(cfg Config, opts RunOptions) map[string]Adapter {
 		"openai-compatible": openAICompatible,
 		"oai":               openAICompatible,
 	}
+	for id, adapter := range testRegistryOverrides {
+		reg[id] = adapter
+	}
+	return reg
 }
 
 type CodexAdapter struct {

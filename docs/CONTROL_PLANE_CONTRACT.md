@@ -83,9 +83,18 @@ server read-only unless the operator explicitly passes `--allow-dev-build`.
   `supervisor-brief.md`, scout/work-plan JSON). Cancel and the cancellation
   watcher re-resolve the run directory under the runs-root boundary immediately
   before cancel-request I/O so a replaced run directory cannot redirect writes.
-  MCP resume re-resolves the run directory immediately before lock and mutation
-  and keeps resumed relay/plan reads on the control-safe artifact API rather
-  than raw `os.ReadFile` paths.
+  MCP resume carries the canonical runs-root boundary throughout resumed
+  execution: it re-resolves the run directory under that boundary immediately
+  before lock acquisition, again after lock, immediately before each resumed-run
+  artifact read (meta, final, prior review, diff/review verification), and again
+  immediately before every host mutation and adapter request construction/dispatch
+  (including shared delivery/progress/output helpers and post-scout/review/
+  finalization paths reached during resume). Shared adapter requests carry an
+  optional control-resume gate so a replacement after an earlier rebind cannot
+  redefine the trust root. Resumed relay/plan reads stay on the control-safe
+  artifact API rather than raw `os.ReadFile` paths; deferred failure persistence
+  and quarantine are fail-closed with path-change errors when the run directory
+  has escaped.
 - Allowed paths keep the existing syntax validator (absolute paths, traversal,
   globs, backslashes, blanks, and lexical duplicates are rejected), then are
   resolved through real paths under the canonical repository. Broken or

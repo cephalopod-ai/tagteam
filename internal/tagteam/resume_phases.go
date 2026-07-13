@@ -10,8 +10,14 @@ import (
 )
 
 func (a *App) resumeReviewedRun(ctx context.Context, opts RunOptions, state RunState, phase RunPhase, round int, currentDiffHash string, prior *Review, runtime resumeRuntime, final FinalRun, budget *InvocationBudget) (FinalRun, error) {
-	workerSchemaPath := filepath.Join(final.RunDir, "worker-result-schema.json")
-	schemaPath := filepath.Join(final.RunDir, "review-schema.json")
+	gate := runtime.pathGate
+	runDir := final.RunDir
+	var err error
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, &final, "worker-result-schema.json", "review-schema.json"); err != nil {
+		return final, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	workerSchemaPath := filepath.Join(runDir, "worker-result-schema.json")
+	schemaPath := filepath.Join(runDir, "review-schema.json")
 	if err := writeFileDurable(workerSchemaPath, []byte(WorkerResultSchema+"\n"), 0o644, true); err != nil {
 		return final, err
 	}
@@ -27,35 +33,51 @@ func (a *App) resumeReviewedRun(ctx context.Context, opts RunOptions, state RunS
 	for ; round <= opts.Rounds; round++ {
 		skipEditor := firstPhase && (phase == PhaseTesting || phase == PhaseReviewing)
 		skipTests := firstPhase && phase == PhaseReviewing
-		editorOutputPath := resumeEditorOutputPath(final.RunDir, runtime.editorLabel, round)
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, &final); err != nil {
+			return final, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+		editorOutputPath := resumeEditorOutputPath(runDir, runtime.editorLabel, round)
 		if !skipEditor {
 			partial := firstPhase && (phase == PhaseImplementing || phase == PhaseRepairing) && state.DiffHash != currentDiffHash
-			result, outputPath, err := a.resumeEditor(ctx, opts, state, round, partial, workerSchemaPath, latestReview, &runtime, &final)
-			if err != nil {
-				return final, err
+			result, outputPath, editorErr := a.resumeEditor(ctx, opts, state, round, partial, workerSchemaPath, latestReview, &runtime, &final)
+			if editorErr != nil {
+				return final, editorErr
 			}
 			editorOutputPath = outputPath
 			final.Costs[runtime.editorLabel] += result.CostUSD
 			setRoleStatus(&final, runtime.editorLabel, final.Coder, "completed", "", "")
 		}
 
-		diff, testOutput, err := resumeCaptureRound(ctx, opts, final.Baseline, final.RunDir, final.RunID, round, runtime.selectedPackage, !skipTests, &final)
-		if err != nil {
-			return final, err
+		diff, testOutput, captureErr := resumeCaptureRound(ctx, opts, final.Baseline, runDir, final.RunID, round, runtime.selectedPackage, !skipTests, &final, gate)
+		if captureErr != nil {
+			return final, captureErr
 		}
+		runDir = final.RunDir
 		latestDiff = diff
 		if skipTests {
-			testOutput = readOptionalText(filepath.Join(final.RunDir, fmt.Sprintf("test-round-%d.txt", round)))
+			if runDir, err = rebindControlResumeRunDir(gate, runDir, &final); err != nil {
+				return final, &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
+			testOutput = readOptionalText(filepath.Join(runDir, fmt.Sprintf("test-round-%d.txt", round)))
 		}
 		if opts.Mode == ModeRelay && runtime.scout != nil {
-			if err := a.runPostScout(ctx, opts, round, final.RunDir, diff.Patch, testOutput, runtime.repoInstructions, runtime.scout, runtime.registry, &runtime.relay, &final); err != nil {
+			if runDir, err = rebindControlResumeRunDir(gate, runDir, &final); err != nil {
+				return final, &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
+			if err := a.runPostScout(ctx, opts, round, runDir, diff.Patch, testOutput, runtime.repoInstructions, runtime.scout, runtime.registry, &runtime.relay, &final); err != nil {
 				return final, err
 			}
+			runDir = final.RunDir
 		}
-		review, err := a.runRoundReview(ctx, opts, round, final.RunDir, schemaPath, final.Baseline, diff.Patch, diff.PatchPath, testOutput, editorOutputPath, runtime.repoInstructions, runtime.reviewerLabel, runtime.reviewer, runtime.relay, latestReview, runtime.executionPlan, &final)
-		if err != nil {
-			return final, err
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, &final); err != nil {
+			return final, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
+		schemaPath = filepath.Join(runDir, "review-schema.json")
+		review, reviewErr := a.runRoundReview(ctx, opts, round, runDir, schemaPath, final.Baseline, diff.Patch, diff.PatchPath, testOutput, editorOutputPath, runtime.repoInstructions, runtime.reviewerLabel, runtime.reviewer, runtime.relay, latestReview, runtime.executionPlan, &final)
+		if reviewErr != nil {
+			return final, reviewErr
+		}
+		runDir = final.RunDir
 		latestReview = *review
 		final.Review = review
 		final.Verdict = review.Verdict
@@ -69,9 +91,15 @@ func (a *App) resumeReviewedRun(ctx context.Context, opts RunOptions, state RunS
 		}
 		phase = PhaseRepairing
 		firstPhase = false
-		_ = writeRunState(final.RunDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseRepairing), CurrentRound: round + 1, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, RecoveryStatus: "review_requested_repairs"})
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, &final, "state.json"); err != nil {
+			return final, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+		_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseRepairing), CurrentRound: round + 1, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, RecoveryStatus: "review_requested_repairs"})
 	}
-	if err := a.finalizeReviewedRun(opts, final.RunDir, budget, latestDiff, runtime.executionPlan, runtime.selectedPackage, &final); err != nil {
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, &final); err != nil {
+		return final, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	if err := a.finalizeReviewedRunWithGate(opts, runDir, budget, latestDiff, runtime.executionPlan, runtime.selectedPackage, &final, gate); err != nil {
 		return final, err
 	}
 	if final.ExitCode != ExitSuccess {
@@ -81,7 +109,13 @@ func (a *App) resumeReviewedRun(ctx context.Context, opts RunOptions, state RunS
 }
 
 func (a *App) resumeSoloRun(ctx context.Context, opts RunOptions, state RunState, phase RunPhase, round int, currentDiffHash string, runtime resumeRuntime, final FinalRun, budget *InvocationBudget) (FinalRun, error) {
-	workerSchemaPath := filepath.Join(final.RunDir, "worker-result-schema.json")
+	gate := runtime.pathGate
+	runDir := final.RunDir
+	var err error
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, &final, "worker-result-schema.json"); err != nil {
+		return final, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	workerSchemaPath := filepath.Join(runDir, "worker-result-schema.json")
 	if err := writeFileDurable(workerSchemaPath, []byte(WorkerResultSchema+"\n"), 0o644, true); err != nil {
 		return final, err
 	}
@@ -90,18 +124,20 @@ func (a *App) resumeSoloRun(ctx context.Context, opts RunOptions, state RunState
 	}
 	if phase != PhaseTesting {
 		partial := (phase == PhaseImplementing || phase == PhaseRepairing) && state.DiffHash != currentDiffHash
-		result, _, err := a.resumeEditor(ctx, opts, state, round, partial, workerSchemaPath, Review{}, &runtime, &final)
-		if err != nil {
-			return final, err
+		result, _, editorErr := a.resumeEditor(ctx, opts, state, round, partial, workerSchemaPath, Review{}, &runtime, &final)
+		if editorErr != nil {
+			return final, editorErr
 		}
 		final.Costs[runtime.editorLabel] += result.CostUSD
 		final.Summary = result.Text
 		setRoleStatus(&final, runtime.editorLabel, final.Coder, "completed", "", "")
 	}
-	diff, _, err := resumeCaptureRound(ctx, opts, final.Baseline, final.RunDir, final.RunID, round, nil, true, &final)
-	if err != nil {
-		return final, err
+	runDir = final.RunDir
+	diff, _, captureErr := resumeCaptureRound(ctx, opts, final.Baseline, runDir, final.RunID, round, nil, true, &final, gate)
+	if captureErr != nil {
+		return final, captureErr
 	}
+	runDir = final.RunDir
 	if strings.TrimSpace(final.Summary) == "" {
 		final.Summary = "Solo implementation resumed and host validation completed; review was not run."
 	} else {
@@ -113,7 +149,10 @@ func (a *App) resumeSoloRun(ctx context.Context, opts RunOptions, state RunState
 	final.ExitCode = a.computeExitCode(final)
 	applyInvocationBudget(&final, budget)
 	finalizeRunState(&final)
-	_ = writeRunState(final.RunDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: string(final.Status), Phase: string(PhaseTesting), CurrentRound: round, LatestDiffPath: diff.PatchPath, DiffHash: diff.Metadata.DiffSHA256, ExitCode: final.ExitCode, RecoveryStatus: "resumed"})
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, &final, "state.json", "final.json"); err != nil {
+		return final, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: string(final.Status), Phase: string(PhaseTesting), CurrentRound: round, LatestDiffPath: diff.PatchPath, DiffHash: diff.Metadata.DiffSHA256, ExitCode: final.ExitCode, RecoveryStatus: "resumed"})
 	if err := a.persistFinal(opts.Workdir, final); err != nil {
 		return final, err
 	}
@@ -124,47 +163,81 @@ func (a *App) resumeSoloRun(ctx context.Context, opts RunOptions, state RunState
 }
 
 func (a *App) resumeEditor(ctx context.Context, opts RunOptions, state RunState, round int, partial bool, workerSchemaPath string, latestReview Review, runtime *resumeRuntime, final *FinalRun) (Result, string, error) {
-	if priorRecoveryExists(final.RunDir, round) && partial {
+	gate := runtime.pathGate
+	runDir := final.RunDir
+	var err error
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
+		return Result{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	if priorRecoveryExists(runDir, round) && partial {
 		return Result{}, "", quarantineResumedExecutionError(final, fmt.Sprintf("recovery decision already exists for round %d", round))
 	}
 	before, err := captureWorktreeSnapshot(ctx, opts.Workdir)
 	if err != nil {
 		return Result{}, "", err
 	}
-	prompt, err := buildRoundEditorPrompt(ctx, opts, round, final.RunDir, final.Baseline, "", latestReview, nil, runtime.relay, runtime.selectedPackage, runtime.workPlan, runtime.relay.Brief, round == 1 && latestReview.Verdict == "")
+	prompt, err := buildRoundEditorPrompt(ctx, opts, round, runDir, final.Baseline, "", latestReview, nil, runtime.relay, runtime.selectedPackage, runtime.workPlan, runtime.relay.Brief, round == 1 && latestReview.Verdict == "")
 	if err != nil {
 		return Result{}, "", err
 	}
 	prompt = workerContractPrompt(withRepoInstructions(prompt, runtime.repoInstructions))
-	outputPath := resumeEditorOutputPath(final.RunDir, runtime.editorLabel, round)
+	// Re-resolve immediately before adapter request construction/dispatch.
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, filepath.Base(resumeEditorOutputPath(runDir, runtime.editorLabel, round))); err != nil {
+		return Result{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	outputPath := resumeEditorOutputPath(runDir, runtime.editorLabel, round)
+	workerSchemaPath = filepath.Join(runDir, "worker-result-schema.json")
 	setRoleStatus(final, runtime.editorLabel, final.Coder, "running", "", "")
-	editorRequest := Request{Context: ctx, Prompt: prompt, SystemPrompt: editorSystemPromptForMode(opts.Mode), EnvOverlay: opts.EnvOverlay, Model: final.Coder.Model, Workdir: opts.Workdir, RunDir: final.RunDir, OutputPath: outputPath, SchemaPath: workerSchemaPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: fmt.Sprintf("resumed round %d %s", round, runtime.editorLabel), ProgressRole: Role(runtime.editorLabel), Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, RequireWorkerContract: true}
+	editorRequest := Request{Context: ctx, Prompt: prompt, SystemPrompt: editorSystemPromptForMode(opts.Mode), EnvOverlay: opts.EnvOverlay, Model: final.Coder.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: outputPath, SchemaPath: workerSchemaPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: fmt.Sprintf("resumed round %d %s", round, runtime.editorLabel), ProgressRole: Role(runtime.editorLabel), Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, RequireWorkerContract: true, controlResumeGate: gate}
 	if partial {
 		before = worktreeSnapshot{}
-		recovered, selectedTarget, selectedAdapter, recoveryErr := a.recoverEditorFailure(ctx, opts, round, final.RunDir, final.Baseline, workerSchemaPath, "", editorRequest, final.Coder, runtime.editor, runtime.reviewer, runtime.registry, fmt.Errorf("invocation %s was interrupted with an uncheckpointed diff", state.InvocationID), before, final)
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
+			return Result{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+		editorRequest.RunDir = runDir
+		editorRequest.OutputPath = resumeEditorOutputPath(runDir, runtime.editorLabel, round)
+		editorRequest.SchemaPath = filepath.Join(runDir, "worker-result-schema.json")
+		recovered, selectedTarget, selectedAdapter, recoveryErr := a.recoverEditorFailure(ctx, opts, round, runDir, final.Baseline, editorRequest.SchemaPath, "", editorRequest, final.Coder, runtime.editor, runtime.reviewer, runtime.registry, fmt.Errorf("invocation %s was interrupted with an uncheckpointed diff", state.InvocationID), before, final)
 		if recoveryErr != nil {
 			return Result{}, "", recoveryErr
 		}
 		final.Coder = selectedTarget
 		setFinalRoleTarget(final, runtime.editorLabel, selectedTarget)
 		runtime.editor = selectedAdapter
-		return recovered, filepath.Join(final.RunDir, fmt.Sprintf("worker-recovery-round-%d.json", round)), nil
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
+			return Result{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+		return recovered, filepath.Join(runDir, fmt.Sprintf("worker-recovery-round-%d.json", round)), nil
 	}
 	result, err := a.runEditorWithContractRetry(ctx, opts, runtime.editor, editorRequest, before)
 	if err != nil {
-		recovered, selectedTarget, selectedAdapter, recoveryErr := a.recoverEditorFailure(ctx, opts, round, final.RunDir, final.Baseline, workerSchemaPath, result.SessionID, editorRequest, final.Coder, runtime.editor, runtime.reviewer, runtime.registry, err, before, final)
+		runDir, rebindErr := rebindControlResumeRunDir(gate, runDir, final)
+		if rebindErr != nil {
+			return Result{}, "", &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+		}
+		editorRequest.RunDir = runDir
+		editorRequest.OutputPath = resumeEditorOutputPath(runDir, runtime.editorLabel, round)
+		editorRequest.SchemaPath = filepath.Join(runDir, "worker-result-schema.json")
+		recovered, selectedTarget, selectedAdapter, recoveryErr := a.recoverEditorFailure(ctx, opts, round, runDir, final.Baseline, editorRequest.SchemaPath, result.SessionID, editorRequest, final.Coder, runtime.editor, runtime.reviewer, runtime.registry, err, before, final)
 		if recoveryErr != nil {
 			return Result{}, "", recoveryErr
 		}
 		final.Coder = selectedTarget
 		setFinalRoleTarget(final, runtime.editorLabel, selectedTarget)
 		runtime.editor = selectedAdapter
-		return recovered, filepath.Join(final.RunDir, fmt.Sprintf("worker-recovery-round-%d.json", round)), nil
+		if runDir, rebindErr = rebindControlResumeRunDir(gate, runDir, final); rebindErr != nil {
+			return Result{}, "", &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+		}
+		return recovered, filepath.Join(runDir, fmt.Sprintf("worker-recovery-round-%d.json", round)), nil
 	}
 	return result, outputPath, nil
 }
 
-func resumeCaptureRound(ctx context.Context, opts RunOptions, baseline, runDir, runID string, round int, selectedPackage *WorkPackage, runTests bool, final *FinalRun) (DiffArtifact, string, error) {
+func resumeCaptureRound(ctx context.Context, opts RunOptions, baseline, runDir, runID string, round int, selectedPackage *WorkPackage, runTests bool, final *FinalRun, gate *controlResumePathGate) (DiffArtifact, string, error) {
+	var err error
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
+		return DiffArtifact{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	diff, err := captureDiffArtifact(ctx, opts.Workdir, baseline, runDir, round)
 	if err != nil {
 		return DiffArtifact{}, "", err
@@ -175,12 +248,15 @@ func resumeCaptureRound(ctx context.Context, opts RunOptions, baseline, runDir, 
 	final.LatestSHA256Path = diff.SHA256Path
 	final.LatestDiffSHA256 = diff.Metadata.DiffSHA256
 	final.ChangedFiles = diff.ChangedFiles()
-	gate := evaluateQualityGates(ctx, opts, baseline, round, diff, allowedScopeForRound(opts, selectedPackage))
-	final.QualityGates = append(final.QualityGates, gate)
-	if err := writeJSONWithNewline(filepath.Join(runDir, fmt.Sprintf("quality-gates-round-%d.json", round)), gate); err != nil {
+	gateResult := evaluateQualityGates(ctx, opts, baseline, round, diff, allowedScopeForRound(opts, selectedPackage))
+	final.QualityGates = append(final.QualityGates, gateResult)
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("quality-gates-round-%d.json", round), "state.json"); err != nil {
+		return DiffArtifact{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	if err := writeJSONWithNewline(filepath.Join(runDir, fmt.Sprintf("quality-gates-round-%d.json", round)), gateResult); err != nil {
 		return DiffArtifact{}, "", err
 	}
-	if summary, ledgerErr := updateFindingsLedger(runDir, round, nil, &gate); ledgerErr != nil {
+	if summary, ledgerErr := updateFindingsLedger(runDir, round, nil, &gateResult); ledgerErr != nil {
 		return DiffArtifact{}, "", ledgerErr
 	} else {
 		final.Findings = summary
@@ -188,6 +264,9 @@ func resumeCaptureRound(ctx context.Context, opts RunOptions, baseline, runDir, 
 	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: string(PhaseTesting), CurrentRound: round, LatestDiffPath: diff.PatchPath, DiffHash: diff.Metadata.DiffSHA256, LatestReviewPath: final.LatestReviewPath, RecoveryStatus: "resuming"})
 	if !runTests || opts.TestCmd == "" || opts.NoTest {
 		return diff, "", nil
+	}
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("test-round-%d.txt", round)); err != nil {
+		return DiffArtifact{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
 	path := filepath.Join(runDir, fmt.Sprintf("test-round-%d.txt", round))
 	test, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, path, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)

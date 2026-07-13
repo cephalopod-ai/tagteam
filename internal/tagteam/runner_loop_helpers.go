@@ -170,6 +170,10 @@ func reviewTestEvidence(testRun TestRun) string {
 }
 
 func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runDir, diff, testOutput, repoInstructions string, scout Adapter, registry map[string]Adapter, relay *RelayContext, final *FinalRun) error {
+	var err error
+	if runDir, err = rebindControlResumeFromContext(ctx, runDir, final); err != nil {
+		return &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	postScoutPath := filepath.Join(runDir, fmt.Sprintf("post-scout-round-%d.json", round))
 	postScoutStatusPath := filepath.Join(runDir, fmt.Sprintf("post-scout-execution-round-%d.json", round))
 	postScoutStatus := newScoutExecutionArtifact(opts.PostScoutMode, opts.ScoutFailurePolicy, false)
@@ -179,6 +183,7 @@ func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runD
 		Context: ctx, Prompt: withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, relay.Brief, opts.PostScoutMode, "post", diff, safeTestOutput(testOutput), ""), repoInstructions), EnvOverlay: opts.EnvOverlay,
 		Model: opts.Scout.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: postScoutPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout,
 		Phase: fmt.Sprintf("round %d post-scout %s %s", round, opts.PostScoutMode, scout.ID()), Quiet: opts.Quiet, Verbose: opts.Verbose, Budget: opts.InvocationBudget,
+		controlResumeGate: controlResumeGateFrom(ctx),
 	}, opts.DryRun)
 	if err != nil && IsOutputContractError(err) {
 		if repaired, repairCost, attempted, repairErr := a.repairJSONWithWorker(ctx, opts, registry, runDir, postScoutPath, "post-scout", ScoutSchemaForRepair(), readRepairSource(postScoutPath, nil), err); repairErr != nil {
@@ -198,6 +203,12 @@ func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runD
 		postScoutStatus.FailureClass = classifyScoutFailure(err)
 		postScoutStatus.Failure = err.Error()
 		if shouldBlockScoutFailure(opts.LossPolicy.Scout, err) {
+			if writeDir, rebindErr := rebindControlResumeFromContext(ctx, runDir, final); rebindErr != nil {
+				return &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+			} else {
+				runDir = writeDir
+				postScoutStatusPath = filepath.Join(runDir, fmt.Sprintf("post-scout-execution-round-%d.json", round))
+			}
 			_ = writeJSONWithNewline(postScoutStatusPath, postScoutStatus)
 			return &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("post-scout failed and scout_failure_policy=fail; aborting relay run: %w", err)}
 		}
@@ -213,6 +224,12 @@ func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runD
 		final.Costs["scout"] += postScoutResult.CostUSD
 		logProgress(opts, "round %d post-scout %s completed output=%s", round, opts.PostScoutMode, postScoutPath)
 	}
+	if writeDir, rebindErr := rebindControlResumeFromContext(ctx, runDir, final); rebindErr != nil {
+		return &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	} else {
+		runDir = writeDir
+		postScoutStatusPath = filepath.Join(runDir, fmt.Sprintf("post-scout-execution-round-%d.json", round))
+	}
 	if err := writeJSONWithNewline(postScoutStatusPath, postScoutStatus); err != nil {
 		return &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("write post-scout execution artifact: %w", err)}
 	}
@@ -220,6 +237,11 @@ func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runD
 }
 
 func (a *App) runRoundReview(ctx context.Context, opts RunOptions, round int, runDir, schemaPath, baseline, diff, diffPath, testOutput, editorOutputPath, repoInstructions, reviewerLabel string, reviewer Adapter, relay RelayContext, latestReview Review, executionPlan *ExecutionPlan, final *FinalRun) (*Review, error) {
+	var rebindErr error
+	if runDir, rebindErr = rebindControlResumeFromContext(ctx, runDir, final, "state.json"); rebindErr != nil {
+		return nil, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	}
+	schemaPath = filepath.Join(runDir, filepath.Base(schemaPath))
 	logProgress(opts, "round %d %s started adapter=%s", round, reviewerLabel, reviewer.ID())
 	final.Phase = reviewerLabel
 	setRoleStatus(final, reviewerLabel, opts.Adversary, "running", "", "")
@@ -242,16 +264,30 @@ func (a *App) runRoundReview(ctx context.Context, opts RunOptions, round int, ru
 	final.RoundsCompleted = round
 	final.Review = review
 	final.LatestReviewPath = reviewPath
+	if runDir, rebindErr = rebindControlResumeFromContext(ctx, runDir, final); rebindErr != nil {
+		return nil, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	}
 	if summary, ledgerErr := updateFindingsLedger(runDir, round, review, nil); ledgerErr != nil {
 		return nil, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("update findings ledger: %w", ledgerErr)}
 	} else {
 		final.Findings = summary
+	}
+	if runDir, rebindErr = rebindControlResumeFromContext(ctx, runDir, final, "state.json"); rebindErr != nil {
+		return nil, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
 	}
 	_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseReviewing), RoleStatuses: final.RoleStatuses, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath})
 	return review, nil
 }
 
 func (a *App) finalizeReviewedRun(opts RunOptions, runDir string, budget *InvocationBudget, latestDiff DiffArtifact, executionPlan *ExecutionPlan, selectedPackage *WorkPackage, final *FinalRun) error {
+	return a.finalizeReviewedRunWithGate(opts, runDir, budget, latestDiff, executionPlan, selectedPackage, final, nil)
+}
+
+func (a *App) finalizeReviewedRunWithGate(opts RunOptions, runDir string, budget *InvocationBudget, latestDiff DiffArtifact, executionPlan *ExecutionPlan, selectedPackage *WorkPackage, final *FinalRun, gate *controlResumePathGate) error {
+	var err error
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
+		return &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	final.ChangedFiles = latestDiff.ChangedFiles()
 	final.FinishedAt = time.Now().UTC()
 	final.ExitCode = a.computeExitCode(*final)
@@ -272,12 +308,18 @@ func (a *App) finalizeReviewedRun(opts RunOptions, runDir string, budget *Invoca
 			setPlanItemStatus(executionPlan, selectedPackage.ID, PlanStatusFailed, "runner", "latest test command failed")
 		}
 		finalizeExecutionPlan(executionPlan, final.ExitCode)
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "plan.json"); err != nil {
+			return &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		if err := persistExecutionPlan(runDir, executionPlan); err != nil {
 			return err
 		}
 		final.Plan = summarizeExecutionPlan(runDir, executionPlan)
 	}
 	logProgress(opts, "run %s finished verdict=%s exit=%d rounds=%d/%d", final.RunID, final.Verdict, final.ExitCode, final.RoundsCompleted, final.RoundsRequested)
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "state.json", "final.json"); err != nil {
+		return &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: string(final.Status), Phase: string(PhaseReviewing), Degraded: final.Degraded, DegradedReason: final.DegradedReason, BlockingReason: final.BlockingReason, RoleStatuses: final.RoleStatuses, CurrentRound: final.RoundsCompleted, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode})
 	return a.persistFinal(opts.Workdir, *final)
 }

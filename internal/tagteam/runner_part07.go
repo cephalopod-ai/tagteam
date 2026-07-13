@@ -212,6 +212,11 @@ func (a DiffArtifact) ChangedFiles() []string {
 }
 
 func captureDiffArtifact(ctx context.Context, workdir, baseline, runDir string, round int) (DiffArtifact, error) {
+	if current, err := rebindControlResumeFromContext(ctx, runDir, nil); err != nil {
+		return DiffArtifact{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+	} else {
+		runDir = current
+	}
 	prefix := filepath.Join(runDir, fmt.Sprintf("diff-round-%d", round))
 	indexPath := filepath.Join(runDir, fmt.Sprintf("tmp-diff-round-%d.index", round))
 	defer os.Remove(indexPath)
@@ -220,6 +225,12 @@ func captureDiffArtifact(ctx context.Context, workdir, baseline, runDir string, 
 	patch, numstat, statusZ, numstatZ, err := deterministicDiffOutputs(ctx, workdir, baseline, indexPath)
 	if err != nil {
 		return DiffArtifact{}, err
+	}
+	if current, rebindErr := rebindControlResumeFromContext(ctx, runDir, nil); rebindErr != nil {
+		return DiffArtifact{}, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	} else {
+		runDir = current
+		prefix = filepath.Join(runDir, fmt.Sprintf("diff-round-%d", round))
 	}
 	patchPath := prefix + ".patch"
 	if err := writeFileDurable(patchPath, patch, 0o644, true); err != nil {
@@ -689,4 +700,62 @@ func ensureRunRootIgnore(rootDir string) error {
 
 func newRunID() string {
 	return time.Now().UTC().Format("2006-01-02T150405.000000000Z")
+}
+
+func runTestCommand(ctx context.Context, workdir, testCmd string, timeout time.Duration, outputPath string, dryRun bool, envOverlay map[string]string, maxBytes int64, identityRegex string) (TestRun, error) {
+	if gate := controlResumeGateFrom(ctx); gate != nil {
+		if err := guardControlResumeWritePath(gate, outputPath); err != nil {
+			return TestRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+	}
+	if dryRun {
+		return TestRun{Command: testCmd, Passed: true, Output: "dry-run"}, nil
+	}
+	if maxBytes <= 0 {
+		maxBytes = 2 * 1024 * 1024
+	}
+	runCtx := ctx
+	cancel := func() {}
+	if timeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	defer cancel()
+	cmd := exec.CommandContext(runCtx, "/bin/sh", "-lc", testCmd)
+	prepareProcessTree(cmd)
+	cmd.Dir = workdir
+	stateRoot, tempDir, isolationErr := isolatedTestDirectories(outputPath)
+	if isolationErr != nil {
+		return TestRun{}, isolationErr
+	}
+	cmd.Env = mergeCommandEnv(envOverlay, []string{
+		"TAGTEAM_STATE_ROOT=" + stateRoot,
+		"XDG_STATE_HOME=" + stateRoot,
+		"TMPDIR=" + tempDir,
+		"TMP=" + tempDir,
+		"TEMP=" + tempDir,
+	})
+	var out boundedBuffer
+	out.limit = maxBytes
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	output := out.Bytes()
+	if out.Exceeded() {
+		err = outputLimitError("test command", maxBytes)
+	}
+	testRun := TestRun{
+		Command:           testCmd,
+		Output:            redactSecretsWithOverlay(string(output), envOverlay),
+		Passed:            err == nil,
+		FailureIdentities: extractFailureIdentitiesWithRegex(string(output), identityRegex),
+		StateRoot:         stateRoot,
+		TempDir:           tempDir,
+	}
+	if gate := controlResumeGateFrom(ctx); gate != nil {
+		if err := guardControlResumeWritePath(gate, outputPath); err != nil {
+			return TestRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+	}
+	_ = writeRedactedBytes(outputPath, output, envOverlay)
+	return testRun, nil
 }

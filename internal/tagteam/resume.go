@@ -23,6 +23,21 @@ type ResumeRecord struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+// controlResumePostLockHook is a narrowly scoped test seam invoked once after
+// MCP ResumeControl acquires the run lock and re-validates the run directory.
+// Production code leaves it nil.
+var controlResumePostLockHook func()
+
+// controlResumeAfterStateReadHook is a narrowly scoped test seam invoked after
+// state.json has been read during MCP resume, before subsequent artifact reads.
+// Production code leaves it nil.
+var controlResumeAfterStateReadHook func()
+
+// controlResumeBeforeAdapterHook is a narrowly scoped test seam invoked inside
+// runAdapter after the control-resume gate is bound, before dispatch. Production
+// code leaves it nil.
+var controlResumeBeforeAdapterHook func()
+
 // Resume verifies an interrupted run and continues the first incomplete phase
 // in the same authoritative run directory.
 func (a *App) Resume(ctx context.Context, opts RunOptions, runID string) (FinalRun, error) {
@@ -41,66 +56,36 @@ func (a *App) Resume(ctx context.Context, opts RunOptions, runID string) (FinalR
 	if info, statErr := os.Stat(runDir); statErr != nil || !info.IsDir() {
 		return FinalRun{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("run %q not found", runID)}
 	}
-	return a.resumeAtRunDir(ctx, opts, runID, runDir, false)
+	return a.resumeAtRunDir(ctx, opts, runID, runDir, nil)
 }
 
-// ResumeControl is the MCP-owned resume entry point. It re-resolves the
-// canonical run directory under the state root immediately before lock and
-// mutation so a post-assessment symlink replacement cannot redirect I/O.
+// ResumeControl is the MCP-owned resume entry point. It carries the canonical
+// runs-root boundary through resumed execution and re-resolves the run
+// directory immediately before lock, mutation, and adapter dispatch.
 func (a *App) ResumeControl(ctx context.Context, opts RunOptions, runID string) (FinalRun, error) {
 	ctx = context.WithValue(ctx, maxOutputBytesContextKey{}, opts.MaxOutputBytes)
-	runDir, err := resolveAndValidateControlResumeRunDir(opts.Workdir, opts.StateRoot, runID)
+	gate, err := newControlResumePathGate(opts.Workdir, opts.StateRoot, runID)
 	if err != nil {
 		return FinalRun{}, &ExitError{Code: ExitInvalidArguments, Err: err}
 	}
-	return a.resumeAtRunDir(ctx, opts, runID, runDir, true)
+	ctx = withControlResumeGate(ctx, gate)
+	return a.resumeAtRunDir(ctx, opts, runID, gate.runDir, gate)
 }
 
-func resolveAndValidateControlResumeRunDir(workdir, stateRoot, runID string) (string, error) {
-	runDir, _, err := resolveControlRunDirectory(workdir, stateRoot, runID)
-	if err != nil {
-		return "", err
+func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir string, gate *controlResumePathGate) (FinalRun, error) {
+	controlSafe := gate != nil
+	if controlSafe {
+		ctx = withControlResumeGate(ctx, gate)
 	}
-	if err := ensureControlWritableArtifacts(runDir, "state.json", "meta.json", "final.json", "run.lock", "resume.json", "resume-verify.index"); err != nil {
-		return "", err
-	}
-	// Reject escaping named artifacts before any content is consumed.
-	for _, name := range []string{
-		"state.json", "meta.json", "final.json", "run.lock",
-		"events.jsonl", "input.md", "plan.json",
-		"supervisor-brief.md", "supervisor-instructions.md",
-		"scout-round-1.json", "post-scout-round-1.json", "supervisor-work-plan.json",
-	} {
-		if _, err := os.Lstat(filepath.Join(runDir, name)); os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return "", err
-		}
-		if _, err := readControlArtifactBytes(runDir, name); err != nil {
-			return "", err
-		}
-	}
-	// Immediate re-resolve closes the TOCTOU window between validation and lock.
-	again, _, err := resolveControlRunDirectory(workdir, stateRoot, runID)
-	if err != nil {
-		return "", err
-	}
-	if again != runDir {
-		return "", fmt.Errorf("run %q path changed under the resolved state root", runID)
-	}
-	return runDir, nil
-}
-
-func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir string, controlSafe bool) (FinalRun, error) {
 	lock, err := acquireRunLock(runDir, true)
 	if err != nil {
 		return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
 	defer lock.Release()
-	if controlSafe {
+	if gate != nil {
 		// Re-resolve after lock: refuse if the run directory escaped while
 		// waiting for exclusive ownership.
-		resolved, err := resolveAndValidateControlResumeRunDir(opts.Workdir, opts.StateRoot, runID)
+		resolved, err := gate.current()
 		if err != nil {
 			return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
@@ -108,6 +93,15 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 			return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("run %q path changed under the resolved state root", runID)}
 		}
 		runDir = resolved
+		if controlResumePostLockHook != nil {
+			controlResumePostLockHook()
+		}
+	}
+	// Re-bind under the runs-root boundary before any post-lock artifact I/O.
+	if current, err := rebindControlResumeRunDir(gate, runDir, nil); err != nil {
+		return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+	} else {
+		runDir = current
 	}
 	readState := readRunState
 	readMetaFn := func(dir string) (Meta, error) { return readMeta(filepath.Join(dir, "meta.json")) }
@@ -127,6 +121,13 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 	if state.SchemaVersion < runStateSchemaVersion {
 		return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("legacy run state schema %d is readable but not resumable", state.SchemaVersion)}
 	}
+	if controlSafe && controlResumeAfterStateReadHook != nil {
+		controlResumeAfterStateReadHook()
+	}
+	// Re-resolve before meta and every subsequent artifact read.
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, nil, "meta.json"); err != nil {
+		return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	meta, err := readMetaFn(runDir)
 	if err != nil {
 		return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("read run metadata: %w", err)}
@@ -136,11 +137,13 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 		return FinalRun{}, err
 	}
 	if currentHead != meta.Baseline {
-		return quarantineResume(runDir, state, fmt.Errorf("current HEAD %s does not match run baseline %s", currentHead, meta.Baseline))
+		return quarantineResume(runDir, state, fmt.Errorf("current HEAD %s does not match run baseline %s", currentHead, meta.Baseline), gate)
 	}
 	if controlSafe {
-		if err := ensureControlWritableArtifacts(runDir, "resume-verify.index", "events.jsonl", "input.md", "resume.json"); err != nil {
-			return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+		var readyErr error
+		runDir, readyErr = rebindControlResumeRunDir(gate, runDir, nil, "resume-verify.index", "events.jsonl", "input.md", "resume.json")
+		if readyErr != nil {
+			return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: readyErr}
 		}
 	}
 	patch, err := deterministicDiffPatch(ctx, opts.Workdir, meta.Baseline, filepath.Join(runDir, "resume-verify.index"))
@@ -150,19 +153,28 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 	currentDiffHash := sha256Sum(patch)
 	phase := normalizeRunPhase(state.Phase)
 	if state.DiffHash != "" && state.DiffHash != currentDiffHash && phase != PhaseImplementing && phase != PhaseRepairing {
-		return quarantineResume(runDir, state, fmt.Errorf("worktree diff hash changed after completed %s phase", phase))
+		return quarantineResume(runDir, state, fmt.Errorf("worktree diff hash changed after completed %s phase", phase), gate)
 	}
-	if err := verifyResumeArtifacts(runDir, state, controlSafe); err != nil {
-		return quarantineResume(runDir, state, err)
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, nil); err != nil {
+		return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	if err := verifyResumeArtifacts(runDir, state, controlSafe, gate); err != nil {
+		return quarantineResume(runDir, state, err, gate)
 	}
 	var prompt string
 	if controlSafe {
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, nil); err != nil {
+			return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		prompt, err = readControlRunPrompt(runDir, opts.Prompt)
 	} else {
 		prompt, err = readRunPrompt(runDir, opts.Prompt)
 	}
 	if err != nil {
 		return FinalRun{}, err
+	}
+	if runDir, err = rebindControlResumeRunDir(gate, runDir, nil, "final.json"); err != nil {
+		return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
 	saved, _ := readFinalFn(runDir)
 	if saved.Status == RunStatusPassed || saved.Status == RunStatusDegraded {
@@ -192,19 +204,41 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 		restoreTargetsFromMeta(&opts, meta)
 	}
 	if controlSafe {
-		if err := ensureControlWritableArtifacts(runDir, "resume.json"); err != nil {
-			return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+		var readyErr error
+		runDir, readyErr = rebindControlResumeRunDir(gate, runDir, nil, "resume.json")
+		if readyErr != nil {
+			return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: readyErr}
 		}
 	}
 	record := ResumeRecord{SchemaVersion: ArtifactSchemaVersion, SourceRunID: runID, VerifiedPhase: phase, Baseline: meta.Baseline, DiffHash: currentDiffHash, Status: "verified", CreatedAt: time.Now().UTC()}
 	_ = writeJSONWithNewline(filepath.Join(runDir, "resume.json"), record)
 	var prior *Review
 	if state.LatestReviewPath != "" {
-		if review, reviewErr := readReviewArtifact(state.LatestReviewPath); reviewErr == nil {
+		if runDir, err = rebindControlResumeRunDir(gate, runDir, nil); err != nil {
+			return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+		if controlSafe {
+			if err := validateControlWritablePath(runDir, state.LatestReviewPath); err != nil {
+				return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
+			if gate != nil {
+				if err := validateControlPathWithinBoundary(gate.runsRoot, state.LatestReviewPath, "resolved state root"); err != nil {
+					return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+				}
+			}
+		}
+		var review Review
+		var reviewErr error
+		if controlSafe {
+			review, reviewErr = readControlReviewArtifact(runDir, state.LatestReviewPath)
+		} else {
+			review, reviewErr = readReviewArtifact(state.LatestReviewPath)
+		}
+		if reviewErr == nil {
 			prior = &review
 		}
 	}
-	continued, err := a.resumeExistingRun(ctx, opts, runDir, meta, state, saved, prior, currentDiffHash, controlSafe)
+	continued, err := a.resumeExistingRun(ctx, opts, runDir, meta, state, saved, prior, currentDiffHash, gate)
 	record.ContinuedRunID = runID
 	record.Status = "resumed"
 	if err != nil {
@@ -213,20 +247,63 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 		}
 		record.Message = err.Error()
 	}
+	if writeDir, writeErr := rebindControlResumeRunDir(gate, runDir, nil, "resume.json"); writeErr != nil {
+		// Fail closed: do not persist resume records through a replaced run dir.
+		if err == nil {
+			err = &ExitError{Code: ExitPreflightFailed, Err: writeErr}
+		}
+		return continued, err
+	} else {
+		runDir = writeDir
+	}
 	_ = writeJSONWithNewline(filepath.Join(runDir, "resume.json"), record)
 	return continued, err
 }
 
-func verifyResumeArtifacts(runDir string, state RunState, controlSafe bool) error {
+// verifyResumeArtifacts checks diff/review/journal integrity. controlSafe uses
+// control artifact readers. When gate is set (MCP resume execution), the run
+// directory is re-resolved and paths are checked against the original runs-root
+// boundary so a post-state-read replacement cannot redefine the trust root.
+func verifyResumeArtifacts(runDir string, state RunState, controlSafe bool, gate *controlResumePathGate) error {
+	if gate != nil {
+		controlSafe = true
+		current, err := gate.ready()
+		if err != nil {
+			return err
+		}
+		runDir = current
+	}
 	if state.LatestDiffPath != "" {
+		if gate != nil {
+			var err error
+			runDir, err = gate.ready()
+			if err != nil {
+				return err
+			}
+		}
 		if controlSafe {
 			if err := validateControlWritablePath(runDir, state.LatestDiffPath); err != nil {
 				return err
 			}
+			if gate != nil {
+				if err := validateControlPathWithinBoundary(gate.runsRoot, state.LatestDiffPath, "resolved state root"); err != nil {
+					return err
+				}
+			}
 		} else if err := verifyResumeArtifactPath(runDir, state.LatestDiffPath); err != nil {
 			return err
 		}
-		patch, err := os.ReadFile(state.LatestDiffPath)
+		var patch []byte
+		var err error
+		if controlSafe {
+			rel, relErr := filepath.Rel(runDir, state.LatestDiffPath)
+			if relErr != nil || strings.HasPrefix(rel, "..") {
+				return fmt.Errorf("diff path escapes run directory: %s", state.LatestDiffPath)
+			}
+			patch, err = readControlArtifactBytes(runDir, rel)
+		} else {
+			patch, err = os.ReadFile(state.LatestDiffPath)
+		}
 		if err != nil {
 			return fmt.Errorf("read latest diff artifact: %w", err)
 		}
@@ -235,19 +312,44 @@ func verifyResumeArtifacts(runDir string, state RunState, controlSafe bool) erro
 		}
 	}
 	if state.LatestReviewPath != "" {
+		if gate != nil {
+			var err error
+			runDir, err = gate.ready()
+			if err != nil {
+				return err
+			}
+		}
 		if controlSafe {
 			if err := validateControlWritablePath(runDir, state.LatestReviewPath); err != nil {
 				return err
 			}
+			if gate != nil {
+				if err := validateControlPathWithinBoundary(gate.runsRoot, state.LatestReviewPath, "resolved state root"); err != nil {
+					return err
+				}
+			}
 		} else if err := verifyResumeArtifactPath(runDir, state.LatestReviewPath); err != nil {
 			return err
 		}
-		if _, err := readReviewArtifact(state.LatestReviewPath); err != nil {
+		var err error
+		if controlSafe {
+			_, err = readControlReviewArtifact(runDir, state.LatestReviewPath)
+		} else {
+			_, err = readReviewArtifact(state.LatestReviewPath)
+		}
+		if err != nil {
 			return fmt.Errorf("latest review artifact is invalid: %w", err)
 		}
 	}
 	var events []byte
 	if controlSafe {
+		if gate != nil {
+			var err error
+			runDir, err = gate.ready()
+			if err != nil {
+				return err
+			}
+		}
 		data, present, err := readControlOptionalArtifactBytes(runDir, "events.jsonl")
 		if err != nil {
 			return fmt.Errorf("read state journal: %w", err)
@@ -281,6 +383,22 @@ func verifyResumeArtifacts(runDir string, state RunState, controlSafe bool) erro
 		return fmt.Errorf("state journal diff hash does not match state")
 	}
 	return nil
+}
+
+func readControlReviewArtifact(runDir, path string) (Review, error) {
+	rel, relErr := filepath.Rel(runDir, path)
+	if relErr != nil || strings.HasPrefix(rel, "..") {
+		return Review{}, fmt.Errorf("review path escapes run directory: %s", path)
+	}
+	data, err := readControlArtifactBytes(runDir, rel)
+	if err != nil {
+		return Review{}, err
+	}
+	var review Review
+	if err := json.Unmarshal(data, &review); err != nil {
+		return Review{}, err
+	}
+	return review, nil
 }
 
 // readControlRunPrompt loads input.md (or meta prompt) through control-safe
@@ -318,7 +436,13 @@ func verifyResumeArtifactPath(runDir, path string) error {
 	return nil
 }
 
-func quarantineResume(runDir string, state RunState, cause error) (FinalRun, error) {
+func quarantineResume(runDir string, state RunState, cause error, gate *controlResumePathGate) (FinalRun, error) {
+	if current, err := rebindControlResumeRunDir(gate, runDir, nil, "state.json", "resume.json"); err != nil {
+		// Fail closed: skip writes and surface the path-change condition.
+		return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("run directory path changed during quarantine (%v); original cause: %w", err, cause)}
+	} else {
+		runDir = current
+	}
 	state.Status = string(RunStatusQuarantined)
 	state.RecoveryStatus = cause.Error()
 	_ = writeRunState(runDir, state)

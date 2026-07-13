@@ -171,7 +171,10 @@ func diffHashForState(path string) string {
 	return hash
 }
 
-func recordInvocationState(req Request, record DeliveryRecord) {
+func recordInvocationState(req *Request, record DeliveryRecord) {
+	if err := rebindRequestControlResume(req, "state.json"); err != nil {
+		return
+	}
 	if req.RunDir == "" {
 		return
 	}
@@ -190,6 +193,9 @@ func recordInvocationState(req Request, record DeliveryRecord) {
 		if patch, diffErr := deterministicDiffPatch(contextOrBackground(req.Context), req.Workdir, state.BaselineSHA, indexPath); diffErr == nil {
 			state.DiffHash = sha256Sum(patch)
 		}
+	}
+	if err := guardControlResumeWritePath(req.controlResumeGate, filepath.Join(req.RunDir, "state.json")); err != nil {
+		return
 	}
 	_ = persistRunState(req.RunDir, state)
 }

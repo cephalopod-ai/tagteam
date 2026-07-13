@@ -75,10 +75,17 @@ type LiveProgress struct {
 }
 
 func writeWaitingProgress(req Request, role Role, phase string, started time.Time, adapterID string, holderPID int) error {
+	if err := rebindRequestControlResume(&req); err != nil {
+		return &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	if req.RunDir == "" {
 		return nil
 	}
-	return writeJSONAtomic(filepath.Join(req.RunDir, liveProgressArtifact), LiveProgress{
+	progressPath := filepath.Join(req.RunDir, liveProgressArtifact)
+	if err := guardControlResumeWritePath(req.controlResumeGate, progressPath); err != nil {
+		return &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	return writeJSONAtomic(progressPath, LiveProgress{
 		SchemaVersion: ArtifactSchemaVersion,
 		InvocationID:  req.InvocationID,
 		Phase:         phase,
@@ -132,10 +139,17 @@ func writeLiveProgress(
 			progress.DiffHash = sha256Sum(diff.patch)
 		}
 	}
+	if err := rebindRequestControlResume(&req); err != nil {
+		return progress, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
 	if req.RunDir == "" {
 		return progress, captureErr
 	}
-	if err := writeJSONAtomic(filepath.Join(req.RunDir, liveProgressArtifact), progress); err != nil {
+	progressPath := filepath.Join(req.RunDir, liveProgressArtifact)
+	if err := guardControlResumeWritePath(req.controlResumeGate, progressPath); err != nil {
+		return progress, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	if err := writeJSONAtomic(progressPath, progress); err != nil {
 		return progress, err
 	}
 	return progress, captureErr
