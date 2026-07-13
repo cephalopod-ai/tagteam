@@ -290,6 +290,42 @@ func TestMCPStdioServerStartsWithTrustedTestPreset(t *testing.T) {
 	t.Fatalf("MCP-started preset run %q did not persist its terminal preflight failure", runID)
 }
 
+func TestMCPToolSurfaceExcludesCommandCwdAndArtifactReaders(t *testing.T) {
+	tools := mcpControlTools(true)
+	allowed := map[string]bool{
+		"tagteam_capabilities":    true,
+		"tagteam_validate_launch": true,
+		"tagteam_prepare_start":   true,
+		"tagteam_prepare_resume":  true,
+		"tagteam_status":          true,
+		"tagteam_plan":            true,
+		"tagteam_findings":        true,
+		"tagteam_diagnostics":     true,
+		"tagteam_start":           true,
+		"tagteam_resume":          true,
+		"tagteam_cancel":          true,
+	}
+	forbiddenKeys := []string{"command", "argv", "cwd", "workdir", "shell", "artifact_path", "read_artifact", "passthrough"}
+	for _, tool := range tools {
+		name, _ := tool["name"].(string)
+		if !allowed[name] {
+			t.Fatalf("unexpected MCP tool %q", name)
+		}
+		delete(allowed, name)
+		raw, _ := json.Marshal(tool)
+		lower := strings.ToLower(string(raw))
+		for _, key := range forbiddenKeys {
+			// Schema property names for launch fields must not introduce command/cwd surfaces.
+			if strings.Contains(lower, `"`+key+`"`) {
+				t.Fatalf("tool %q schema mentions forbidden key %q: %s", name, key, raw)
+			}
+		}
+	}
+	if len(allowed) != 0 {
+		t.Fatalf("missing expected MCP tools: %#v", allowed)
+	}
+}
+
 func runMCPStdio(t *testing.T, service ControlService, messages ...map[string]any) []map[string]any {
 	return runMCPStdioWithRuntime(t, service, nil, messages...)
 }

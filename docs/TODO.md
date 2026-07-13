@@ -50,11 +50,11 @@ own recovery action.
   cancelled status.
   Start returns a durable handle promptly; status and findings are bounded,
   paginated where necessary, and explicit about truncation.
-- [ ] Keep command construction deterministic: no generic command tool, raw
+- [x] Keep command construction deterministic: no generic command tool, raw
   shell, arbitrary flag passthrough, unrestricted artifact reader, or
   model-controlled working directory. Canonicalize the repository root and
   allowed paths before execution.
-- [ ] Add bounded scout evidence for symlink topology where it helps explain
+- [x] Add bounded scout evidence for symlink topology where it helps explain
   scope, while keeping canonical real-path resolution and enforcement in the
   host controller.
 - [ ] Bind start, resume, and cancel approvals to the normalized action,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -83,5 +84,55 @@ func TestControlServicePrepareResumeReportsBaselineMismatchWithoutQuarantine(t *
 	}
 	if string(stateAfter) != string(stateBefore) {
 		t.Fatal("resume assessment quarantined or otherwise changed state.json")
+	}
+}
+
+func TestControlServicePrepareResumeRejectsEscapingArtifactSymlinks(t *testing.T) {
+	repo, baseline := createResumeFixtureRepo(t)
+	stateRoot := t.TempDir()
+	repository, err := resolveControlRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := ControlService{RepositoryRoot: repo, StateRoot: stateRoot, ProducerVersion: "test"}
+	for _, artifact := range []string{"state.json", "meta.json", "final.json", "run.lock"} {
+		t.Run(artifact, func(t *testing.T) {
+			runID := "prep-escape-" + strings.ReplaceAll(artifact, ".", "-")
+			runDir, err := createRunDir(repo, stateRoot, runID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeResumeFixture(t, runDir, runID, repo, baseline, RunStatusRunning)
+			outside := t.TempDir()
+			sentinel := filepath.Join(outside, "secret-"+artifact)
+			if err := os.WriteFile(sentinel, []byte(`{"status":"external_sentinel","run_id":"leaked"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(runDir, artifact)
+			if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(sentinel, target); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			assessment, err := service.PrepareResume(context.Background(), ControlResumeRequest{
+				SchemaVersion: ControlContractVersion,
+				Repository:    repository,
+				RunID:         runID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if assessment.Resumable {
+				t.Fatalf("escaping %s reported resumable: %#v", artifact, assessment)
+			}
+			after, err := os.ReadFile(sentinel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(after), "external_sentinel") {
+				t.Fatalf("external sentinel for %s was modified: %s", artifact, after)
+			}
+		})
 	}
 }

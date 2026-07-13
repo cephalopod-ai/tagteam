@@ -200,8 +200,15 @@ func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest)
 	if err != nil {
 		return ControlRunHandle{}, fmt.Errorf("resolve start state root: %w", err)
 	}
+	// Reject escaping state-tree symlinks before creating or opening runs.
+	if _, err := ensureCanonicalRunsRoot(locator); err != nil {
+		return ControlRunHandle{}, fmt.Errorf("resolve start runs root: %w", err)
+	}
 	if err := locator.Prepare(); err != nil {
 		return ControlRunHandle{}, fmt.Errorf("prepare start state root: %w", err)
+	}
+	if _, err := ensureCanonicalRunsRoot(locator); err != nil {
+		return ControlRunHandle{}, fmt.Errorf("resolve start runs root: %w", err)
 	}
 	lock, err := acquireRunLock(locator.RepoRoot, false)
 	if err != nil {
@@ -342,7 +349,14 @@ func (r *ControlRuntime) Cancel(ctx context.Context, request ControlCancelReques
 	}
 
 	requestRecord := controlCancelRequest{SchemaVersion: ControlContractVersion, ActionDigest: digest, Nonce: request.Approval.Nonce, RunID: request.RunID, OwnerPID: ownerPID, RequestedAt: now}
-	if err := writeJSONDurable(filepath.Join(runDir, controlCancelRequestName), requestRecord, true, true); err != nil {
+	// Re-resolve under the runs-root boundary immediately before mutation so a
+	// run-directory replacement after controlCancelTarget cannot redirect I/O.
+	var cancelPath string
+	runDir, cancelPath, _, err = resolveControlCancelIO(repository.CanonicalRoot, r.service.StateRoot, request.RunID)
+	if err != nil {
+		return ControlRunHandle{}, newControlCancelError("cancel_request_path_invalid", err.Error(), err)
+	}
+	if err := writeJSONDurable(cancelPath, requestRecord, true, true); err != nil {
 		return ControlRunHandle{}, newControlCancelError("cancel_request_write_failed", fmt.Sprintf("persist cancellation request: %v", err), err)
 	}
 	if jobCancel != nil {
@@ -410,18 +424,13 @@ func controlCancelLedgerResult(ledger controlApprovalLedger, request ControlCanc
 }
 
 func controlCancelTarget(locator StateLocator, repository, runID string) (string, int, bool, error) {
-	if err := validateRunID(runID); err != nil {
-		return "", 0, false, err
-	}
-	runDir, err := locator.RunDir(runID)
+	runDir, _, err := resolveControlRunDirectory(locator.Workdir, locator.StateRoot, runID)
 	if err != nil {
 		return "", 0, false, err
 	}
-	info, err := os.Stat(runDir)
-	if err != nil || !info.IsDir() {
-		return "", 0, false, fmt.Errorf("run %q not found", runID)
-	}
-	if final, finalErr := readFinal(filepath.Join(runDir, "final.json")); finalErr == nil && final.RunID != "" {
+	if final, present, finalErr := readControlFinalOptional(runDir); finalErr != nil {
+		return "", 0, false, fmt.Errorf("read persisted final result: %v", finalErr)
+	} else if present && final.RunID != "" {
 		if final.RunID != runID {
 			return "", 0, false, fmt.Errorf("persisted final result does not match the requested run")
 		}
@@ -432,10 +441,14 @@ func controlCancelTarget(locator StateLocator, repository, runID string) (string
 			return runDir, 0, true, nil
 		}
 		return "", 0, false, fmt.Errorf("run %q is already terminal", runID)
-	} else if finalErr != nil && !os.IsNotExist(finalErr) {
-		return "", 0, false, fmt.Errorf("read persisted final result: %v", finalErr)
 	}
-	if state, stateErr := readRunState(runDir); stateErr == nil {
+	if data, present, stateErr := readControlOptionalArtifactBytes(runDir, "state.json"); stateErr != nil {
+		return "", 0, false, fmt.Errorf("read run state: %v", stateErr)
+	} else if present {
+		var state RunState
+		if err := json.Unmarshal(data, &state); err != nil {
+			return "", 0, false, fmt.Errorf("read run state: %v", err)
+		}
 		if state.RunID != "" && state.RunID != runID {
 			return "", 0, false, fmt.Errorf("persisted state run_id does not match the requested run")
 		}
@@ -447,28 +460,38 @@ func controlCancelTarget(locator StateLocator, repository, runID string) (string
 		if state.Status != "" && state.Status != string(RunStatusRunning) {
 			return "", 0, false, fmt.Errorf("run %q is already terminal", runID)
 		}
-	} else if !os.IsNotExist(stateErr) {
-		return "", 0, false, fmt.Errorf("read run state: %v", stateErr)
 	}
 	ownerPID := 0
-	if data, lockErr := os.ReadFile(filepath.Join(runDir, "run.lock")); lockErr == nil {
+	if data, present, lockErr := readControlOptionalArtifactBytes(runDir, "run.lock"); lockErr != nil {
+		return "", 0, false, fmt.Errorf("read run owner: %v", lockErr)
+	} else if present {
 		var record runLockRecord
 		if err := json.Unmarshal(data, &record); err != nil || record.PID <= 0 {
 			return "", 0, false, fmt.Errorf("run lock does not contain a valid owner")
 		}
 		ownerPID = record.PID
-	} else if !os.IsNotExist(lockErr) {
-		return "", 0, false, fmt.Errorf("read run owner: %v", lockErr)
 	}
 	return runDir, ownerPID, false, nil
 }
 
 func (r *ControlRuntime) persistControlCancellation(repository, runDir, runID string) error {
-	if final, err := readFinal(filepath.Join(runDir, "final.json")); err == nil && final.Status == RunStatusCancelled {
+	// Re-resolve immediately before mutation so a replaced run directory or
+	// artifact symlink cannot redirect cancel status outside the runs root.
+	resolved, _, err := resolveControlRunDirectory(r.service.RepositoryRoot, r.service.StateRoot, runID)
+	if err != nil {
+		return err
+	}
+	runDir = resolved
+	if err := ensureControlWritableArtifacts(runDir, "state.json", "final.json", "meta.json"); err != nil {
+		return err
+	}
+	if final, present, err := readControlFinalOptional(runDir); err != nil {
+		return err
+	} else if present && final.Status == RunStatusCancelled {
 		return nil
 	}
-	state, _ := readRunState(runDir)
-	meta, _ := readMeta(filepath.Join(runDir, "meta.json"))
+	state, _ := readControlRunState(runDir)
+	meta, _ := readControlMeta(runDir)
 	workdir := repository
 	baseline := state.BaselineSHA
 	if meta.Workdir != "" {
@@ -501,10 +524,6 @@ func (r *ControlRuntime) watchControlCancellation(ctx context.Context, done chan
 			return
 		case <-ticker.C:
 		}
-		locator, err := resolveStateLocator(r.service.RepositoryRoot, r.service.StateRoot)
-		if err != nil {
-			continue
-		}
 		r.mu.Lock()
 		jobs := make(map[string]context.CancelFunc, len(r.jobs))
 		for runID, cancel := range r.jobs {
@@ -512,7 +531,13 @@ func (r *ControlRuntime) watchControlCancellation(ctx context.Context, done chan
 		}
 		r.mu.Unlock()
 		for runID, cancel := range jobs {
-			data, err := os.ReadFile(filepath.Join(locator.RunsRoot, runID, controlCancelRequestName))
+			// Re-resolve under the runs-root boundary each tick; do not trust a
+			// previously resolved run path as the validation root.
+			runDir, _, _, err := resolveControlCancelIO(r.service.RepositoryRoot, r.service.StateRoot, runID)
+			if err != nil {
+				continue
+			}
+			data, err := readControlArtifactBytes(runDir, controlCancelRequestName)
 			if err != nil {
 				continue
 			}
@@ -563,9 +588,25 @@ func (r *ControlRuntime) persistStartFailure(opts RunOptions, runID string, caus
 }
 
 func (r *ControlRuntime) optionsForLaunch(spec ControlLaunchSpec) (RunOptions, error) {
+	// Re-resolve repository identity and scopes immediately before mutation so
+	// approval digests cannot race against symlink replacement under the tree.
+	// Only host-derived Workdir and AllowedPaths enter RunOptions.
+	repository, err := resolveControlRepository(spec.Repository.CanonicalRoot)
+	if err != nil {
+		return RunOptions{}, err
+	}
+	if err := r.service.requireRepository(repository); err != nil {
+		return RunOptions{}, err
+	}
+	// Revalidate the approved canonical list itself. Re-canonicalizing first
+	// and revalidating the new result would accept an in-repo scope symlink
+	// retarget (approved internal/ -> other/) after preparation.
+	if err := revalidateControlAllowedPaths(repository.CanonicalRoot, spec.AllowedPaths); err != nil {
+		return RunOptions{}, err
+	}
 	flags := FlagInputs{
 		Mode:            string(spec.Team.Mode),
-		Workdir:         spec.Repository.CanonicalRoot,
+		Workdir:         repository.CanonicalRoot,
 		StateRoot:       r.service.StateRoot,
 		AllowedPaths:    append([]string(nil), spec.AllowedPaths...),
 		Rounds:          spec.Rounds,

@@ -121,7 +121,7 @@ func TestRunLoop_RelayModeScoutContextExceedsDisablesRetrieval(t *testing.T) {
 		t.Fatalf("read agy log: %v", err)
 	}
 	preScoutInvocation := strings.Split(string(agyLog), "\n---\n")[0]
-	if !strings.Contains(preScoutInvocation, "Host retrieval evidence:\n(not provided for this scout phase)") {
+	if !strings.Contains(preScoutInvocation, "Host evidence (retrieval and advisory symlink topology; topology never authorizes scope):\n(not provided for this scout phase)") {
 		t.Fatalf("retrieval context should have been disabled:\n%s", string(agyLog))
 	}
 }

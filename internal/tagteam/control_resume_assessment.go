@@ -41,7 +41,7 @@ func (s ControlService) PrepareResume(ctx context.Context, request ControlResume
 	if code, reason := controlResumeLockState(runDir); code != "" {
 		return controlResumeUnavailable(assessment, code, reason), nil
 	}
-	state, err := readRunState(runDir)
+	state, err := readControlRunState(runDir)
 	if err != nil {
 		return controlResumeUnavailable(assessment, "state_invalid", fmt.Sprintf("read resumable state: %v", err)), nil
 	}
@@ -54,7 +54,7 @@ func (s ControlService) PrepareResume(ctx context.Context, request ControlResume
 	if err := controlRunWorkdirMatches(repository.CanonicalRoot, state.Workdir, "state"); err != nil {
 		return controlResumeUnavailable(assessment, "run_identity_mismatch", err.Error()), nil
 	}
-	meta, err := readMeta(filepath.Join(runDir, "meta.json"))
+	meta, err := readControlMeta(runDir)
 	if err != nil {
 		return controlResumeUnavailable(assessment, "metadata_invalid", fmt.Sprintf("read run metadata: %v", err)), nil
 	}
@@ -67,7 +67,9 @@ func (s ControlService) PrepareResume(ctx context.Context, request ControlResume
 	if state.BaselineSHA != "" && state.BaselineSHA != meta.Baseline {
 		return controlResumeUnavailable(assessment, "baseline_metadata_mismatch", "persisted state baseline does not match metadata"), nil
 	}
-	if final, finalErr := readFinal(filepath.Join(runDir, "final.json")); finalErr == nil {
+	if final, present, finalErr := readControlFinalOptional(runDir); finalErr != nil {
+		return controlResumeUnavailable(assessment, "final_invalid", fmt.Sprintf("read persisted final result: %v", finalErr)), nil
+	} else if present {
 		if final.RunID != "" && final.RunID != request.RunID {
 			return controlResumeUnavailable(assessment, "final_identity_mismatch", "persisted final result does not match the requested run"), nil
 		}
@@ -77,8 +79,6 @@ func (s ControlService) PrepareResume(ctx context.Context, request ControlResume
 		if final.Status == RunStatusPassed || final.Status == RunStatusDegraded {
 			return controlResumeUnavailable(assessment, "already_terminal", "run has already reached a terminal successful state"), nil
 		}
-	} else if !os.IsNotExist(finalErr) {
-		return controlResumeUnavailable(assessment, "final_invalid", fmt.Sprintf("read persisted final result: %v", finalErr)), nil
 	}
 	currentHead, err := ensureGitRepo(repository.CanonicalRoot)
 	if err != nil {
@@ -96,7 +96,7 @@ func (s ControlService) PrepareResume(ctx context.Context, request ControlResume
 	if state.DiffHash != "" && state.DiffHash != currentDiffHash && phase != PhaseImplementing && phase != PhaseRepairing {
 		return controlResumeUnavailable(assessment, "diff_mismatch", fmt.Sprintf("worktree diff hash changed after completed %s phase", phase)), nil
 	}
-	if err := verifyResumeArtifacts(runDir, state); err != nil {
+	if err := verifyResumeArtifacts(runDir, state, true); err != nil {
 		return controlResumeUnavailable(assessment, "artifacts_invalid", err.Error()), nil
 	}
 	if state.DiffHash != "" && state.DiffHash != currentDiffHash {
@@ -119,12 +119,12 @@ func controlResumeUnavailable(assessment ControlRecoveryAssessment, reasonCode, 
 }
 
 func controlResumeLockState(runDir string) (string, string) {
-	data, err := os.ReadFile(filepath.Join(runDir, "run.lock"))
-	if os.IsNotExist(err) {
-		return "", ""
-	}
+	data, present, err := readControlOptionalArtifactBytes(runDir, "run.lock")
 	if err != nil {
 		return "run_lock_invalid", fmt.Sprintf("read run lock: %v", err)
+	}
+	if !present {
+		return "", ""
 	}
 	var record runLockRecord
 	if err := json.Unmarshal(data, &record); err != nil || record.PID <= 0 {

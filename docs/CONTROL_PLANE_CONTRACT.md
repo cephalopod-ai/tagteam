@@ -64,12 +64,35 @@ server read-only unless the operator explicitly passes `--allow-dev-build`.
 - Each MCP server is bound to the worktree it was started for. Launch and
   lifecycle preparation for another repository are rejected rather than
   returning a handle this server cannot monitor.
-- Repository, run, and artifact paths are resolved to full canonical paths.
-  Symlinks are usable only when their real target remains inside the expected
-  repository or run-state boundary; escaping or broken links fail closed.
-- Allowed paths use Tagteam's existing deterministic scope validator. Absolute
-  paths, traversal, globs, backslashes, blanks, and normalized duplicates are
-  rejected.
+- The MCP server binds once to the real Git worktree root derived from its
+  start path (subdirectory and symlink aliases collapse to that root). Every
+  prepare/start/resume/cancel request must match that host-derived repository
+  identity. Request or model input is never used as a process working
+  directory.
+- Repository, run, and artifact paths are resolved to full canonical paths
+  through one control-plane resolver. Symlinks are usable only when their real
+  target remains inside the expected repository or run-state boundary;
+  escaping or broken links fail closed before any read or write. The host-derived
+  runs root is always `<state-root>/<repo-id>/runs`: a symlinked `runs`
+  directory or `repo-id` parent that escapes that repository state directory is
+  rejected before start prepares a run and before resume/cancel I/O, so an
+  escaping link never becomes the trust boundary. Prepare-resume, resume, and
+  cancel use control-safe artifact readers/writers for `state.json`,
+  `meta.json`, `final.json`, `run.lock`, `events.jsonl`, `input.md`,
+  cancel-request files, and MCP-resume auxiliary artifacts (`plan.json`,
+  `supervisor-brief.md`, scout/work-plan JSON). Cancel and the cancellation
+  watcher re-resolve the run directory under the runs-root boundary immediately
+  before cancel-request I/O so a replaced run directory cannot redirect writes.
+  MCP resume re-resolves the run directory immediately before lock and mutation
+  and keeps resumed relay/plan reads on the control-safe artifact API rather
+  than raw `os.ReadFile` paths.
+- Allowed paths keep the existing syntax validator (absolute paths, traversal,
+  globs, backslashes, blanks, and lexical duplicates are rejected), then are
+  resolved through real paths under the canonical repository. Broken or
+  escaping scope links and real-path duplicates (including root aliases of
+  `.`) fail closed. On start, the host revalidates the approved canonical
+  `allowed_paths` list itself (not a freshly retargeted result) and passes
+  that approved list unchanged into `RunOptions`.
 - Team fields are mode-specific. Supervisor, relay, adversarial, and solo
   cannot carry roles that do not exist in that mode.
 - Prompts, role identifiers, time budgets, rounds, changed-file lists, status

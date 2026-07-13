@@ -224,7 +224,7 @@ func TestRunLoop_RelayModeWritesExpectedArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read agy log: %v", err)
 	}
-	if !strings.Contains(string(agyLog), "Host retrieval evidence") {
+	if !strings.Contains(string(agyLog), "Host evidence (retrieval and advisory symlink topology") {
 		t.Fatalf("scout prompt did not include retrieval context:\n%s", string(agyLog))
 	}
 }
@@ -673,7 +673,7 @@ func TestRunLoop_RelayModeScoutContextUnknownKeepsRetrieval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read agy log: %v", err)
 	}
-	if !strings.Contains(string(agyLog), "Host retrieval evidence") {
+	if !strings.Contains(string(agyLog), "Host evidence (retrieval and advisory symlink topology") {
 		t.Fatalf("retrieval should be unchanged for unknown budget:\n%s", string(agyLog))
 	}
 }

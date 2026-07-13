@@ -20,15 +20,21 @@ func newMCPCommand(shared *flagState) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve MCP workdir: %w", err)
 			}
+			// Bind the server to the real Git worktree root, never a model- or
+			// flag-supplied execution directory that has not been canonicalized.
+			repository, err := tagteam.ResolveControlRepository(workdir)
+			if err != nil {
+				return fmt.Errorf("resolve MCP repository: %w", err)
+			}
 			service := tagteam.ControlService{
-				RepositoryRoot:  workdir,
+				RepositoryRoot:  repository.CanonicalRoot,
 				StateRoot:       shared.StateRoot,
 				ProducerVersion: Version,
 			}
 			server := tagteam.NewMCPStdioServer(service, cmd.InOrStdin(), cmd.OutOrStdout())
 			if err := requireVerifiedInstallation(shared); err == nil {
 				changed := collectChangedFlags(cmd)
-				cfg, sources, configErr := tagteam.LoadConfigWithOptions(workdir, tagteam.LoadConfigOptions{
+				cfg, sources, configErr := tagteam.LoadConfigWithOptions(repository.CanonicalRoot, tagteam.LoadConfigOptions{
 					TrustRepoConfig: shared.TrustRepoConfig && changed["trust-repo-config"],
 				})
 				if configErr != nil {

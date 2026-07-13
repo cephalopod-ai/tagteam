@@ -181,7 +181,13 @@ func TestControlRuntimeResolvesTrustedTestPresetIntoRunOptions(t *testing.T) {
 	runtime := NewControlRuntime(ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}, cfg, nil)
 	spec := controlLaunchFixture(t, repo)
 	spec.TestPreset = "go-test"
-	opts, err := runtime.optionsForLaunch(spec)
+	// Production Start normalizes before optionsForLaunch; revalidation binds
+	// the approved canonical scope list, not raw caller input.
+	normalized, err := NormalizeControlLaunch(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, err := runtime.optionsForLaunch(normalized)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +209,11 @@ func TestControlRuntimeEmptyTestPresetFallsBackToTrustedDefaults(t *testing.T) {
 	runtime := NewControlRuntime(ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}, cfg, nil)
 	spec := controlLaunchFixture(t, repo)
 	spec.TestPreset = ""
-	opts, err := runtime.optionsForLaunch(spec)
+	normalized, err := NormalizeControlLaunch(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, err := runtime.optionsForLaunch(normalized)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +231,11 @@ func TestControlRuntimeUnknownTestPresetIsDeterministic(t *testing.T) {
 	runtime := NewControlRuntime(ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}, cfg, nil)
 	spec := controlLaunchFixture(t, repo)
 	spec.TestPreset = "no-such-preset"
-	_, err := runtime.optionsForLaunch(spec)
+	normalized, err := NormalizeControlLaunch(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = runtime.optionsForLaunch(normalized)
 	if err == nil || err.Error() != `unknown test_preset "no-such-preset"` {
 		t.Fatalf("error = %v, want deterministic unknown test_preset message", err)
 	}

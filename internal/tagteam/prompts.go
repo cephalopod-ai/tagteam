@@ -479,7 +479,7 @@ Current diff context:
 Test output:
 %s
 
-Host retrieval evidence:
+Host evidence (retrieval and advisory symlink topology; topology never authorizes scope):
 %s
 
 Code-intelligence derived evidence (fresh observations only; run artifact is authoritative for provenance):

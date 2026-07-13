@@ -2,7 +2,6 @@ package tagteam
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -422,11 +421,11 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			codeIntel, _ = runConfiguredCodeIntel(ctx, opts, runDir)
 			codeIntelContext = CompactCodeIntelForPrompt(codeIntel)
 		}
+		symlinkTopology := collectScopeSymlinkTopology(opts.Workdir, allowedScopeForRound(opts, nil))
 		if opts.ScoutRetrieval && opts.ScoutMode == "recon" && scoutAvailable {
 			logProgress(opts, "scout retrieval started")
 			var err error
-			retrieval, err = runScoutRetrieval(ctx, opts.Workdir, opts.Prompt, runDir, true)
-			if err != nil {
+			if retrieval, err = runScoutRetrieval(ctx, opts.Workdir, opts.Prompt, runDir, true); err != nil {
 				return final, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("write retrieval artifact: %w", err)}
 			}
 			retrievalContext = CompactRetrievalForPrompt(retrieval)
@@ -434,6 +433,9 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			scoutStatus.RetrievalStatus = retrieval.Status
 			scoutStatus.RetrievalDegraded = retrievalStatusIsDegraded(retrieval.Status)
 			logProgress(opts, "scout retrieval completed status=%s evidence=%d", retrieval.Status, len(retrieval.Evidence))
+		}
+		if sc := CompactSymlinkTopologyForPrompt(symlinkTopology); sc != "" {
+			retrievalContext = strings.TrimSpace(sc + "\n" + retrievalContext)
 		}
 		scoutPrompt := withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext), repoInstructions)
 		if opts.ScoutMode == "recon" {
@@ -552,15 +554,13 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				scoutStatus.ScoutSucceeded = true
 				setRoleStatus(&final, "scout", opts.Scout, "completed", "", "")
 				if scoutResult.Scout != nil {
-					if retrievalContext != "" && scoutResult.Scout.RetrievalStatus == "" {
-						var retrieval RetrievalArtifact
-						if err := json.Unmarshal([]byte(retrievalContext), &retrieval); err == nil {
-							scoutResult.Scout.RetrievalQueries = append([]string{}, retrieval.Queries...)
-							scoutResult.Scout.Evidence = retrievalScoutEvidence(retrieval.Evidence)
-							scoutResult.Scout.RetrievalStatus = retrieval.Status
-							scoutResult.Scout.RetrievalTruncated = retrieval.Truncated
-						}
+					if retrieval.Status != "" && scoutResult.Scout.RetrievalStatus == "" {
+						scoutResult.Scout.RetrievalQueries = append([]string{}, retrieval.Queries...)
+						scoutResult.Scout.Evidence = retrievalScoutEvidence(retrieval.Evidence)
+						scoutResult.Scout.RetrievalStatus = retrieval.Status
+						scoutResult.Scout.RetrievalTruncated = retrieval.Truncated
 					}
+					scoutResult.Scout.Evidence = mergeSymlinkTopologyEvidence(scoutResult.Scout.Evidence, symlinkTopology)
 					relay.Scout = *scoutResult.Scout
 				}
 				final.Costs["scout"] += scoutResult.CostUSD

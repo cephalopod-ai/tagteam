@@ -3,6 +3,7 @@ package tagteam
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +24,7 @@ type resumeRuntime struct {
 	repoInstructions string
 }
 
-func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir string, meta Meta, state RunState, saved FinalRun, prior *Review, currentDiffHash string) (final FinalRun, err error) {
+func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir string, meta Meta, state RunState, saved FinalRun, prior *Review, currentDiffHash string, controlSafe bool) (final FinalRun, err error) {
 	if opts.Rounds <= 0 {
 		opts.Rounds = saved.RoundsRequested
 	}
@@ -61,7 +62,7 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 		_ = a.persistFinal(opts.Workdir, final)
 	}()
 
-	runtime, err := a.prepareResumeRuntime(ctx, opts, runDir, &final)
+	runtime, err := a.prepareResumeRuntime(ctx, opts, runDir, &final, controlSafe)
 	if err != nil {
 		return final, err
 	}
@@ -143,7 +144,7 @@ func prepareResumedFinal(saved FinalRun, opts RunOptions, meta Meta, state RunSt
 	return final
 }
 
-func (a *App) prepareResumeRuntime(ctx context.Context, opts RunOptions, runDir string, final *FinalRun) (resumeRuntime, error) {
+func (a *App) prepareResumeRuntime(ctx context.Context, opts RunOptions, runDir string, final *FinalRun, controlSafe bool) (resumeRuntime, error) {
 	editorLabel, reviewerLabel := roleLabels(opts.Mode)
 	runtime := resumeRuntime{editorLabel: editorLabel, reviewerLabel: reviewerLabel}
 	registry := Registry(a.Config, opts)
@@ -172,7 +173,14 @@ func (a *App) prepareResumeRuntime(ctx context.Context, opts RunOptions, runDir 
 	if err != nil {
 		return runtime, err
 	}
-	runtime.relay = loadResumeRelayContext(runDir)
+	if controlSafe {
+		runtime.relay, err = loadResumeRelayContextControl(runDir)
+		if err != nil {
+			return runtime, err
+		}
+	} else {
+		runtime.relay = loadResumeRelayContext(runDir)
+	}
 	if runtime.relay.WorkPlan != nil {
 		runtime.workPlan = runtime.relay.WorkPlan
 		if pkg, ok := runtime.workPlan.Selected(); ok {
@@ -180,7 +188,13 @@ func (a *App) prepareResumeRuntime(ctx context.Context, opts RunOptions, runDir 
 			runtime.relay.WorkPackage = &pkg
 		}
 	}
-	if plan, planErr := readExecutionPlan(runDir); planErr == nil {
+	if controlSafe {
+		if plan, planErr := readControlExecutionPlanOptional(runDir); planErr != nil {
+			return runtime, planErr
+		} else if plan != nil {
+			runtime.executionPlan = plan
+		}
+	} else if plan, planErr := readExecutionPlan(runDir); planErr == nil {
 		runtime.executionPlan = &plan
 	}
 	return runtime, nil
@@ -200,6 +214,69 @@ func loadResumeRelayContext(runDir string) RelayContext {
 		}
 	}
 	return relay
+}
+
+// loadResumeRelayContextControl loads relay resume artifacts through the
+// control-safe readers. Escaping or broken symlinks fail closed without
+// consuming external content; missing optional files are ignored.
+func loadResumeRelayContextControl(runDir string) (RelayContext, error) {
+	relay := RelayContext{}
+	if data, present, err := readControlOptionalArtifactBytes(runDir, "supervisor-brief.md"); err != nil {
+		return RelayContext{}, err
+	} else if present {
+		relay.Brief = string(data)
+	}
+	if data, present, err := readControlOptionalArtifactBytes(runDir, "supervisor-instructions.md"); err != nil {
+		return RelayContext{}, err
+	} else if present {
+		relay.Instructions = string(data)
+	}
+	if data, present, err := readControlOptionalArtifactBytes(runDir, "scout-round-1.json"); err != nil {
+		return RelayContext{}, err
+	} else if present {
+		if err := json.Unmarshal(data, &relay.Scout); err != nil {
+			return RelayContext{}, fmt.Errorf("control artifact scout-round-1.json: %w", err)
+		}
+	}
+	if data, present, err := readControlOptionalArtifactBytes(runDir, "post-scout-round-1.json"); err != nil {
+		return RelayContext{}, err
+	} else if present {
+		if err := json.Unmarshal(data, &relay.PostScout); err != nil {
+			return RelayContext{}, fmt.Errorf("control artifact post-scout-round-1.json: %w", err)
+		}
+	}
+	if data, present, err := readControlOptionalArtifactBytes(runDir, "supervisor-work-plan.json"); err != nil {
+		return RelayContext{}, err
+	} else if present {
+		var plan WorkPlan
+		if err := json.Unmarshal(data, &plan); err != nil {
+			return RelayContext{}, fmt.Errorf("control artifact supervisor-work-plan.json: %w", err)
+		}
+		if len(plan.Packages) > 0 {
+			relay.WorkPlan = &plan
+			if selected, ok := plan.Selected(); ok {
+				relay.WorkPackage = &selected
+			}
+		}
+	}
+	return relay, nil
+}
+
+// readControlExecutionPlanOptional loads plan.json via the control-safe reader.
+// Missing plan is (nil, nil); escaping symlinks are errors.
+func readControlExecutionPlanOptional(runDir string) (*ExecutionPlan, error) {
+	data, present, err := readControlOptionalArtifactBytes(runDir, "plan.json")
+	if err != nil {
+		return nil, err
+	}
+	if !present {
+		return nil, nil
+	}
+	var plan ExecutionPlan
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return nil, fmt.Errorf("control artifact plan.json: %w", err)
+	}
+	return &plan, nil
 }
 
 func readOptionalText(path string) string {

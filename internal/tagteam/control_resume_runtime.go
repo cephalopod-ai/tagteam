@@ -195,5 +195,7 @@ func (r *ControlRuntime) resumeOptions(repository string) (RunOptions, error) {
 
 func (r *ControlRuntime) runResume(ctx context.Context, opts RunOptions, runID string) {
 	defer r.unregisterJob(runID)
-	_, _ = NewApp(r.config).Resume(ctx, opts, runID)
+	// MCP-owned resume never uses the generic raw locator path alone: re-resolve
+	// the run directory and artifacts immediately before lock/mutation.
+	_, _ = NewApp(r.config).ResumeControl(ctx, opts, runID)
 }

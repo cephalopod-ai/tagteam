@@ -22,6 +22,13 @@ const (
 	maxRetrievalPromptBytes   = 12 * 1024
 	maxRetrievalPathLength    = 500
 	retrievalTimeout          = 10 * time.Second
+
+	// Host-generated symlink topology evidence is advisory only and never
+	// authorizes scope, commands, or working directories.
+	maxSymlinkTopologyEntries   = 32
+	maxSymlinkTopologyPathLen   = 240
+	maxSymlinkTopologyBytes     = 4 * 1024
+	symlinkTopologyEvidenceKind = "symlink-topology"
 )
 
 var retrievalIgnoredDirs = []string{
@@ -472,6 +479,213 @@ func retrievalScoutEvidence(items []RetrievalEvidence) []ScoutEvidence {
 		})
 	}
 	return out
+}
+
+// collectScopeSymlinkTopology inspects only the selected canonical scopes and
+// records bounded, advisory dispositions for symlinks found there. Escaping or
+// broken links are reported; they do not change authorization decisions.
+func collectScopeSymlinkTopology(repoRoot string, allowed []string) []ScoutEvidence {
+	if strings.TrimSpace(repoRoot) == "" || len(allowed) == 0 {
+		return nil
+	}
+	canonicalRoot, err := canonicalPath(repoRoot, true)
+	if err != nil {
+		return nil
+	}
+	scopes := normalizeAllowedScope(allowed)
+	if len(scopes) == 0 {
+		return nil
+	}
+	var (
+		out       []ScoutEvidence
+		total     int
+		truncated bool
+	)
+	for _, scope := range scopes {
+		if len(out) >= maxSymlinkTopologyEntries || total >= maxSymlinkTopologyBytes {
+			truncated = true
+			break
+		}
+		walkRoot := canonicalRoot
+		if scope != "." {
+			rel := strings.TrimSuffix(scope, "/")
+			candidate := filepath.Join(canonicalRoot, filepath.FromSlash(rel))
+			if resolved, err := resolvePathUnderRepository(canonicalRoot, candidate); err == nil {
+				walkRoot = resolved
+			} else {
+				continue
+			}
+		}
+		info, err := os.Lstat(walkRoot)
+		if err != nil {
+			continue
+		}
+		// Inspect the scope root itself when it is a symlink.
+		if info.Mode()&os.ModeSymlink != 0 {
+			if entry, ok := symlinkTopologyEntry(canonicalRoot, walkRoot); ok {
+				if total+len(entry.File)+len(entry.Reason) > maxSymlinkTopologyBytes || len(out) >= maxSymlinkTopologyEntries {
+					truncated = true
+					break
+				}
+				out = append(out, entry)
+				total += len(entry.File) + len(entry.Reason)
+			}
+		}
+		if !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			// Stat target for symlinked dirs handled above; plain files stop here.
+			if target, terr := os.Stat(walkRoot); terr == nil && !target.IsDir() {
+				continue
+			}
+		}
+		// Directory walk stays inside the selected scope; follow neither links.
+		_ = filepath.WalkDir(walkRoot, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil || d == nil {
+				return nil
+			}
+			if len(out) >= maxSymlinkTopologyEntries || total >= maxSymlinkTopologyBytes {
+				truncated = true
+				return filepath.SkipAll
+			}
+			if path == walkRoot {
+				return nil
+			}
+			// Do not descend into ignored bulk directories.
+			if d.IsDir() {
+				base := d.Name()
+				for _, ignored := range retrievalIgnoredDirs {
+					if base == ignored {
+						return filepath.SkipDir
+					}
+				}
+			}
+			if d.Type()&os.ModeSymlink == 0 {
+				return nil
+			}
+			entry, ok := symlinkTopologyEntry(canonicalRoot, path)
+			if !ok {
+				return nil
+			}
+			if total+len(entry.File)+len(entry.Reason) > maxSymlinkTopologyBytes {
+				truncated = true
+				return filepath.SkipAll
+			}
+			out = append(out, entry)
+			total += len(entry.File) + len(entry.Reason)
+			// Never walk through symlinked directories.
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		})
+	}
+	if truncated && len(out) > 0 {
+		// Marker evidence so reviewers know the host capped the walk.
+		out = append(out, ScoutEvidence{
+			File:   ".",
+			Kind:   symlinkTopologyEvidenceKind,
+			Reason: "symlink topology truncated by host bounds; advisory only",
+		})
+		if len(out) > maxSymlinkTopologyEntries {
+			out = out[:maxSymlinkTopologyEntries]
+		}
+	}
+	return out
+}
+
+func symlinkTopologyEntry(repoRoot, path string) (ScoutEvidence, bool) {
+	rel, err := filepath.Rel(repoRoot, path)
+	if err != nil {
+		return ScoutEvidence{}, false
+	}
+	rel = filepath.ToSlash(rel)
+	if len(rel) > maxSymlinkTopologyPathLen {
+		rel = rel[:maxSymlinkTopologyPathLen]
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ScoutEvidence{
+			File:   rel,
+			Kind:   symlinkTopologyEvidenceKind,
+			Reason: "disposition=broken; advisory only; does not authorize scope",
+		}, true
+	}
+	disposition := "internal"
+	if target != repoRoot && !pathWithin(repoRoot, target) {
+		disposition = "escaping"
+	}
+	targetRel := target
+	if tr, rerr := filepath.Rel(repoRoot, target); rerr == nil {
+		targetRel = filepath.ToSlash(tr)
+	} else {
+		targetRel = filepath.ToSlash(target)
+	}
+	if len(targetRel) > maxSymlinkTopologyPathLen {
+		targetRel = targetRel[:maxSymlinkTopologyPathLen]
+	}
+	return ScoutEvidence{
+		File:   rel,
+		Kind:   symlinkTopologyEvidenceKind,
+		Reason: fmt.Sprintf("disposition=%s target=%s; advisory only; does not authorize scope", disposition, targetRel),
+	}, true
+}
+
+// CompactSymlinkTopologyForPrompt returns a bounded JSON fragment for scout
+// prompts. Empty when no symlinks were observed under the selected scope.
+func CompactSymlinkTopologyForPrompt(evidence []ScoutEvidence) string {
+	if len(evidence) == 0 {
+		return ""
+	}
+	type item struct {
+		File   string `json:"file"`
+		Kind   string `json:"kind"`
+		Reason string `json:"reason"`
+	}
+	payload := struct {
+		SchemaVersion int    `json:"schema_version"`
+		Kind          string `json:"kind"`
+		Advisory      bool   `json:"advisory"`
+		Items         []item `json:"items"`
+	}{
+		SchemaVersion: ArtifactSchemaVersion,
+		Kind:          symlinkTopologyEvidenceKind,
+		Advisory:      true,
+		Items:         make([]item, 0, len(evidence)),
+	}
+	for _, entry := range evidence {
+		payload.Items = append(payload.Items, item{File: entry.File, Kind: entry.Kind, Reason: entry.Reason})
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return ""
+	}
+	if len(data) > maxSymlinkTopologyBytes {
+		for len(payload.Items) > 1 && len(data) > maxSymlinkTopologyBytes {
+			payload.Items = payload.Items[:len(payload.Items)-1]
+			data, err = json.MarshalIndent(payload, "", "  ")
+			if err != nil {
+				return ""
+			}
+		}
+	}
+	if len(data) > maxSymlinkTopologyBytes {
+		return ""
+	}
+	return string(data)
+}
+
+// mergeSymlinkTopologyEvidence prepends host symlink observations without
+// letting them displace all retrieval evidence.
+func mergeSymlinkTopologyEvidence(existing, topology []ScoutEvidence) []ScoutEvidence {
+	if len(topology) == 0 {
+		return existing
+	}
+	merged := make([]ScoutEvidence, 0, len(topology)+len(existing))
+	merged = append(merged, topology...)
+	merged = append(merged, existing...)
+	if len(merged) > maxRetrievalEvidenceItems+maxSymlinkTopologyEntries {
+		merged = merged[:maxRetrievalEvidenceItems+maxSymlinkTopologyEntries]
+	}
+	return merged
 }
 
 func trimReason(reason string) string {

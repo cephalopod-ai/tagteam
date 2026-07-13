@@ -135,6 +135,69 @@ func TestCompactRetrievalForPromptCapsBytes(t *testing.T) {
 	}
 }
 
+func TestCollectScopeSymlinkTopologyIsBoundedAndAdvisory(t *testing.T) {
+	repo := t.TempDir()
+	mustWriteFile(t, filepath.Join(repo, "internal", "a.go"), "package internal\n")
+	if err := os.MkdirAll(filepath.Join(repo, "internal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(filepath.Join(repo, "internal", "a.go"), filepath.Join(repo, "internal", "alias.go")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, "internal", "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repo, "missing"), filepath.Join(repo, "internal", "broken")); err != nil {
+		t.Fatal(err)
+	}
+	// Outside-scope link must not appear when allowed scope is internal/.
+	if err := os.Symlink(outside, filepath.Join(repo, "root-escape")); err != nil {
+		t.Fatal(err)
+	}
+	evidence := collectScopeSymlinkTopology(repo, []string{"internal/"})
+	if len(evidence) == 0 {
+		t.Fatal("expected symlink topology evidence")
+	}
+	var sawInternal, sawEscaping, sawBroken, sawRootEscape bool
+	for _, item := range evidence {
+		if item.Kind != symlinkTopologyEvidenceKind {
+			t.Fatalf("unexpected kind %#v", item)
+		}
+		if !strings.Contains(item.Reason, "advisory only") {
+			t.Fatalf("missing advisory marker: %#v", item)
+		}
+		if strings.Contains(item.File, "root-escape") {
+			sawRootEscape = true
+		}
+		switch {
+		case strings.Contains(item.Reason, "disposition=internal"):
+			sawInternal = true
+		case strings.Contains(item.Reason, "disposition=escaping"):
+			sawEscaping = true
+		case strings.Contains(item.Reason, "disposition=broken"):
+			sawBroken = true
+		}
+	}
+	if sawRootEscape {
+		t.Fatal("topology inspected outside the selected scope")
+	}
+	if !sawInternal || !sawEscaping || !sawBroken {
+		t.Fatalf("missing dispositions in %#v", evidence)
+	}
+	compact := CompactSymlinkTopologyForPrompt(evidence)
+	if compact == "" || len(compact) > maxSymlinkTopologyBytes {
+		t.Fatalf("compact topology invalid: len=%d", len(compact))
+	}
+	// Merging topology cannot invent broader authorization scopes.
+	merged := mergeSymlinkTopologyEvidence(nil, evidence)
+	for _, item := range merged {
+		if strings.HasPrefix(item.File, "../") || filepath.IsAbs(item.File) {
+			t.Fatalf("topology broadened scope: %#v", item)
+		}
+	}
+}
+
 func containsRetrievalFile(items []RetrievalEvidence, file string) bool {
 	for _, item := range items {
 		if item.File == file {

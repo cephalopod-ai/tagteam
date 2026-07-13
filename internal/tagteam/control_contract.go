@@ -1,7 +1,6 @@
 package tagteam
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -259,19 +258,9 @@ func NormalizeControlLaunch(spec ControlLaunchSpec) (ControlLaunchSpec, error) {
 	if err := validateControlTeam(spec.Team); err != nil {
 		return ControlLaunchSpec{}, err
 	}
-	if len(spec.AllowedPaths) == 0 || len(spec.AllowedPaths) > controlMaxAllowedPaths {
-		return ControlLaunchSpec{}, fmt.Errorf("allowed_paths must contain between 1 and %d entries", controlMaxAllowedPaths)
-	}
-	if err := ValidateAllowedPaths(spec.AllowedPaths); err != nil {
+	allowed, err := canonicalizeControlAllowedPaths(repository.CanonicalRoot, spec.AllowedPaths)
+	if err != nil {
 		return ControlLaunchSpec{}, err
-	}
-	allowed := make([]string, 0, len(spec.AllowedPaths))
-	for _, path := range spec.AllowedPaths {
-		normalized, err := normalizeExplicitAllowedPath(path)
-		if err != nil {
-			return ControlLaunchSpec{}, err
-		}
-		allowed = append(allowed, normalized)
 	}
 	if spec.Rounds < 1 || spec.Rounds > controlMaxRounds {
 		return ControlLaunchSpec{}, fmt.Errorf("rounds must be between 1 and %d", controlMaxRounds)
@@ -438,43 +427,8 @@ func (s ControlService) Diagnostics() (ControlDiagnostics, error) {
 }
 
 func (s ControlService) runDir(runID string) (string, error) {
-	if err := validateRunID(runID); err != nil {
-		return "", err
-	}
-	repository, err := resolveControlRepository(s.RepositoryRoot)
-	if err != nil {
-		return "", err
-	}
-	locator, err := resolveStateLocator(repository.CanonicalRoot, s.StateRoot)
-	if err != nil {
-		return "", fmt.Errorf("resolve run state: %w", err)
-	}
-	runDir, err := locator.RunDir(runID)
-	if err != nil {
-		return "", err
-	}
-	info, err := os.Stat(runDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("run %q not found", runID)
-		}
-		return "", err
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("run %q is not a directory", runID)
-	}
-	canonicalRunsRoot, err := canonicalPath(locator.RunsRoot, true)
-	if err != nil {
-		return "", fmt.Errorf("resolve runs root: %w", err)
-	}
-	canonicalRunDir, err := canonicalPath(runDir, true)
-	if err != nil {
-		return "", fmt.Errorf("resolve run directory: %w", err)
-	}
-	if !pathWithin(canonicalRunsRoot, canonicalRunDir) {
-		return "", fmt.Errorf("run %q escapes the resolved state root", runID)
-	}
-	return canonicalRunDir, nil
+	runDir, _, err := resolveControlRunDirectory(s.RepositoryRoot, s.StateRoot, runID)
+	return runDir, err
 }
 
 func validateControlRunArtifacts(runDir string) error {
@@ -511,26 +465,6 @@ func validateControlArtifact(runDir, name string) error {
 		return fmt.Errorf("control artifact %s must resolve to a regular file", name)
 	}
 	return nil
-}
-
-func resolveControlRepository(root string) (ControlRepository, error) {
-	canonical, err := canonicalPath(root, true)
-	if err != nil {
-		return ControlRepository{}, fmt.Errorf("resolve repository root: %w", err)
-	}
-	top, err := runCommand(context.Background(), canonical, "git", "rev-parse", "--show-toplevel")
-	if err != nil {
-		return ControlRepository{}, fmt.Errorf("repository root is not a Git worktree: %w", err)
-	}
-	canonicalTop, err := canonicalPath(strings.TrimSpace(top), true)
-	if err != nil || canonicalTop != canonical {
-		return ControlRepository{}, fmt.Errorf("canonical_root must be the Git worktree root")
-	}
-	repoID, err := deriveRepoID(canonical)
-	if err != nil {
-		return ControlRepository{}, fmt.Errorf("derive repository identity: %w", err)
-	}
-	return ControlRepository{CanonicalRoot: canonical, RepoID: repoID}, nil
 }
 
 // requireRepository keeps an MCP server scoped to the worktree it was started
