@@ -180,11 +180,11 @@ Supported adapters in this repo today:
 | `claude` / Claude Code | read-only supervisor or adversary; worker/coder and scout assignments are rejected |
 | `agy` | full |
 | `gosling` | coder-only |
-| `grok` | full; headless Grok CLI 0.2.93 with structured output and role-scoped tools |
+| `grok` | all roles exposed; worker/coder use remains buggy, especially with `grok-4.5` at `medium` or `low` reasoning effort |
 | `openai-compatible` / `oai` | read-only reviewer/scout (first cut) |
 
-The Grok adapter is verified against Grok Build 0.2.93. It invokes root-level
-headless `grok --single <prompt> --cwd <dir>` with optional `--model` and
+The Grok CLI integration is verified against Grok Build 0.2.93. It invokes
+root-level headless `grok --single <prompt> --cwd <dir>` with optional `--model` and
 `--reasoning-effort`, `--output-format json`, and explicit role permissions:
 coders use `acceptEdits` with `read_file,list_dir,write_file,search_replace,run_terminal_cmd`;
 all read-only roles use `dontAsk` with `read_file,list_dir`. System prompts use
@@ -193,6 +193,12 @@ adversary, and supervisor roles; Grok's JSON mode returns one JSON object at
 the end of the headless run, and Tagteam parses the review/scout contracts
 from that object. The prompt is a positional argument, so Grok receives no
 stdin prompt.
+
+> [!WARNING]
+> This verifies the CLI integration, not reliable end-to-end implementation.
+> Grok worker/coder runs remain experimental, and `grok-4.5` at `medium` or
+> `low` reasoning effort is not reliable. Prefer Codex or Agy for routine
+> implementation work.
 
 ## Authentication
 
@@ -223,6 +229,7 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - `--allow-dirty` is isolation, not an integrity bypass: Tagteam creates a `tagteam/<run-id>` branch, commits the pre-existing tracked and untracked changes as a local checkpoint, and uses that clean commit as the run baseline. The source branch remains unchanged. The checkpoint requires a usable local Git author configuration and is intentionally preserved for recovery and review.
 - A stalled or externally interrupted adapter process may leave `state.json` at `status=running` / an early phase without writing `final.json`. Treat that run as interrupted and use `tagteam resume [RUN_ID]`; resume verifies the baseline, diff hash, and required artifacts, then continues the first incomplete phase or quarantines unsafe partial work. Do not treat `active.json` or the TUI alone as evidence of success.
 - Different adapters do not expose identical capabilities. Some support schema-constrained output, stdin, or session resume; others do not. `tagteam` degrades where possible, but behavior is not perfectly uniform.
+- Grok remains buggy in the worker/coder role. In particular, `grok-4.5` with `medium` or `low` reasoning effort has not been reliable; prefer another implementation adapter, or treat Grok worker runs as experimental and validate them closely.
 - Local `.env` loading is a convenience feature, not a secret-management system. It helps with local runs, but shell-exported environment variables still take precedence.
 - Repo-local `.tagteam.toml` is partially trusted by default: low-authority defaults such as roles/models can be read, but shell tests, adapter passthrough args, Claude permission/tool widening, and `openai-compatible` endpoints/headers are ignored unless you pass `--trust-repo-config`.
 - Published binaries are broader than real-world manual validation. Releases may include targets that pass Go-level CI but have not been exercised end-to-end with every supported vendor CLI.
@@ -234,6 +241,7 @@ Practical guidance:
 - Prefer `tagteam doctor` before blaming orchestration logic.
 - Use `--dry-run` to inspect resolved invocations when an adapter behaves unexpectedly.
 - Start with small prompts and targeted tests when trying a new adapter/model pairing.
+- Do not use Grok as an unattended worker/coder; `grok-4.5` at `medium` or `low` reasoning effort is especially unreliable.
 - Treat new modes, new adapters, and unusual cross-vendor combinations as experimental until you have run them in your own environment.
 
 ### Error behavior
@@ -672,10 +680,12 @@ The equivalent environment variables are `TAGTEAM_CODEX_REASONING_EFFORT`, `TAGT
 
 Grok reasoning effort accepts `low`, `medium`, `high`, or `xhigh`; the
 default `grok-4.5` model supports `low`, `medium`, and `high`, while `xhigh`
-is available only on Grok models that advertise it. Set Grok targets as
-`grok:<model>` through `--worker`, `--coder`, `--supervisor`, `--reviewer`,
-or `--scout`; the same targets are available in the TUI `/model` picker and
-named profiles.
+is available only on Grok models that advertise it. Although `low` and
+`medium` are valid settings, `grok-4.5` at either setting is unreliable for
+worker/coder assignments, and Grok implementation in general remains
+experimental. Grok targets can be set as `grok:<model>` through `--worker`,
+`--coder`, `--supervisor`, `--reviewer`, or `--scout`; the same targets are
+available in the TUI `/model` picker and named profiles.
 
 Claude invocations are serialized across tagteam processes by default because concurrent Claude Code processes can stall or remain pending. Disable this (for example when every run uses isolated Claude configuration) with:
 
