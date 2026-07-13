@@ -138,7 +138,7 @@ func (r *ControlRuntime) unregisterJob(runID string) {
 
 func (r *ControlRuntime) Capabilities() ControlCapabilitySet {
 	capabilities := r.service.Capabilities()
-	capabilities.Capabilities = append(capabilities.Capabilities, "start", "resume", "cancel")
+	capabilities.Capabilities = append(capabilities.Capabilities, "start", "resume", "cancel", "advise")
 	return capabilities
 }
 

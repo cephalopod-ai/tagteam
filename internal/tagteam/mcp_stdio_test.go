@@ -308,6 +308,7 @@ func TestMCPToolSurfaceExcludesCommandCwdAndArtifactReaders(t *testing.T) {
 		"tagteam_start":           true,
 		"tagteam_resume":          true,
 		"tagteam_cancel":          true,
+		"tagteam_advise":          true,
 	}
 	forbiddenKeys := []string{"command", "argv", "cwd", "workdir", "shell", "artifact_path", "read_artifact", "passthrough"}
 	for _, tool := range tools {

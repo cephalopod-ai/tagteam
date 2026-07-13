@@ -47,6 +47,18 @@ state model rather than introducing a second run state machine.
   another runtime returns the typed `run_not_owned` error instead of reporting
   success; a stale process owner is handled through the durable cancellation
   request and persisted cancelled status.
+- `Advise` returns a bounded, advisory Run Steward recommendation for one run. It
+  projects the authoritative snapshot into a sanitized `RunObservation` (status,
+  phase, reason codes, and counts only — never prompts, diffs, file paths, or
+  model reasoning) and returns a schema-validated advisory action (`wait`,
+  `inspect`, `notify`, `prepare_resume`, `ask_user`, or `report_issue`). It is
+  strictly read-only and advisory: a missing, slow, invalid, or over-budget
+  steward falls back to a deterministic template, and the controller never gates
+  execution on the advisory. Exposed as the read-only `tagteam_advise` MCP tool
+  when the lifecycle runtime is enabled. The optional model tier is a local-first
+  OpenAI-compatible endpoint queried with a text-only request (no tool surface),
+  bounded by per-run call/timeout/dedup budgets and a single-observer lease, so
+  the steward cannot invoke Tagteam or inherit MCP/repository-write tools.
 
 The base capability list intentionally excludes lifecycle mutations; the
 enabled lifecycle runtime adds `start`, `resume`, and `cancel` only when those

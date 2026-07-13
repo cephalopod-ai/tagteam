@@ -153,6 +153,18 @@ func DefaultConfig() Config {
 				ExtraArgs:    []string{},
 			},
 		},
+		// The advisory Run Steward is opt-in. Disabled, the deterministic
+		// template steward is the only tier, so a run never depends on a model.
+		// The default tier points at a local OpenAI-compatible endpoint (Ollama)
+		// with conservative per-run budgets that keep it below worker priority.
+		Steward: StewardConfig{
+			Enabled:            false,
+			BaseURL:            "http://127.0.0.1:11434/v1",
+			Model:              "",
+			TimeoutSeconds:     10,
+			MaxCallsPerRun:     20,
+			MinIntervalSeconds: 5,
+		},
 	}
 }
 

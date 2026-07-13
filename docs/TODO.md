@@ -27,9 +27,11 @@
 **Status:** The MCP MVP gates are complete: the producer contract, local MCP
 stdio transport, approved idempotent start/resume/cancel with full cross-action
 approval-replay protection and typed error recovery, non-mutating resume
-assessment, and the acceptance playtest suite are implemented. The remaining
-unchecked items below (Run Steward, Ollama default, daemon, remote auth) are
-deferred post-MVP roadmap work.
+assessment, and the acceptance playtest suite are implemented. The optional
+advisory Run Steward (immediate-horizon items below) is now implemented as a
+local-first, strictly-advisory tier with a deterministic fallback. The
+remaining Future-vision items (tagteamd daemon, capability provenance, remote
+auth, fleet summaries) are in progress.
 
 The goal is to let any MCP-capable host launch and monitor Tagteam without
 turning model output into shell commands. A deterministic controller remains
@@ -67,20 +69,30 @@ own recovery action.
   consumed by any start, resume, or cancel (matching the cancel path), closing
   the cross-action replay gap. Regression tests cover every cross-action pair
   and prove the start digest binds roles, scope, prompt, rounds, and budget.
-- [ ] Add an optional local-first Run Steward interface. Feed it only bounded,
+- [x] Add an optional local-first Run Steward interface. Feed it only bounded,
   sanitized `RunObservation` records and require a schema-validated advisory
   result with an enum action such as wait, inspect, notify, prepare-resume,
-  ask-user, or report-issue.
-- [ ] Make deterministic status and error templates the final fallback. A
+  ask-user, or report-issue. Implemented in `steward.go`; projected from the
+  authoritative `RunSnapshot` (status/phase/reason codes/counts only — no
+  prompts, diffs, file paths, or model reasoning) and surfaced advisory-only
+  through the read-only `tagteam_advise` MCP tool.
+- [x] Make deterministic status and error templates the final fallback. A
   missing, invalid, slow, or rate-limited steward must never delay or alter the
-  Tagteam run.
-- [ ] Default the steward tier to a separately configured local Ollama model.
+  Tagteam run. `DeterministicSteward` maps every status to a safe action;
+  `AdviseWithFallback` runs any model steward under a strict timeout and falls
+  back to the template on error, timeout, or schema-invalid output, never
+  blocking the run.
+- [x] Default the steward tier to a separately configured local Ollama model.
   Cloud or CLI-backed stewards are optional escalation targets and must run at
   lower priority with call, token, timeout, and deduplication budgets so they
-  do not contend with worker or reviewer invocations.
-- [ ] Prevent recursion and duplicate observers: one steward lease per run,
+  do not contend with worker or reviewer invocations. `[steward]` config
+  defaults to a disabled local OpenAI-compatible (Ollama) endpoint; enabling it
+  builds a `BudgetedSteward` with per-run call, timeout, and dedup budgets.
+- [x] Prevent recursion and duplicate observers: one steward lease per run,
   no Tagteam invocation from the steward, and no inherited arbitrary MCP or
-  repository-write tools.
+  repository-write tools. `ModelSteward` sends a text-only chat request with no
+  tool/function surface (recursion prevented by construction); a per-run
+  `steward.lease` enforces a single observer.
 - [x] Add contract, process-lifecycle, hostile-output, approval-replay,
   concurrency, cancellation, restart, malformed-JSON, and weak-model
   playtests. Verify that an MCP host can recover from every returned error

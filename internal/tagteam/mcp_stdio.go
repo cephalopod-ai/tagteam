@@ -262,6 +262,21 @@ func (s *MCPStdioServer) callTool(ctx context.Context, raw json.RawMessage) (map
 			return nil, err
 		}
 		return mcpToolSuccess(result)
+	case "tagteam_advise":
+		if s.runtime == nil {
+			return nil, fmt.Errorf("Tagteam advise is unavailable in this server configuration")
+		}
+		var input struct {
+			RunID string `json:"run_id"`
+		}
+		if err := json.Unmarshal(call.Arguments, &input); err != nil {
+			return nil, fmt.Errorf("invalid advise arguments")
+		}
+		result, err := s.runtime.Advise(ctx, input.RunID)
+		if err != nil {
+			return nil, err
+		}
+		return mcpToolSuccess(result)
 	default:
 		return nil, fmt.Errorf("unknown Tagteam tool %q", call.Name)
 	}
@@ -384,6 +399,7 @@ func mcpControlTools(includeStart bool) []map[string]any {
 		tools = append(tools, mcpTool("tagteam_start", "Start one approved, idempotent Tagteam run and return its durable run handle.", mcpStartSchema(), map[string]bool{"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false}))
 		tools = append(tools, mcpTool("tagteam_resume", "Resume one approved, idempotent Tagteam run after deterministic precondition checks.", mcpResumeSchema(), map[string]bool{"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false}))
 		tools = append(tools, mcpTool("tagteam_cancel", "Cancel one approved, idempotent Tagteam run and persist its terminal status.", mcpCancelSchema(), map[string]bool{"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false}))
+		tools = append(tools, mcpTool("tagteam_advise", "Read a bounded, advisory Run Steward recommendation for one run. Advisory only; never alters the run.", mcpRunSchema(false), map[string]bool{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}))
 	}
 	return tools
 }
