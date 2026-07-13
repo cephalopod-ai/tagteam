@@ -65,9 +65,15 @@ enabled lifecycle runtime adds `start`, `resume`, and `cancel` only when those
 handlers are available. No handler returns canned success or delegates to
 arbitrary shell input.
 
-`tagteam mcp` implements MCP protocol revision `2025-11-25` over stdio. It
-advertises exactly the implemented tools and returns both structured JSON and
-bounded text content. `tagteam_prepare_start` and `tagteam_prepare_resume` are
+`tagteam mcp` implements MCP protocol revision `2025-11-25` over stdio, or over
+a local unix socket with `tagteam mcp --socket <path>`. In socket mode the
+process is a small local daemon hosting one shared `ControlRuntime`: the MCP
+endpoint is a thin client transport, so runs are owned by the daemon and survive
+a client disconnect, multiple clients can attach concurrently (serialized
+through the runtime's mutex and run lock), and existing file-backed cancellation
+provides safe cancellation after the originating client exits. It advertises
+exactly the implemented tools and returns both structured JSON and bounded text
+content. `tagteam_prepare_start` and `tagteam_prepare_resume` are
 read-only; `tagteam_start`, `tagteam_resume`, and `tagteam_cancel` are marked
 destructive and idempotent for MCP clients. An unverified binary keeps the
 server read-only unless the operator explicitly passes `--allow-dev-build`.

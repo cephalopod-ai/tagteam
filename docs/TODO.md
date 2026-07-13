@@ -106,10 +106,17 @@ own recovery action.
 
 ### Future vision
 
-- [ ] Separate durable process ownership into a local `tagteamd`-style service
+- [~] Separate durable process ownership into a local `tagteamd`-style service
   with the MCP endpoint as a thin client transport. Add leases, reconnectable
   event streams, multi-client arbitration, and safe cancellation after the
-  originating host exits.
+  originating host exits. **Partially implemented:** `mcp_daemon.go` +
+  `tagteam mcp --socket <path>` host one shared `ControlRuntime` over a unix
+  socket; the MCP endpoint is a thin client transport, so runs are owned by the
+  daemon and survive a client disconnect, multiple clients attach concurrently
+  (serialized through the runtime's mutex and run lock), and existing
+  file-backed cancellation gives safe cancellation after the originating client
+  exits. **Remaining:** reconnectable push event streams and formal
+  multi-client arbitration beyond serialization.
 - [x] Add capability/version provenance and quarantine when tool schemas,
   side effects, or the Tagteam binary change outside the approved baseline.
   `provenance.go` fingerprints the producer version, contract version, and MCP
