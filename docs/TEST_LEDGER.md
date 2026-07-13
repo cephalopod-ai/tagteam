@@ -9,7 +9,7 @@ socket-daemon suites were re-validated on 2026-07-13.
 |---|---|---|---|---|---|
 | Run loop / modes | `go test ./internal/tagteam/` (`runner_test.go`, 85 tests) | pass | `runner_test.go` | Supervisor/relay/solo/adversarial flows, slicing, round limits, env policy, artifacts, fallback/repair paths | Large surface still concentrated in one file |
 | Config resolution | `go test ./internal/tagteam/` (`config_test.go`, 61 tests) | pass | `config_test.go` | Layered precedence, profiles, `ResolveOptions`, JSON repair/fallback config, per-role policy | — |
-| Adapters and role policy | `go test ./internal/tagteam/ -run 'Grok|ValidateConfig_Grok'` plus installed `grok --help` / subcommand help | focused pass; full suite has unrelated failure | `adapters_part02_test.go`, `config_part02_test.go`, `runner_test.go` | argv construction, capabilities, schema wiring, per-role env/sandbox, Grok 0.2.93 headless/model/effort/tools/permissions and direct JSON-object parsing, Claude supervisor/adversary allowance, and Claude implementation/scout rejection | Live Grok authentication/model execution remains unexercised; help does not enumerate model-specific effort availability; `TestWriteLiveProgressCapturesWorktreeDiff` currently reports +1 instead of +2 |
+| Adapters and role policy | `go test ./internal/tagteam/ -run 'Grok|ValidateConfig_Grok'` plus installed `grok --help` / subcommand help | pass | `adapters_part02_test.go`, `config_part02_test.go`, `runner_test.go` | argv construction, capabilities, schema wiring, per-role env/sandbox, Grok 0.2.93 headless/model/effort/tools/permissions and direct JSON-object parsing, Claude supervisor/adversary allowance, and Claude implementation/scout rejection | Live Grok authentication/model execution remains unexercised; help does not enumerate model-specific effort availability; `TestWriteLiveProgressCapturesWorktreeDiff` currently reports +1 instead of +2 |
 | Claude output hardening | `go test ./internal/tagteam/` (`adapters_part02_test.go`, `runner_part02_test.go`) | pass | `adapters_part02_test.go`, `runner_part02_test.go` | Claude envelope `is_error`/`error_*` surfacing even on nonzero process exit, plus embedded-JSON candidate recovery (fenced blocks, decoy objects, unmatched braces) across worker/review contracts | Real Claude prose variants are sampled, not exhaustive |
 | Claude invocation serialization | `go test ./internal/tagteam/` (`invocation_lock_test.go`, 6 tests) | pass | `invocation_lock_test.go`, `internal/tui/render_test.go` | flock-based cross-process lock acquire/release, live-holder wait with the onWait live-status callback, fail-closed timeout/cancellation, state-root derivation, a re-exec multi-process mutual-exclusion test, and TUI rendering of the queued `waiting` state | Windows PID-file fallback path is compile-checked, not executed, in CI |
 | Run state / reasons | `go test ./internal/tagteam/` (`run_state_test.go`, 5 tests) | pass | `run_state_test.go` | Failure classification, exit→reason, budget wiring, overlay redaction | — |
@@ -48,4 +48,8 @@ socket-daemon suites were re-validated on 2026-07-13.
 - `gofmt -l .` → clean
 - `go vet ./...` → clean
 - `go build ./...` → ok
-- `go test ./...` → all pass
+- `go test ./...` → all pass (now deterministic across developer and CI
+  environments: `TestMain` isolates ambient sensitive-keyed env vars so secret
+  redaction cannot corrupt unrelated timestamps/byte streams, and the fake
+  adapter transcript test uses a non-login shell so profile banners cannot
+  pollute its parsed output)
