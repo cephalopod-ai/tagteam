@@ -735,22 +735,24 @@ func writeOutputContractArtifacts(req Request, role Role, result Result, raw []b
 	return rawPath, nil
 }
 
-func writeValidationErrorArtifact(req Request, cause error) string {
+func writeValidationErrorArtifact(req Request, cause error) (string, error) {
 	if cause == nil || req.OutputPath == "" {
-		return ""
+		return "", nil
 	}
 	if err := rebindRequestControlResume(&req); err != nil {
-		return ""
+		return "", &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
 	if err := guardControlResumeWritePath(req.controlResumeGate, req.OutputPath); err != nil {
-		return ""
+		return "", &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
 	path := req.OutputPath + ".validation-error.txt"
 	if err := guardControlResumeWritePath(req.controlResumeGate, path); err != nil {
-		return ""
+		return path, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
-	_ = writeFileDurable(path, []byte(redactSecretsWithOverlay(cause.Error(), req.EnvOverlay)+"\n"), 0o644, true)
-	return path
+	if err := writeFileDurable(path, []byte(redactSecretsWithOverlay(cause.Error(), req.EnvOverlay)+"\n"), 0o644, true); err != nil {
+		return path, err
+	}
+	return path, nil
 }
 
 func promptInArgv(prompt string, spec *CommandSpec) bool {

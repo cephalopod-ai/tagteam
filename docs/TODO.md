@@ -44,6 +44,9 @@ own recovery action.
 - [x] Add the local MCP resume operation. It verifies the approval-bound
   action and worktree, reuses `PrepareResume`, persists single-use nonce
   consumption, and invokes the host-owned `App.Resume` path.
+- [ ] Persist a terminal diagnostic when a nonce-consumed MCP resume fails
+  before the runner can write `final.json`; replay protection already fails
+  closed, but the failed preflight currently has no terminal run artifact.
 - [x] Add the local MCP cancel operation with deterministic host-owned process
   ownership after server restart. Live runs must be owned by the cancelling
   MCP runtime; stale owners use the durable cancellation request and persisted

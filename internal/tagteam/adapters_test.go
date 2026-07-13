@@ -555,7 +555,7 @@ func TestOpenAICompatibleRunDirectBuildsChatCompletionsRequest(t *testing.T) {
 	}
 }
 
-func TestOpenAICompatibleRunDirectWritesRawOnParseFailure(t *testing.T) {
+func TestOpenAICompatibleRunDirectLeavesArtifactPersistenceToRunner(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
@@ -578,11 +578,8 @@ func TestOpenAICompatibleRunDirectWritesRawOnParseFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
-	if !fileExists(outputPath + ".raw") {
-		t.Fatal("expected raw quarantine artifact")
-	}
-	if !fileExists(outputPath + ".validation-error.txt") {
-		t.Fatal("expected validation error artifact")
+	if fileExists(outputPath+".raw") || fileExists(outputPath+".validation-error.txt") {
+		t.Fatal("RunDirect persisted runner-owned artifacts")
 	}
 }
 

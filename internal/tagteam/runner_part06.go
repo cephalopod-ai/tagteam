@@ -161,6 +161,21 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		}
 		result, err := direct.RunDirect(role, req)
 		if err != nil {
+			var validationErr *directValidationError
+			if errors.As(err, &validationErr) {
+				rawPath, artifactErr := writeOutputContractArtifacts(req, role, Result{}, validationErr.raw)
+				if artifactErr != nil {
+					finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
+					return Result{}, artifactErr
+				}
+				record.RawOutputPath = rawPath
+				validationPath, artifactErr := writeValidationErrorArtifact(req, validationErr)
+				if artifactErr != nil {
+					finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
+					return Result{}, artifactErr
+				}
+				record.ValidationErrorPath = validationPath
+			}
 			if !watchdogDeadline.IsZero() && errors.Is(directCtx.Err(), context.DeadlineExceeded) && !time.Now().Before(watchdogDeadline) {
 				directProgressStatus = "stalled"
 				err = &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("%w: %v", errInvocationStalled, err)}
@@ -197,7 +212,12 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			return Result{}, err
 		}
 		if err := validateWorkerResultForRequest(ctx, req, &result, before); err != nil {
-			record.ValidationErrorPath = writeValidationErrorArtifact(req, err)
+			validationPath, artifactErr := writeValidationErrorArtifact(req, err)
+			if artifactErr != nil {
+				finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
+				return Result{}, artifactErr
+			}
+			record.ValidationErrorPath = validationPath
 			_, _ = writeOutputContractArtifacts(req, role, result, raw)
 			finishDeliveryRecord(req, recordPath, record, "failed", err)
 			return Result{}, err
@@ -205,7 +225,12 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		if role == RoleAdversary && result.Review != nil {
 			if err := result.Review.ValidateCurrent(); err != nil {
 				contractErr := &OutputContractError{Err: err}
-				record.ValidationErrorPath = writeValidationErrorArtifact(req, contractErr)
+				validationPath, artifactErr := writeValidationErrorArtifact(req, contractErr)
+				if artifactErr != nil {
+					finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
+					return Result{}, artifactErr
+				}
+				record.ValidationErrorPath = validationPath
 				finishDeliveryRecord(req, recordPath, record, "failed", contractErr)
 				return Result{}, contractErr
 			}
@@ -510,12 +535,22 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	}
 	result, err = adapter.ParseResult(role, raw)
 	if err != nil {
-		record.ValidationErrorPath = writeValidationErrorArtifact(req, err)
+		validationPath, artifactErr := writeValidationErrorArtifact(req, err)
+		if artifactErr != nil {
+			finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
+			return Result{}, artifactErr
+		}
+		record.ValidationErrorPath = validationPath
 		finishDeliveryRecord(req, recordPath, record, "failed", err)
 		return Result{}, err
 	}
 	if err := validateWorkerResultForRequest(ctx, req, &result, before); err != nil {
-		record.ValidationErrorPath = writeValidationErrorArtifact(req, err)
+		validationPath, artifactErr := writeValidationErrorArtifact(req, err)
+		if artifactErr != nil {
+			finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
+			return Result{}, artifactErr
+		}
+		record.ValidationErrorPath = validationPath
 		_, _ = writeOutputContractArtifacts(req, role, result, raw)
 		finishDeliveryRecord(req, recordPath, record, "failed", err)
 		return Result{}, err
@@ -523,7 +558,12 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	if role == RoleAdversary && result.Review != nil {
 		if err := result.Review.ValidateCurrent(); err != nil {
 			contractErr := &OutputContractError{Err: err}
-			record.ValidationErrorPath = writeValidationErrorArtifact(req, contractErr)
+			validationPath, artifactErr := writeValidationErrorArtifact(req, contractErr)
+			if artifactErr != nil {
+				finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
+				return Result{}, artifactErr
+			}
+			record.ValidationErrorPath = validationPath
 			finishDeliveryRecord(req, recordPath, record, "failed", contractErr)
 			return Result{}, contractErr
 		}

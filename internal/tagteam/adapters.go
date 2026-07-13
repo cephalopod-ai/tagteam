@@ -600,19 +600,24 @@ func (a *OpenAICompatibleAdapter) RunDirect(role Role, req Request) (Result, err
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("openai-compatible request failed: status %d: %s", resp.StatusCode, redactSecretsWithOverlay(strings.TrimSpace(string(raw)), req.EnvOverlay))}
 	}
-	if req.OutputPath != "" {
-		_ = writeRedactedBytes(req.OutputPath+".raw", raw, req.EnvOverlay)
-	}
 	result, err := a.ParseResult(role, raw)
 	if err != nil {
-		if req.OutputPath != "" {
-			_ = writeRedactedBytes(req.OutputPath+".validation-error.txt", []byte(err.Error()+"\n"), req.EnvOverlay)
-		}
-		return Result{}, err
+		return Result{Raw: raw}, &directValidationError{cause: err, raw: raw}
 	}
 	result.Command = []string{"POST", url}
 	return result, nil
 }
+
+// directValidationError marks a direct adapter response that was received but
+// failed its output contract. The runner owns persistence of its diagnostics.
+type directValidationError struct {
+	cause error
+	raw   []byte
+}
+
+func (e *directValidationError) Error() string { return e.cause.Error() }
+
+func (e *directValidationError) Unwrap() error { return e.cause }
 
 func envValue(overlay map[string]string, key string) string {
 	if value, ok := os.LookupEnv(key); ok {

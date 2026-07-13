@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -150,6 +151,23 @@ func TestChurnGateUsesConfiguredThresholds(t *testing.T) {
 	findings := evaluateChurnFindings(context.Background(), repo, stringsTrim(runGit(t, repo, "rev-parse", "HEAD")), []DiffFile{{Path: "a.txt"}, {Path: "b.txt"}}, ChurnThresholds{MaxFiles: 1, MaxChangedLines: 100, MaxFixtureFiles: 100, WhitespaceRatio: 1, MinimumSemanticRatio: 0.01})
 	if len(findings) != 1 || findings[0].ID != "CHURN-FILES" {
 		t.Fatalf("findings = %#v", findings)
+	}
+}
+
+func TestChurnGateFailsClosedWhenMeasurementFails(t *testing.T) {
+	findings := evaluateChurnFindings(context.Background(), t.TempDir(), "missing-baseline", nil, ChurnThresholds{MaxFiles: 10, MaxChangedLines: 1000, MaxFixtureFiles: 10, WhitespaceRatio: 1, MinimumSemanticRatio: 0})
+	if len(findings) != 1 || findings[0].ID != "CHURN-MEASURE" {
+		t.Fatalf("findings = %#v, want CHURN-MEASURE", findings)
+	}
+}
+
+func TestRunBaselineTestPropagatesFinalHostActivityPersistenceError(t *testing.T) {
+	runDir := t.TempDir()
+	activityPath := filepath.Join(runDir, hostActivityArtifact)
+	command := "rm -f " + strconv.Quote(activityPath) + "; mkdir " + strconv.Quote(activityPath)
+	test, err := runBaselineTest(context.Background(), RunOptions{Workdir: t.TempDir(), TestCmd: command, Timeout: 5 * time.Second}, runDir)
+	if err == nil || test != nil {
+		t.Fatalf("runBaselineTest() = %#v, %v; want final host-activity persistence error", test, err)
 	}
 }
 

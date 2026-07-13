@@ -183,9 +183,15 @@ func evaluateChurnFindings(ctx context.Context, workdir, baseline string, files 
 	if fixtureFiles > thresholds.MaxFixtureFiles {
 		findings = append(findings, GateFinding{ID: "CHURN-FIXTURES", Gate: "churn", Severity: "major", Message: fmt.Sprintf("diff changes %d fixture files; threshold is %d", fixtureFiles, thresholds.MaxFixtureFiles)})
 	}
-	trackedChangedLines := gitChangedLines(ctx, workdir, baseline, false)
+	trackedChangedLines, err := gitChangedLines(ctx, workdir, baseline, false)
+	if err != nil {
+		return append(findings, GateFinding{ID: "CHURN-MEASURE", Gate: "churn", Severity: "major", Message: "unable to measure tracked changed lines"})
+	}
 	if trackedChangedLines >= 100 {
-		ignoreSpace := gitChangedLines(ctx, workdir, baseline, true)
+		ignoreSpace, err := gitChangedLines(ctx, workdir, baseline, true)
+		if err != nil {
+			return append(findings, GateFinding{ID: "CHURN-MEASURE", Gate: "churn", Severity: "major", Message: "unable to measure whitespace-insensitive changed lines"})
+		}
 		semanticRatio := float64(ignoreSpace) / float64(trackedChangedLines)
 		whitespaceRatio := 1 - semanticRatio
 		if whitespaceRatio >= thresholds.WhitespaceRatio {
@@ -198,7 +204,7 @@ func evaluateChurnFindings(ctx context.Context, workdir, baseline string, files 
 	return findings
 }
 
-func gitChangedLines(ctx context.Context, workdir, baseline string, ignoreWhitespace bool) int {
+func gitChangedLines(ctx context.Context, workdir, baseline string, ignoreWhitespace bool) (int, error) {
 	args := []string{"diff"}
 	if ignoreWhitespace {
 		args = append(args, "-w")
@@ -206,7 +212,7 @@ func gitChangedLines(ctx context.Context, workdir, baseline string, ignoreWhites
 	args = append(args, "--numstat", baseline, "--", ".", ":(exclude).tagteam")
 	out, err := runGitCommandBytes(ctx, workdir, []string{"LC_ALL=C"}, args...)
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	additions, deletions := 0, 0
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -216,7 +222,7 @@ func gitChangedLines(ctx context.Context, workdir, baseline string, ignoreWhites
 			deletions += del
 		}
 	}
-	return additions + deletions
+	return additions + deletions, nil
 }
 
 func gateFindingID(gate, path string) string {
