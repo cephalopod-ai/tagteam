@@ -68,10 +68,28 @@ func (a *App) runEditorWithContractRetry(ctx context.Context, opts RunOptions, e
 
 	logProgress(opts, "%s output invalid with no edits; retrying once error=%q", roleLabelsEditor(opts.Mode), err.Error())
 	req.Prompt += "\n\nYour previous response failed the worker-result contract and made no repository changes. Execute the requested implementation now. Do not answer with model identity or capability prose. Return only the required JSON envelope after editing and validation.\n\nValidation error:\n" + err.Error()
+	if controlResumeBeforeContractRetryHook != nil && controlResumeGateFrom(ctx) != nil {
+		controlResumeBeforeContractRetryHook()
+	}
 	if req.OutputPath != "" {
-		_ = writeRedactedBytes(req.OutputPath+".retry-prompt.md", []byte(req.Prompt), req.EnvOverlay)
+		if rebindErr := bindControlResumeRequest(ctx, &req); rebindErr != nil {
+			return result, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+		}
+		retryPromptPath := req.OutputPath + ".retry-prompt.md"
 		ext := filepath.Ext(req.OutputPath)
-		req.OutputPath = strings.TrimSuffix(req.OutputPath, ext) + ".retry" + ext
+		retryOutputPath := strings.TrimSuffix(req.OutputPath, ext) + ".retry" + ext
+		if gate := req.controlResumeGate; gate != nil {
+			if guardErr := guardControlResumeWritePath(gate, retryPromptPath); guardErr != nil {
+				return result, &ExitError{Code: ExitPreflightFailed, Err: guardErr}
+			}
+			if guardErr := guardControlResumeWritePath(gate, retryOutputPath); guardErr != nil {
+				return result, &ExitError{Code: ExitPreflightFailed, Err: guardErr}
+			}
+		}
+		if writeErr := writeRedactedBytes(retryPromptPath, []byte(req.Prompt), req.EnvOverlay); writeErr != nil {
+			return result, writeErr
+		}
+		req.OutputPath = retryOutputPath
 	}
 	req.Phase += " contract retry"
 	return a.runAdapter(ctx, editor, RoleCoder, req, opts.DryRun)
@@ -186,17 +204,11 @@ func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runD
 		controlResumeGate: controlResumeGateFrom(ctx),
 	}, opts.DryRun)
 	if err != nil && IsOutputContractError(err) {
-		if repaired, repairCost, attempted, repairErr := a.repairJSONWithWorker(ctx, opts, registry, runDir, postScoutPath, "post-scout", ScoutSchemaForRepair(), readRepairSource(postScoutPath, nil), err); repairErr != nil {
-			_ = writeRedactedBytes(postScoutPath+".repair-failed.txt", []byte(repairErr.Error()+"\n"), opts.EnvOverlay)
-		} else if attempted {
-			if repairedScout, parseErr := parseScout(repaired); parseErr == nil {
-				setFinalDegraded(final, ReasonJSONRepairUsed, "post-scout JSON repaired by worker")
-				appendRoleLoss(final, "scout", opts.LossPolicy.Scout, "json-repair", "repaired", ReasonJSONRepairUsed, "worker repaired invalid post-scout JSON")
-				postScoutResult = Result{Scout: repairedScout, Text: repairedScout.Summary, CostUSD: repairCost}
-				err = nil
-			} else {
-				_ = writeRedactedBytes(postScoutPath+".repair-validation-error.txt", []byte(parseErr.Error()+"\n"), opts.EnvOverlay)
-			}
+		if repaired, ok, rerr := a.tryScoutContractRepair(ctx, opts, registry, runDir, postScoutPath, "post-scout", "post-scout JSON repaired by worker", err, final); rerr != nil {
+			return rerr
+		} else if ok {
+			postScoutResult = repaired
+			err = nil
 		}
 	}
 	if err != nil {
@@ -311,7 +323,7 @@ func (a *App) finalizeReviewedRunWithGate(opts RunOptions, runDir string, budget
 		if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "plan.json"); err != nil {
 			return &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
-		if err := persistExecutionPlan(runDir, executionPlan); err != nil {
+		if err := persistExecutionPlan(withControlResumeGate(context.Background(), gate), runDir, executionPlan); err != nil {
 			return err
 		}
 		final.Plan = summarizeExecutionPlan(runDir, executionPlan)

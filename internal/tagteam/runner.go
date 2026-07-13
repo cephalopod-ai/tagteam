@@ -95,10 +95,20 @@ func loadAndPersistRepoInstructions(ctx context.Context, opts RunOptions, runDir
 	if err != nil {
 		return "", err
 	}
-	if err := writeFileDurable(filepath.Join(runDir, "repo-instructions.md"), []byte(bundle.Text), 0o644, true); err != nil {
+	// Re-resolve immediately before each write so a replaced run directory
+	// cannot redirect repo-instruction persistence outside the runs root.
+	current, rebindErr := rebindControlResumeFromContext(ctx, runDir, nil, "repo-instructions.md")
+	if rebindErr != nil {
+		return "", &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	}
+	if err := writeFileDurable(filepath.Join(current, "repo-instructions.md"), []byte(bundle.Text), 0o644, true); err != nil {
 		return "", err
 	}
-	if err := writeJSON(filepath.Join(runDir, "repo-instructions.json"), bundle.Metadata); err != nil {
+	current, rebindErr = rebindControlResumeFromContext(ctx, current, nil, "repo-instructions.json")
+	if rebindErr != nil {
+		return "", &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	}
+	if err := writeJSON(filepath.Join(current, "repo-instructions.json"), bundle.Metadata); err != nil {
 		return "", err
 	}
 	return bundle.Text, nil
@@ -484,11 +494,17 @@ func summarizeExecutionPlan(runDir string, plan *ExecutionPlan) *PlanSummary {
 	return summary
 }
 
-func persistExecutionPlan(runDir string, plan *ExecutionPlan) error {
+func persistExecutionPlan(ctx context.Context, runDir string, plan *ExecutionPlan) error {
 	if plan == nil {
 		return nil
 	}
-	if err := writeJSONWithNewline(filepath.Join(runDir, "plan.json"), plan); err != nil {
+	// Gate-aware independent rebind before each plan artifact so a replacement
+	// between plan.json and plan-events.jsonl cannot escape the runs root.
+	current, err := rebindControlResumeFromContext(ctx, runDir, nil, "plan.json")
+	if err != nil {
+		return &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	if err := writeJSONWithNewline(filepath.Join(current, "plan.json"), plan); err != nil {
 		return err
 	}
 	var events bytes.Buffer
@@ -500,7 +516,11 @@ func persistExecutionPlan(runDir string, plan *ExecutionPlan) error {
 		events.Write(data)
 		events.WriteByte('\n')
 	}
-	return writeFileDurable(filepath.Join(runDir, "plan-events.jsonl"), events.Bytes(), 0o644, true)
+	current, err = rebindControlResumeFromContext(ctx, current, nil, "plan-events.jsonl")
+	if err != nil {
+		return &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	return writeFileDurable(filepath.Join(current, "plan-events.jsonl"), events.Bytes(), 0o644, true)
 }
 
 func (a *App) Run(ctx context.Context, opts RunOptions) (FinalRun, error) {

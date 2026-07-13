@@ -200,7 +200,7 @@ func (a *App) prepareResumeRuntime(ctx context.Context, opts RunOptions, runDir 
 		if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
 			return runtime, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
-		runtime.relay, err = loadResumeRelayContextControl(runDir)
+		runtime.relay, err = loadResumeRelayContextControl(ctx, runDir)
 		if err != nil {
 			return runtime, err
 		}
@@ -218,7 +218,7 @@ func (a *App) prepareResumeRuntime(ctx context.Context, opts RunOptions, runDir 
 		if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
 			return runtime, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
-		if plan, planErr := readControlExecutionPlanOptional(runDir); planErr != nil {
+		if plan, planErr := readControlExecutionPlanOptional(ctx, runDir); planErr != nil {
 			return runtime, planErr
 		} else if plan != nil {
 			runtime.executionPlan = plan
@@ -248,43 +248,64 @@ func loadResumeRelayContext(runDir string) RelayContext {
 // loadResumeRelayContextControl loads relay resume artifacts through the
 // control-safe readers. Escaping or broken symlinks fail closed without
 // consuming external content; missing optional files are ignored.
-func loadResumeRelayContextControl(runDir string) (RelayContext, error) {
+// When a control-resume gate is present on ctx, re-resolve before each optional read.
+func loadResumeRelayContextControl(ctx context.Context, runDir string) (RelayContext, error) {
 	relay := RelayContext{}
-	if data, present, err := readControlOptionalArtifactBytes(runDir, "supervisor-brief.md"); err != nil {
-		return RelayContext{}, err
-	} else if present {
-		relay.Brief = string(data)
-	}
-	if data, present, err := readControlOptionalArtifactBytes(runDir, "supervisor-instructions.md"); err != nil {
-		return RelayContext{}, err
-	} else if present {
-		relay.Instructions = string(data)
-	}
-	if data, present, err := readControlOptionalArtifactBytes(runDir, "scout-round-1.json"); err != nil {
-		return RelayContext{}, err
-	} else if present {
-		if err := json.Unmarshal(data, &relay.Scout); err != nil {
-			return RelayContext{}, fmt.Errorf("control artifact scout-round-1.json: %w", err)
+	for _, step := range []struct {
+		name  string
+		apply func([]byte) error
+	}{
+		{"supervisor-brief.md", func(data []byte) error {
+			relay.Brief = string(data)
+			return nil
+		}},
+		{"supervisor-instructions.md", func(data []byte) error {
+			relay.Instructions = string(data)
+			return nil
+		}},
+		{"scout-round-1.json", func(data []byte) error {
+			if err := json.Unmarshal(data, &relay.Scout); err != nil {
+				return fmt.Errorf("control artifact scout-round-1.json: %w", err)
+			}
+			return nil
+		}},
+		{"post-scout-round-1.json", func(data []byte) error {
+			if err := json.Unmarshal(data, &relay.PostScout); err != nil {
+				return fmt.Errorf("control artifact post-scout-round-1.json: %w", err)
+			}
+			return nil
+		}},
+		{"supervisor-work-plan.json", func(data []byte) error {
+			var plan WorkPlan
+			if err := json.Unmarshal(data, &plan); err != nil {
+				return fmt.Errorf("control artifact supervisor-work-plan.json: %w", err)
+			}
+			if len(plan.Packages) > 0 {
+				relay.WorkPlan = &plan
+				if selected, ok := plan.Selected(); ok {
+					relay.WorkPackage = &selected
+				}
+			}
+			return nil
+		}},
+	} {
+		current, err := rebindControlResumeFromContext(ctx, runDir, nil)
+		if err != nil {
+			return RelayContext{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
-	}
-	if data, present, err := readControlOptionalArtifactBytes(runDir, "post-scout-round-1.json"); err != nil {
-		return RelayContext{}, err
-	} else if present {
-		if err := json.Unmarshal(data, &relay.PostScout); err != nil {
-			return RelayContext{}, fmt.Errorf("control artifact post-scout-round-1.json: %w", err)
+		runDir = current
+		data, present, err := readControlOptionalArtifactBytes(runDir, step.name)
+		if err != nil {
+			// Under an MCP resume gate, artifact escape/read failures are
+			// preflight path-boundary errors, not adapter failures.
+			if controlResumeGateFrom(ctx) != nil {
+				return RelayContext{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+			}
+			return RelayContext{}, err
 		}
-	}
-	if data, present, err := readControlOptionalArtifactBytes(runDir, "supervisor-work-plan.json"); err != nil {
-		return RelayContext{}, err
-	} else if present {
-		var plan WorkPlan
-		if err := json.Unmarshal(data, &plan); err != nil {
-			return RelayContext{}, fmt.Errorf("control artifact supervisor-work-plan.json: %w", err)
-		}
-		if len(plan.Packages) > 0 {
-			relay.WorkPlan = &plan
-			if selected, ok := plan.Selected(); ok {
-				relay.WorkPackage = &selected
+		if present {
+			if err := step.apply(data); err != nil {
+				return RelayContext{}, err
 			}
 		}
 	}
@@ -293,9 +314,18 @@ func loadResumeRelayContextControl(runDir string) (RelayContext, error) {
 
 // readControlExecutionPlanOptional loads plan.json via the control-safe reader.
 // Missing plan is (nil, nil); escaping symlinks are errors.
-func readControlExecutionPlanOptional(runDir string) (*ExecutionPlan, error) {
+// When a control-resume gate is present on ctx, re-resolve immediately before the read.
+func readControlExecutionPlanOptional(ctx context.Context, runDir string) (*ExecutionPlan, error) {
+	current, err := rebindControlResumeFromContext(ctx, runDir, nil)
+	if err != nil {
+		return nil, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	runDir = current
 	data, present, err := readControlOptionalArtifactBytes(runDir, "plan.json")
 	if err != nil {
+		if controlResumeGateFrom(ctx) != nil {
+			return nil, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		return nil, err
 	}
 	if !present {
@@ -362,7 +392,7 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 				return &ExitError{Code: ExitPreflightFailed, Err: planErr}
 			}
 			runtime.executionPlan = newExecutionPlanFromWorkPlan(final.RunID, opts.Mode, plan, "supervisor-resume")
-			if err := persistExecutionPlan(runDir, runtime.executionPlan); err != nil {
+			if err := persistExecutionPlan(ctx, runDir, runtime.executionPlan); err != nil {
 				return err
 			}
 		}

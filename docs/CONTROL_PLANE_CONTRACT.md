@@ -89,12 +89,20 @@ server read-only unless the operator explicitly passes `--allow-dev-build`.
   artifact read (meta, final, prior review, diff/review verification), and again
   immediately before every host mutation and adapter request construction/dispatch
   (including shared delivery/progress/output helpers and post-scout/review/
-  finalization paths reached during resume). Shared adapter requests carry an
-  optional control-resume gate so a replacement after an earlier rebind cannot
-  redefine the trust root. Resumed relay/plan reads stay on the control-safe
-  artifact API rather than raw `os.ReadFile` paths; deferred failure persistence
-  and quarantine are fail-closed with path-change errors when the run directory
-  has escaped.
+  finalization paths reached during resume). The same gate also covers JSON
+  repair (source reads, prompt/output/failure mkdir+writes, worker dispatch,
+  and side-artifacts), independent `repo-instructions.md`/`.json` and
+  `plan.json`/`plan-events.jsonl` persistence, baseline-test host-activity and
+  test-output paths, multi-artifact prompt/relay/plan optional readers, and
+  coder/reviewer contract-retry prompt writes. Path-gate failures surface as
+  `ExitPreflightFailed` without writing through a stale path. Shared adapter
+  requests carry an optional control-resume gate so a replacement after an
+  earlier rebind cannot redefine the trust root. Resumed relay/plan reads stay
+  on the control-safe artifact API; deferred failure persistence and quarantine
+  are fail-closed when the run directory has escaped. Nil gate preserves ordinary
+  CLI resume/helper behavior. Residual limitation: pure syscall-level TOCTOU
+  remains possible after the final revalidation and before the subsequent
+  read/write/exec.
 - Allowed paths keep the existing syntax validator (absolute paths, traversal,
   globs, backslashes, blanks, and lexical duplicates are rejected), then are
   resolved through real paths under the canonical repository. Broken or

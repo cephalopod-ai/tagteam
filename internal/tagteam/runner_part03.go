@@ -362,17 +362,33 @@ func (a *App) collectOrchestrationAdvisory(ctx context.Context, opts RunOptions,
 	advisory, err := parseOrchestrationAdvisory([]byte(result.Text), source)
 	if err != nil {
 		if repaired, _, attempted, repairErr := a.repairJSONWithWorker(ctx, opts, Registry(a.Config, opts), runDir, outputPath, "orchestration advisory", OrchestrationAdvisorySchema, []byte(result.Text), err); repairErr != nil {
-			_ = writeRedactedBytes(outputPath+".repair-failed.txt", []byte(repairErr.Error()+"\n"), opts.EnvOverlay)
+			if noteErr := noteJSONRepairFailure(ctx, runDir, outputPath, repairErr, opts.EnvOverlay); noteErr != nil {
+				return OrchestrationAdvisory{}, noteErr
+			}
+			return OrchestrationAdvisory{}, err
 		} else if attempted {
 			repairedAdvisory, parseErr := parseOrchestrationAdvisory(repaired, source)
-			if parseErr == nil {
-				advisory = repairedAdvisory
-			} else {
-				_ = writeRedactedBytes(outputPath+".repair-validation-error.txt", []byte(parseErr.Error()+"\n"), opts.EnvOverlay)
+			if parseErr != nil {
+				if werr := writeRepairSideBytes(ctx, runDir, outputPath, ".repair-validation-error.txt", []byte(parseErr.Error()+"\n"), opts.EnvOverlay); isControlResumePathGateError(werr) {
+					return OrchestrationAdvisory{}, werr
+				}
 				return OrchestrationAdvisory{}, err
 			}
+			advisory = repairedAdvisory
 		} else {
 			return OrchestrationAdvisory{}, err
+		}
+	}
+	if gate := controlResumeGateFrom(ctx); gate != nil {
+		prevRunDir := runDir
+		writeDir, rebindErr := rebindControlResumeFromContext(ctx, runDir, nil)
+		if rebindErr != nil {
+			return OrchestrationAdvisory{}, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+		}
+		runDir = writeDir
+		outputPath = rebuildControlResumeArtifactPath(prevRunDir, runDir, outputPath)
+		if err := guardControlResumeWritePath(gate, outputPath); err != nil {
+			return OrchestrationAdvisory{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
 	}
 	if err := writeJSONWithNewline(outputPath, advisory); err != nil {

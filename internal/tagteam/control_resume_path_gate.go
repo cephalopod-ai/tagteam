@@ -226,3 +226,26 @@ func rebindControlResumeRunDir(gate *controlResumePathGate, runDir string, final
 	}
 	return current, nil
 }
+
+// rebuildControlResumeArtifactPath rewrites an artifact path that lived under
+// prevRunDir onto currentRunDir. Used after a successful rebind so callers never
+// reuse a pre-validation path string for the next read/write/dispatch.
+func rebuildControlResumeArtifactPath(prevRunDir, currentRunDir, path string) string {
+	if path == "" || currentRunDir == "" || prevRunDir == "" {
+		return path
+	}
+	if path == prevRunDir {
+		return currentRunDir
+	}
+	sep := string(filepath.Separator)
+	if strings.HasPrefix(path, prevRunDir+sep) {
+		rel, err := filepath.Rel(prevRunDir, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+sep) {
+			return filepath.Join(currentRunDir, rel)
+		}
+	}
+	if filepath.Dir(path) == prevRunDir {
+		return filepath.Join(currentRunDir, filepath.Base(path))
+	}
+	return path
+}

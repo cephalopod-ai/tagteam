@@ -38,6 +38,16 @@ var controlResumeAfterStateReadHook func()
 // code leaves it nil.
 var controlResumeBeforeAdapterHook func()
 
+// controlResumeBeforeContractRetryHook is a narrowly scoped test seam invoked
+// after an output-contract failure is selected for a single retry and before
+// the retry-prompt path is rebound/written. Production code leaves it nil.
+var controlResumeBeforeContractRetryHook func()
+
+// controlResumeAfterRepairMkdirHook is a narrowly scoped test seam invoked
+// after JSON-repair MkdirAll and before the repair-prompt write rebind.
+// Production code leaves it nil.
+var controlResumeAfterRepairMkdirHook func()
+
 // Resume verifies an interrupted run and continues the first incomplete phase
 // in the same authoritative run directory.
 func (a *App) Resume(ctx context.Context, opts RunOptions, runID string) (FinalRun, error) {
@@ -166,7 +176,7 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 		if runDir, err = rebindControlResumeRunDir(gate, runDir, nil); err != nil {
 			return FinalRun{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
-		prompt, err = readControlRunPrompt(runDir, opts.Prompt)
+		prompt, err = readControlRunPrompt(ctx, runDir, opts.Prompt)
 	} else {
 		prompt, err = readRunPrompt(runDir, opts.Prompt)
 	}
@@ -403,16 +413,38 @@ func readControlReviewArtifact(runDir, path string) (Review, error) {
 
 // readControlRunPrompt loads input.md (or meta prompt) through control-safe
 // artifact readers so escaping symlinks cannot feed external content into resume.
-func readControlRunPrompt(runDir, fallback string) (string, error) {
+// When a control-resume gate is present on ctx, re-resolve before each optional
+// read and fail closed on control-artifact read errors (no caller-prompt fallback).
+func readControlRunPrompt(ctx context.Context, runDir, fallback string) (string, error) {
+	gated := controlResumeGateFrom(ctx) != nil
+	current, err := rebindControlResumeFromContext(ctx, runDir, nil)
+	if err != nil {
+		return "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	runDir = current
 	data, present, err := readControlOptionalArtifactBytes(runDir, "input.md")
 	if err != nil {
+		if gated {
+			return "", &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
 		return "", err
 	}
 	if present {
 		return string(data), nil
 	}
+	current, err = rebindControlResumeFromContext(ctx, runDir, nil)
+	if err != nil {
+		return "", &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	runDir = current
 	meta, err := readControlMeta(runDir)
-	if err == nil && strings.TrimSpace(meta.Prompt) != "" {
+	if err != nil {
+		// Gated control resume must not fall open to the caller prompt when the
+		// protected meta artifact is escaping, broken, or otherwise unreadable.
+		if gated {
+			return "", &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+	} else if strings.TrimSpace(meta.Prompt) != "" {
 		return meta.Prompt, nil
 	}
 	if strings.TrimSpace(fallback) != "" {

@@ -161,6 +161,10 @@ func runBaselineTest(ctx context.Context, opts RunOptions, runDir string) (*Test
 		return nil, nil
 	}
 	started := time.Now().UTC()
+	var rebindErr error
+	if runDir, rebindErr = rebindControlResumeFromContext(ctx, runDir, nil, "baseline-test.txt", hostActivityArtifact); rebindErr != nil {
+		return nil, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	}
 	path := filepath.Join(runDir, "baseline-test.txt")
 	activity := HostActivity{
 		Actor:      "tagteam-host",
@@ -170,32 +174,59 @@ func runBaselineTest(ctx context.Context, opts RunOptions, runDir string) (*Test
 		OutputPath: path,
 		StartedAt:  started,
 	}
-	_ = writeHostActivity(runDir, activity)
+	if err := writeHostActivity(runDir, activity); err != nil {
+		return nil, err
+	}
+	var finishGateErr error
 	finish := func(status string, changed []string, cause error) {
+		current, err := rebindControlResumeFromContext(ctx, runDir, nil, hostActivityArtifact)
+		if err != nil {
+			finishGateErr = &ExitError{Code: ExitPreflightFailed, Err: err}
+			return
+		}
+		runDir = current
 		activity.Status = status
 		activity.Elapsed = shortDuration(time.Since(started))
 		activity.ChangedFiles = append([]string(nil), changed...)
 		activity.FinishedAt = time.Now().UTC()
+		activity.OutputPath = filepath.Join(runDir, "baseline-test.txt")
 		if cause != nil {
 			activity.Error = cause.Error()
 		}
-		_ = writeHostActivity(runDir, activity)
+		if writeErr := writeHostActivity(runDir, activity); writeErr != nil && finishGateErr == nil {
+			finishGateErr = writeErr
+		}
 	}
 	before, err := captureWorktreeSnapshot(ctx, opts.Workdir)
 	if err != nil {
 		wrapped := fmt.Errorf("capture worktree before baseline test: %w", err)
 		finish("failed", nil, wrapped)
+		if finishGateErr != nil {
+			return nil, finishGateErr
+		}
 		return nil, wrapped
 	}
+	// Rebind before launching the test command so output cannot target a replaced run dir.
+	if runDir, rebindErr = rebindControlResumeFromContext(ctx, runDir, nil, "baseline-test.txt"); rebindErr != nil {
+		return nil, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
+	}
+	path = filepath.Join(runDir, "baseline-test.txt")
+	activity.OutputPath = path
 	test, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, path, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
 	if err != nil {
 		finish("failed", nil, err)
+		if finishGateErr != nil {
+			return nil, finishGateErr
+		}
 		return nil, err
 	}
 	after, err := captureWorktreeSnapshot(ctx, opts.Workdir)
 	if err != nil {
 		wrapped := fmt.Errorf("capture worktree after baseline test: %w", err)
 		finish("failed", nil, wrapped)
+		if finishGateErr != nil {
+			return nil, finishGateErr
+		}
 		return nil, wrapped
 	}
 	if changed := worktreeDelta(before, after); len(changed) > 0 {
@@ -205,6 +236,9 @@ func runBaselineTest(ctx context.Context, opts RunOptions, runDir string) (*Test
 		}
 		violation := &IntegrityViolationError{Paths: paths}
 		finish("integrity_violation", changed, violation)
+		if finishGateErr != nil {
+			return nil, finishGateErr
+		}
 		return nil, violation
 	}
 	status := "failed"
@@ -212,5 +246,8 @@ func runBaselineTest(ctx context.Context, opts RunOptions, runDir string) (*Test
 		status = "passed"
 	}
 	finish(status, nil, nil)
+	if finishGateErr != nil {
+		return nil, finishGateErr
+	}
 	return &test, nil
 }

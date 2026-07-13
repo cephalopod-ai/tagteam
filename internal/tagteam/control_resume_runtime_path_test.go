@@ -217,11 +217,11 @@ func TestControlRuntimeResumeRejectsEscapingArtifactsAndRunDirReplacement(t *tes
 				}
 				// Prove load helpers themselves refuse without consuming.
 				if artifact == "plan.json" {
-					if _, err := readControlExecutionPlanOptional(runDir); err == nil {
+					if _, err := readControlExecutionPlanOptional(context.Background(), runDir); err == nil {
 						t.Fatal("readControlExecutionPlanOptional accepted escaping plan.json")
 					}
 				} else {
-					if _, err := loadResumeRelayContextControl(runDir); err == nil {
+					if _, err := loadResumeRelayContextControl(context.Background(), runDir); err == nil {
 						t.Fatalf("loadResumeRelayContextControl accepted escaping %s", artifact)
 					}
 				}
