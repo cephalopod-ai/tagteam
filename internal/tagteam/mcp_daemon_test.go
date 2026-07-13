@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,7 +13,15 @@ import (
 
 func startMCPSocketDaemon(t *testing.T, service ControlService, runtime *ControlRuntime) string {
 	t.Helper()
-	socket := filepath.Join(t.TempDir(), "mcp.sock")
+	// Unix socket paths are length-limited (~104 bytes on macOS/BSD). t.TempDir()
+	// embeds the (long) test name and overflows that limit on macOS, so use a
+	// short temp dir and short socket name instead.
+	dir, err := os.MkdirTemp("", "tt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "s.sock")
 	listener, err := ListenMCPUnixSocket(socket)
 	if err != nil {
 		t.Fatal(err)
