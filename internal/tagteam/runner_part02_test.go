@@ -440,7 +440,10 @@ func TestRunAdapter_WritesMissingTranscript(t *testing.T) {
 	adapter := fakeAdapter{
 		build: func(role Role, req Request) (*CommandSpec, error) {
 			return &CommandSpec{
-				Argv: []string{"sh", "-lc", "printf '{\"schema_version\":2,\"verdict\":\"pass\",\"summary\":\"ok\",\"findings\":[],\"test_suggestions\":[],\"data_loss_checks\":{\"malformed_input_preservation\":{\"status\":\"not_applicable\",\"evidence\":\"not applicable\"},\"annotation_history_retention\":{\"status\":\"not_applicable\",\"evidence\":\"not applicable\"},\"ambiguous_identity_handling\":{\"status\":\"not_applicable\",\"evidence\":\"not applicable\"},\"read_only_non_mutation\":{\"status\":\"pass\",\"evidence\":\"read-only\"}},\"prior_finding_dispositions\":[]}'"},
+				// Non-login shell: a login shell (-l) would source profile files
+				// that can echo to stdout (e.g. an nvm banner) and corrupt the
+				// adapter output this test parses as JSON.
+				Argv: []string{"sh", "-c", "printf '{\"schema_version\":2,\"verdict\":\"pass\",\"summary\":\"ok\",\"findings\":[],\"test_suggestions\":[],\"data_loss_checks\":{\"malformed_input_preservation\":{\"status\":\"not_applicable\",\"evidence\":\"not applicable\"},\"annotation_history_retention\":{\"status\":\"not_applicable\",\"evidence\":\"not applicable\"},\"ambiguous_identity_handling\":{\"status\":\"not_applicable\",\"evidence\":\"not applicable\"},\"read_only_non_mutation\":{\"status\":\"pass\",\"evidence\":\"read-only\"}},\"prior_finding_dispositions\":[]}'"},
 				Dir:  tmp,
 			}, nil
 		},
