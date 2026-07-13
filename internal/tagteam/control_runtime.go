@@ -210,6 +210,10 @@ func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest)
 	if _, err := ensureCanonicalRunsRoot(locator); err != nil {
 		return ControlRunHandle{}, newControlStartError("runs_root_invalid", fmt.Sprintf("resolve start runs root: %v", err), err)
 	}
+	// Fail closed if the capability surface drifted outside the approved baseline.
+	if err := r.verifyCapabilityBaseline(locator.RepoRoot); err != nil {
+		return ControlRunHandle{}, newControlStartError("capability_quarantined", err.Error(), err)
+	}
 	lock, err := acquireRunLock(locator.RepoRoot, false)
 	if err != nil {
 		return ControlRunHandle{}, newControlStartError("approval_ledger_locked", fmt.Sprintf("control approval ledger is locked: %v", err), err)
@@ -307,6 +311,9 @@ func (r *ControlRuntime) Cancel(ctx context.Context, request ControlCancelReques
 	locator, err := resolveStateLocator(repository.CanonicalRoot, r.service.StateRoot)
 	if err != nil {
 		return ControlRunHandle{}, newControlCancelError("state_root_unavailable", err.Error(), err)
+	}
+	if err := r.verifyCapabilityBaseline(locator.RepoRoot); err != nil {
+		return ControlRunHandle{}, newControlCancelError("capability_quarantined", err.Error(), err)
 	}
 	runDir, ownerPID, terminal, err := controlCancelTarget(locator, repository.CanonicalRoot, request.RunID)
 	if err != nil {

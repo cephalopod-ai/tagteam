@@ -80,6 +80,9 @@ func (r *ControlRuntime) Resume(ctx context.Context, request ControlResumeReques
 	if err != nil {
 		return ControlRunHandle{}, newControlResumeError("state_root_unavailable", err.Error(), err)
 	}
+	if err := r.verifyCapabilityBaseline(locator.RepoRoot); err != nil {
+		return ControlRunHandle{}, newControlResumeError("capability_quarantined", err.Error(), err)
+	}
 	if handle, resumeErr := r.lookupResumeLedger(locator, request, digest); handle.RunID != "" || resumeErr != nil {
 		handle.ProducerVersion = normalizedProducerVersion(r.service.ProducerVersion)
 		return handle, resumeErr

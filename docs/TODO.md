@@ -110,8 +110,13 @@ own recovery action.
   with the MCP endpoint as a thin client transport. Add leases, reconnectable
   event streams, multi-client arbitration, and safe cancellation after the
   originating host exits.
-- [ ] Add capability/version provenance and quarantine when tool schemas,
+- [x] Add capability/version provenance and quarantine when tool schemas,
   side effects, or the Tagteam binary change outside the approved baseline.
+  `provenance.go` fingerprints the producer version, contract version, and MCP
+  tool-schema digest. The first lifecycle mutation records the approved baseline
+  (trust on first use); a later start, resume, or cancel whose surface differs —
+  a new binary or changed/added tool schema — fails closed with the typed
+  `capability_quarantined` error until an operator removes the baseline file.
 - [ ] Support authenticated remote deployment only after local stdio behavior,
   workload identity, repository authorization, credential scope, and audit
   logging are proven.

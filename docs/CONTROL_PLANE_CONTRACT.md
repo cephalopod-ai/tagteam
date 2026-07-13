@@ -158,6 +158,14 @@ server read-only unless the operator explicitly passes `--allow-dev-build`.
   registry: unknown names fail deterministically (`unknown test_preset "…"`)
   without leaking registry contents; known names set the run's test command
   (and optional identity regex) from the preset entry only.
+- Capability/version provenance is enforced before every lifecycle mutation. The
+  runtime fingerprints the producer (binary) version, contract version, and a
+  digest of the advertised MCP tool schemas. The first start/resume/cancel for a
+  worktree records that fingerprint as the approved baseline (trust on first
+  use); a later mutation whose surface differs — a new binary or changed/added
+  tool schema — fails closed with the typed `capability_quarantined` error until
+  an operator re-approves by removing `capability-baseline.json`. A malformed
+  baseline quarantines rather than being silently trusted.
 
 ## Deferred transport and lifecycle work
 
