@@ -245,8 +245,12 @@ func TestMCPStdioServerSurfacesUnknownTestPresetAsToolError(t *testing.T) {
 		t.Fatalf("unknown preset start result = %#v", result)
 	}
 	structured := result["structuredContent"].(map[string]any)
-	if got, _ := structured["error"].(string); !strings.Contains(got, `unknown test_preset "no-such-preset"`) {
-		t.Fatalf("structured error = %#v", structured)
+	// Start now surfaces a typed, machine-recoverable error like resume/cancel.
+	if structured["code"] != "start_configuration_invalid" || structured["recoverable"] != true {
+		t.Fatalf("structured start error = %#v", structured)
+	}
+	if got, _ := structured["reason"].(string); !strings.Contains(got, `unknown test_preset "no-such-preset"`) {
+		t.Fatalf("structured start reason = %#v", structured)
 	}
 }
 

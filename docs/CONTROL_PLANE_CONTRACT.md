@@ -39,6 +39,9 @@ state model rather than introducing a second run state machine.
 - `Start` reserves a durable run ID, consumes a matching short-lived approval
   nonce, launches Tagteam through its normal configuration and runner, and
   persists a terminal artifact if preflight fails before the runner can do so.
+  Every start failure surfaces a typed `ControlStartError` with a stable reason
+  code and `recoverable` flag, mirroring resume and cancel, so an MCP host can
+  recover without parsing prose.
 - `Cancel` consumes a matching short-lived approval nonce and cancels a live run
   only when this MCP runtime owns its cancellation context. A live run owned by
   another runtime returns the typed `run_not_owned` error instead of reporting
@@ -128,6 +131,13 @@ server read-only unless the operator explicitly passes `--allow-dev-build`.
   for collecting explicit user confirmation before it sends an approval record;
   Tagteam verifies the record's scope and single use but cannot attest to its
   human origin.
+- Approval nonces are single-use across every action. Start, resume, and cancel
+  each consult the whole approval ledger, so a nonce already consumed by any
+  start, resume, or cancel is refused (`approval_nonce_replayed`) rather than
+  replayed for a different action. Resume and cancel digests bind the operation,
+  canonical repository identity, and run identity; the persisted run fixes the
+  roles and scope those actions inherit. A changed action always produces a new
+  digest and therefore requires a new approval.
 - A persisted, unfinalized start reservation blocks another start for the same
   worktree until that approval expires. This closes the gap before the runner
   has written `active.json`.

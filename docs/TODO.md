@@ -24,9 +24,12 @@
 
 ## Deferred: MCP control plane and optional Run Steward
 
-**Status:** Producer contract, local MCP transport, approved idempotent start,
-resume, and cancel, and non-mutating resume assessment are implemented. The
-remaining lifecycle work is bounded ownership and transport hardening.
+**Status:** The MCP MVP gates are complete: the producer contract, local MCP
+stdio transport, approved idempotent start/resume/cancel with full cross-action
+approval-replay protection and typed error recovery, non-mutating resume
+assessment, and the acceptance playtest suite are implemented. The remaining
+unchecked items below (Run Steward, Ollama default, daemon, remote auth) are
+deferred post-MVP roadmap work.
 
 The goal is to let any MCP-capable host launch and monitor Tagteam without
 turning model output into shell commands. A deterministic controller remains
@@ -57,9 +60,13 @@ own recovery action.
 - [x] Add bounded scout evidence for symlink topology where it helps explain
   scope, while keeping canonical real-path resolution and enforcement in the
   host controller.
-- [ ] Bind start, resume, and cancel approvals to the normalized action,
+- [x] Bind start, resume, and cancel approvals to the normalized action,
   repository identity, selected roles, scope, run identity, and an expiry or
-  nonce. A changed action requires a new approval.
+  nonce. A changed action requires a new approval. Approval nonces are now
+  single-use across every action: start and resume reject a nonce already
+  consumed by any start, resume, or cancel (matching the cancel path), closing
+  the cross-action replay gap. Regression tests cover every cross-action pair
+  and prove the start digest binds roles, scope, prompt, rounds, and budget.
 - [ ] Add an optional local-first Run Steward interface. Feed it only bounded,
   sanitized `RunObservation` records and require a schema-validated advisory
   result with an enum action such as wait, inspect, notify, prepare-resume,
@@ -74,10 +81,16 @@ own recovery action.
 - [ ] Prevent recursion and duplicate observers: one steward lease per run,
   no Tagteam invocation from the steward, and no inherited arbitrary MCP or
   repository-write tools.
-- [ ] Add contract, process-lifecycle, hostile-output, approval-replay,
+- [x] Add contract, process-lifecycle, hostile-output, approval-replay,
   concurrency, cancellation, restart, malformed-JSON, and weak-model
   playtests. Verify that an MCP host can recover from every returned error
-  without reading source code.
+  without reading source code. Start now returns typed `ControlStartError`
+  reason codes like resume and cancel, so every MCP lifecycle failure surfaces
+  a stable structured `code`/`recoverable` pair over stdio. New playtests cover
+  malformed persisted JSON (ledger and run artifacts), concurrent start
+  requests, hostile run identities at the lifecycle entry points, weak/failed
+  adapter terminal records, and equivalence of the normalized launch and
+  terminal records between the direct CLI and MCP paths.
 
 ### Future vision
 

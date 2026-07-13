@@ -330,6 +330,16 @@ func mcpToolSuccess(value any) (map[string]any, error) {
 }
 
 func mcpToolFailure(err error) map[string]any {
+	var startErr *ControlStartError
+	if errors.As(err, &startErr) {
+		structured := map[string]any{"code": startErr.ReasonCode, "reason": startErr.Reason, "recoverable": startErr.Recoverable}
+		payload, _ := json.Marshal(structured)
+		return map[string]any{
+			"content":           []map[string]string{{"type": "text", "text": string(payload)}},
+			"structuredContent": structured,
+			"isError":           true,
+		}
+	}
 	var resumeErr *ControlResumeError
 	if errors.As(err, &resumeErr) {
 		structured := map[string]any{"code": resumeErr.ReasonCode, "reason": resumeErr.Reason, "recoverable": resumeErr.Recoverable}

@@ -175,50 +175,50 @@ func (r *ControlRuntime) Status(runID string) (ControlStatus, error) {
 
 func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest) (ControlRunHandle, error) {
 	if request.SchemaVersion != ControlContractVersion {
-		return ControlRunHandle{}, fmt.Errorf("unsupported control schema_version %d (want %d)", request.SchemaVersion, ControlContractVersion)
+		return ControlRunHandle{}, newControlStartError("invalid_request", fmt.Sprintf("unsupported control schema_version %d (want %d)", request.SchemaVersion, ControlContractVersion), nil)
 	}
 	normalized, err := NormalizeControlLaunch(request.Launch)
 	if err != nil {
-		return ControlRunHandle{}, err
+		return ControlRunHandle{}, newControlStartError("invalid_launch", err.Error(), err)
 	}
 	if err := r.service.requireRepository(normalized.Repository); err != nil {
-		return ControlRunHandle{}, err
+		return ControlRunHandle{}, newControlStartError("repository_mismatch", err.Error(), err)
 	}
 	request.Launch = normalized
 	digest, err := ControlStartActionDigest(request)
 	if err != nil {
-		return ControlRunHandle{}, err
+		return ControlRunHandle{}, newControlStartError("invalid_request", err.Error(), err)
 	}
 	if err := validateControlApproval(request.Approval, digest); err != nil {
 		return ControlRunHandle{}, err
 	}
 	opts, err := r.optionsForLaunch(normalized)
 	if err != nil {
-		return ControlRunHandle{}, err
+		return ControlRunHandle{}, newControlStartError("start_configuration_invalid", err.Error(), err)
 	}
 	locator, err := resolveStateLocator(opts.Workdir, opts.StateRoot)
 	if err != nil {
-		return ControlRunHandle{}, fmt.Errorf("resolve start state root: %w", err)
+		return ControlRunHandle{}, newControlStartError("state_root_unavailable", fmt.Sprintf("resolve start state root: %v", err), err)
 	}
 	// Reject escaping state-tree symlinks before creating or opening runs.
 	if _, err := ensureCanonicalRunsRoot(locator); err != nil {
-		return ControlRunHandle{}, fmt.Errorf("resolve start runs root: %w", err)
+		return ControlRunHandle{}, newControlStartError("runs_root_invalid", fmt.Sprintf("resolve start runs root: %v", err), err)
 	}
 	if err := locator.Prepare(); err != nil {
-		return ControlRunHandle{}, fmt.Errorf("prepare start state root: %w", err)
+		return ControlRunHandle{}, newControlStartError("state_root_unavailable", fmt.Sprintf("prepare start state root: %v", err), err)
 	}
 	if _, err := ensureCanonicalRunsRoot(locator); err != nil {
-		return ControlRunHandle{}, fmt.Errorf("resolve start runs root: %w", err)
+		return ControlRunHandle{}, newControlStartError("runs_root_invalid", fmt.Sprintf("resolve start runs root: %v", err), err)
 	}
 	lock, err := acquireRunLock(locator.RepoRoot, false)
 	if err != nil {
-		return ControlRunHandle{}, fmt.Errorf("control approval ledger is locked: %w", err)
+		return ControlRunHandle{}, newControlStartError("approval_ledger_locked", fmt.Sprintf("control approval ledger is locked: %v", err), err)
 	}
 	defer lock.Release()
 	ledgerPath := filepath.Join(locator.RepoRoot, controlApprovalLedgerName)
 	ledger, err := readControlApprovalLedger(ledgerPath)
 	if err != nil {
-		return ControlRunHandle{}, err
+		return ControlRunHandle{}, newControlStartError("approval_ledger_invalid", err.Error(), err)
 	}
 	ledger.Starts = pruneControlStartRecords(ledger.Starts, time.Now().UTC())
 	for _, record := range ledger.Starts {
@@ -226,32 +226,33 @@ func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest)
 			continue
 		}
 		if record.ActionDigest != digest {
-			return ControlRunHandle{}, fmt.Errorf("idempotency_key is already bound to a different start action")
+			return ControlRunHandle{}, newControlStartError("idempotency_conflict", "idempotency_key is already bound to a different start action", nil)
 		}
 		return ControlRunHandle{SchemaVersion: ControlContractVersion, RunID: record.RunID, ProducerVersion: normalizedProducerVersion(r.service.ProducerVersion)}, nil
 	}
 	if active, activeErr := readActiveAt(filepath.Join(locator.RepoRoot, "active.json")); activeErr == nil && active.Status == string(RunStatusRunning) {
-		return ControlRunHandle{}, fmt.Errorf("run %q is already active for this worktree", active.RunID)
+		return ControlRunHandle{}, newControlStartError("run_already_active", fmt.Sprintf("run %q is already active for this worktree", active.RunID), nil)
 	} else if activeErr != nil && !os.IsNotExist(activeErr) {
-		return ControlRunHandle{}, fmt.Errorf("read active run: %w", activeErr)
+		return ControlRunHandle{}, newControlStartError("active_state_invalid", fmt.Sprintf("read active run: %v", activeErr), activeErr)
 	}
-	for _, record := range ledger.Starts {
-		if record.Nonce == request.Approval.Nonce {
-			return ControlRunHandle{}, fmt.Errorf("approval nonce has already been consumed")
-		}
+	// Approval nonces are single-use across every action; reject a nonce already
+	// consumed by any start, resume, or cancel. The idempotent start-replay path
+	// above returns before this check, so any match here is a genuine replay.
+	if controlLedgerHasNonce(ledger, request.Approval.Nonce) {
+		return ControlRunHandle{}, newControlStartError("approval_nonce_replayed", "approval nonce has already been consumed", nil)
 	}
 	for _, record := range ledger.Starts {
 		active, activeErr := controlStartRecordActive(locator, record, time.Now().UTC())
 		if activeErr != nil {
-			return ControlRunHandle{}, activeErr
+			return ControlRunHandle{}, newControlStartError("start_reservation_invalid", activeErr.Error(), activeErr)
 		}
 		if active {
-			return ControlRunHandle{}, fmt.Errorf("run %q is already pending or active for this worktree", record.RunID)
+			return ControlRunHandle{}, newControlStartError("run_already_active", fmt.Sprintf("run %q is already pending or active for this worktree", record.RunID), nil)
 		}
 	}
 	runID, err := nextControlRunID(locator)
 	if err != nil {
-		return ControlRunHandle{}, err
+		return ControlRunHandle{}, newControlStartError("run_id_unavailable", err.Error(), err)
 	}
 	ledger.Starts = append(ledger.Starts, controlStartRecord{
 		IdempotencyKey: request.IdempotencyKey,
@@ -262,10 +263,10 @@ func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest)
 		ExpiresAt:      request.Approval.ExpiresAt,
 	})
 	if len(ledger.Starts) > controlMaxApprovalRecords {
-		return ControlRunHandle{}, fmt.Errorf("control approval ledger reached its maximum retained records")
+		return ControlRunHandle{}, newControlStartError("approval_ledger_full", "control approval ledger reached its maximum retained records", nil)
 	}
 	if err := writeJSONDurable(ledgerPath, ledger, false, true); err != nil {
-		return ControlRunHandle{}, fmt.Errorf("persist consumed control approval: %w", err)
+		return ControlRunHandle{}, newControlStartError("approval_ledger_write_failed", fmt.Sprintf("persist consumed control approval: %v", err), err)
 	}
 
 	opts.RunID = runID
@@ -674,20 +675,6 @@ func controlRoleTargetString(target ControlRoleTarget) string {
 		return target.Adapter
 	}
 	return target.Adapter + ":" + target.Model
-}
-
-func validateControlApproval(approval ControlApproval, expectedDigest string) error {
-	now := time.Now().UTC()
-	if approval.ActionDigest != expectedDigest {
-		return fmt.Errorf("approval does not match the normalized start action")
-	}
-	if approval.Nonce == "" || strings.TrimSpace(approval.Nonce) != approval.Nonce || len(approval.Nonce) > controlMaxRoleBytes || containsControl(approval.Nonce) {
-		return fmt.Errorf("approval nonce must be a normalized identifier no longer than %d bytes", controlMaxRoleBytes)
-	}
-	if approval.ApprovedAt.IsZero() || approval.ExpiresAt.IsZero() || approval.ApprovedAt.After(now) || !approval.ExpiresAt.After(now) || approval.ExpiresAt.Sub(approval.ApprovedAt) > ControlApprovalMaxLifetime {
-		return fmt.Errorf("approval must be currently valid and expire within %s", ControlApprovalMaxLifetime)
-	}
-	return nil
 }
 
 func readControlApprovalLedger(path string) (controlApprovalLedger, error) {

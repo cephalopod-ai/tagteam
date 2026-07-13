@@ -146,6 +146,19 @@ func (r *ControlRuntime) lookupResumeLedger(locator StateLocator, request Contro
 }
 
 func controlResumeLedgerResult(ledger controlApprovalLedger, request ControlResumeRequest, digest string) (ControlRunHandle, error) {
+	// Approval nonces are single-use across every action. A nonce previously
+	// consumed by a start or cancel can never be reused for a resume, so scan
+	// those sections before the idempotent resume-replay handling below.
+	for _, record := range ledger.Starts {
+		if record.Nonce == request.Approval.Nonce {
+			return ControlRunHandle{}, newControlResumeError("approval_nonce_replayed", "approval nonce has already been consumed for another action", nil)
+		}
+	}
+	for _, record := range ledger.Cancels {
+		if record.Nonce == request.Approval.Nonce {
+			return ControlRunHandle{}, newControlResumeError("approval_nonce_replayed", "approval nonce has already been consumed for another action", nil)
+		}
+	}
 	for _, record := range ledger.Resumes {
 		if record.Nonce == request.Approval.Nonce {
 			if record.RunID == request.RunID && record.ActionDigest == digest {
