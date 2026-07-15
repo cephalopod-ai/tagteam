@@ -117,6 +117,79 @@ func TestControlMutatingDigestsBindOperationAndIdentity(t *testing.T) {
 	}
 }
 
+func TestControlStartActionDigestBindsEveryMutableLaunchField(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	request := ControlStartRequest{
+		SchemaVersion:  ControlContractVersion,
+		Launch:         controlLaunchFixture(t, repo),
+		IdempotencyKey: "session-1-generation-1",
+	}
+	baseline, err := ControlStartActionDigest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		edit func(*ControlStartRequest)
+	}{
+		{name: "prompt", edit: func(request *ControlStartRequest) { request.Launch.Prompt = "repair a different parser" }},
+		{name: "worker model", edit: func(request *ControlStartRequest) { request.Launch.Team.Worker.Model = "gemini-3.5-pro" }},
+		{name: "supervisor model", edit: func(request *ControlStartRequest) { request.Launch.Team.Supervisor.Model = "gpt-5.6-terra" }},
+		{name: "scope", edit: func(request *ControlStartRequest) { request.Launch.AllowedPaths = []string{"README.md"} }},
+		{name: "rounds", edit: func(request *ControlStartRequest) { request.Launch.Rounds = 1 }},
+		{name: "invocation timeout", edit: func(request *ControlStartRequest) { request.Launch.TimeBudget.InvocationTimeoutSeconds-- }},
+		{name: "test preset", edit: func(request *ControlStartRequest) { request.Launch.TestPreset = "" }},
+		{name: "idempotency key", edit: func(request *ControlStartRequest) { request.IdempotencyKey = "session-1-generation-2" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := request
+			candidate.Launch.AllowedPaths = append([]string(nil), request.Launch.AllowedPaths...)
+			candidate.Launch.Team.Worker = &ControlRoleTarget{Adapter: request.Launch.Team.Worker.Adapter, Model: request.Launch.Team.Worker.Model}
+			candidate.Launch.Team.Supervisor = &ControlRoleTarget{Adapter: request.Launch.Team.Supervisor.Adapter, Model: request.Launch.Team.Supervisor.Model}
+			test.edit(&candidate)
+			digest, err := ControlStartActionDigest(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if digest == baseline {
+				t.Fatalf("start digest did not bind %s", test.name)
+			}
+		})
+	}
+}
+
+func TestControlApprovalValidatorsRejectMismatchedAndExpiredActions(t *testing.T) {
+	now := time.Now().UTC()
+	valid := ControlApproval{ActionDigest: "expected", ApprovedAt: now.Add(-time.Second), ExpiresAt: now.Add(time.Minute), Nonce: "approved-once"}
+	tests := []struct {
+		name string
+		edit func(*ControlApproval)
+	}{
+		{name: "action mismatch", edit: func(approval *ControlApproval) { approval.ActionDigest = "other" }},
+		{name: "missing nonce", edit: func(approval *ControlApproval) { approval.Nonce = "" }},
+		{name: "expired", edit: func(approval *ControlApproval) { approval.ExpiresAt = now.Add(-time.Second) }},
+		{name: "lifetime exceeded", edit: func(approval *ControlApproval) {
+			approval.ExpiresAt = approval.ApprovedAt.Add(ControlApprovalMaxLifetime + time.Second)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			approval := valid
+			test.edit(&approval)
+			if err := validateControlApproval(approval, "expected"); err == nil {
+				t.Fatal("start approval was accepted")
+			}
+			if err := validateControlResumeApproval(approval, "expected"); err == nil {
+				t.Fatal("resume approval was accepted")
+			}
+			if err := validateControlCancelApproval(approval, "expected"); err == nil {
+				t.Fatal("cancel approval was accepted")
+			}
+		})
+	}
+}
+
 func TestPrepareControlStartReturnsTheBoundStartDigest(t *testing.T) {
 	repo, _ := createResumeFixtureRepo(t)
 	request := ControlStartRequest{SchemaVersion: ControlContractVersion, Launch: controlLaunchFixture(t, repo), IdempotencyKey: "session-1-generation-1"}

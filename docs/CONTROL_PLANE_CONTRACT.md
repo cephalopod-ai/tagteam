@@ -59,6 +59,8 @@ bounded text content. `tagteam_prepare_start` and `tagteam_prepare_resume` are
 read-only; `tagteam_start`, `tagteam_resume`, and `tagteam_cancel` are marked
 destructive and idempotent for MCP clients. An unverified binary keeps the
 server read-only unless the operator explicitly passes `--allow-dev-build`.
+Every tool failure has structured `code`, bounded `reason`, and `recoverable`
+fields, so a host can report or retry safely without inspecting Tagteam source.
 
 ## Authority and validation
 
@@ -131,6 +133,10 @@ server read-only unless the operator explicitly passes `--allow-dev-build`.
   for collecting explicit user confirmation before it sends an approval record;
   Tagteam verifies the record's scope and single use but cannot attest to its
   human origin.
+- Resume and cancel approvals bind their distinct operation, the canonical
+  repository identity, and the run ID. Their roles and scope are not caller
+  inputs: both operations revalidate the persisted run under that immutable
+  identity before mutating it.
 - A persisted, unfinalized start reservation blocks another start for the same
   worktree until that approval expires. This closes the gap before the runner
   has written `active.json`.
@@ -149,7 +155,9 @@ if a stale owner remains after an abnormal process exit; this is surfaced as a
 recoverable lifecycle error rather than launching without replay protection.
 The cancellation watcher is scoped to active jobs and stops before the owning
 runtime's terminal run returns, so a completed run does not leave a background
-watcher behind.
+watcher behind. Normal MCP stdio shutdown cancels all jobs owned by that
+runtime; forced process termination remains recoverable through the persisted
+run state and is a limitation of the local in-process owner model.
 Unknown contract versions and malformed persisted artifacts must fail with
 typed, recoverable errors rather than inferred success.
 

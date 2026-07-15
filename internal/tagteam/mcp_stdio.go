@@ -35,6 +35,9 @@ func (s *MCPStdioServer) WithRuntime(runtime *ControlRuntime) *MCPStdioServer {
 // Serve runs a newline-delimited MCP stdio session. It exposes only bounded,
 // implemented control operations; start requires the explicit runtime gate.
 func (s *MCPStdioServer) Serve(ctx context.Context) error {
+	if s.runtime != nil {
+		defer s.runtime.Close()
+	}
 	scanner := bufio.NewScanner(s.in)
 	scanner.Buffer(make([]byte, 0, 64*1024), mcpMaxMessageBytes)
 	initialized := false
@@ -350,10 +353,15 @@ func mcpToolFailure(err error) map[string]any {
 			"isError":           true,
 		}
 	}
-	payload, _ := json.Marshal(map[string]string{"error": err.Error()})
+	structured := map[string]any{
+		"code":        "operation_failed",
+		"reason":      boundControlText(err.Error()),
+		"recoverable": true,
+	}
+	payload, _ := json.Marshal(structured)
 	return map[string]any{
 		"content":           []map[string]string{{"type": "text", "text": string(payload)}},
-		"structuredContent": map[string]string{"error": err.Error()},
+		"structuredContent": structured,
 		"isError":           true,
 	}
 }

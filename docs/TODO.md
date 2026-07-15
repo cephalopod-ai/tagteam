@@ -60,9 +60,11 @@ own recovery action.
 - [x] Add bounded scout evidence for symlink topology where it helps explain
   scope, while keeping canonical real-path resolution and enforcement in the
   host controller.
-- [ ] Bind start, resume, and cancel approvals to the normalized action,
-  repository identity, selected roles, scope, run identity, and an expiry or
-  nonce. A changed action requires a new approval.
+- [x] Bind start approvals to the normalized launch, including repository
+  identity, selected roles, scope, budgets, and test preset; bind resume and
+  cancel approvals to the canonical repository and immutable run identity.
+  All lifecycle approvals require an expiry and single-use nonce. A changed
+  action requires a new approval.
 - [ ] Add an optional local-first Run Steward interface. Feed it only bounded,
   sanitized `RunObservation` records and require a schema-validated advisory
   result with an enum action such as wait, inspect, notify, prepare-resume,
@@ -77,10 +79,11 @@ own recovery action.
 - [ ] Prevent recursion and duplicate observers: one steward lease per run,
   no Tagteam invocation from the steward, and no inherited arbitrary MCP or
   repository-write tools.
-- [ ] Add contract, process-lifecycle, hostile-output, approval-replay,
+- [x] Add contract, process-lifecycle, hostile-output, approval-replay,
   concurrency, cancellation, restart, malformed-JSON, and weak-model
-  playtests. Verify that an MCP host can recover from every returned error
-  without reading source code.
+  playtests. MCP failures now carry `code`, bounded `reason`, and
+  `recoverable`; direct-run and MCP terminal records are compared for the same
+  normalized start input.
 
 ### Future vision
 
@@ -98,7 +101,7 @@ own recovery action.
 
 ### Acceptance boundary
 
-- The MCP path and direct CLI path produce equivalent normalized launch and
+- [x] The MCP path and direct CLI path produce equivalent normalized launch and
   terminal records for the same inputs.
 - A low-capability steward can explain progress and request help, but cannot
   gain execution authority through prompt text or tool output.

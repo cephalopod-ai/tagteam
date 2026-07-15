@@ -136,6 +136,31 @@ func (r *ControlRuntime) unregisterJob(runID string) {
 	<-watcherDone
 }
 
+// Close cancels every job owned by this local runtime. MCP stdio calls it when
+// the host disconnects so its worker processes are not left running after a
+// normal transport shutdown.
+func (r *ControlRuntime) Close() {
+	r.mu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(r.jobs))
+	for _, cancel := range r.jobs {
+		cancels = append(cancels, cancel)
+	}
+	r.jobs = map[string]context.CancelFunc{}
+	watcherCancel := r.watcherCancel
+	watcherDone := r.watcherDone
+	r.watcherCancel = nil
+	r.watcherDone = nil
+	r.mu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+	if watcherCancel != nil {
+		watcherCancel()
+		<-watcherDone
+	}
+}
+
 func (r *ControlRuntime) Capabilities() ControlCapabilitySet {
 	capabilities := r.service.Capabilities()
 	capabilities.Capabilities = append(capabilities.Capabilities, "start", "resume", "cancel")

@@ -56,6 +56,41 @@ func TestControlRuntimeStartIsIdempotentAndPersistsPreflightFailure(t *testing.T
 	t.Fatalf("start failure was not persisted for run %q", first.RunID)
 }
 
+func TestControlRuntimeStartMatchesDirectRunTerminalRecord(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	stateRoot := t.TempDir()
+	cfg := DefaultConfig()
+	service := ControlService{RepositoryRoot: repo, StateRoot: stateRoot, ProducerVersion: "test"}
+	runtime := NewControlRuntime(service, cfg, nil)
+	request := controlStartFixture(t, repo)
+	normalized, err := NormalizeControlLaunch(request.Launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directOptions, err := runtime.optionsForLaunch(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directOptions.RunID = "direct-control-equivalence"
+	direct, directErr := NewApp(cfg).Run(context.Background(), directOptions)
+	if directErr == nil || direct.RunID == "" {
+		t.Fatalf("direct run = %#v, err=%v", direct, directErr)
+	}
+
+	handle, err := runtime.Start(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForControlRunFailure(t, runtime, request.IdempotencyKey)
+	mcp, err := runtime.Status(handle.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if direct.Mode != mcp.Run.Mode || string(direct.Status) != mcp.Run.Status || direct.Verdict != mcp.Run.Verdict || direct.ExitCode != mcp.Run.ExitCode || direct.BlockingReason != mcp.Run.BlockingReason {
+		t.Fatalf("direct terminal=%#v; MCP terminal=%#v", direct, mcp.Run)
+	}
+}
+
 func TestControlRuntimeRejectsApprovalNonceReplayAcrossIdempotencyKeys(t *testing.T) {
 	repo, _ := createResumeFixtureRepo(t)
 	runtime := NewControlRuntime(ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}, DefaultConfig(), nil)

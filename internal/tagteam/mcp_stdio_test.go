@@ -164,6 +164,27 @@ func TestMCPStdioServerAdvertisesStartOnlyWithLifecycleRuntime(t *testing.T) {
 	t.Fatalf("runtime tool list did not include start: %#v", tools)
 }
 
+func TestMCPStdioServerStopsOwnedJobsWhenInputCloses(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	service := ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}
+	runtime := NewControlRuntime(service, DefaultConfig(), nil)
+	jobContext, cancelJob := context.WithCancel(context.Background())
+	runtime.registerJob("mcp-stdio-close", cancelJob)
+	runMCPStdioWithRuntime(t, service, runtime,
+		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}},
+	)
+	select {
+	case <-jobContext.Done():
+	case <-time.After(time.Second):
+		t.Fatal("MCP stdio shutdown did not cancel its owned job")
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if len(runtime.jobs) != 0 || runtime.watcherCancel != nil || runtime.watcherDone != nil {
+		t.Fatalf("MCP stdio shutdown retained runtime state: jobs=%d watcher=%v/%v", len(runtime.jobs), runtime.watcherCancel != nil, runtime.watcherDone != nil)
+	}
+}
+
 func TestMCPStdioServerStartsApprovedRunWithDurableHandle(t *testing.T) {
 	repo, _ := createResumeFixtureRepo(t)
 	service := ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}
@@ -185,12 +206,12 @@ func TestMCPStdioServerStartsApprovedRunWithDurableHandle(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		status, err := runtime.Status(runID)
-		if err == nil && status.Run.Status == string(RunStatusFailed) {
+		if err == nil && (status.Run.Status == string(RunStatusFailed) || status.Run.Status == string(RunStatusCancelled)) {
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatalf("MCP-started run %q did not persist its terminal preflight failure", runID)
+	t.Fatalf("MCP-started run %q did not persist a terminal result", runID)
 }
 
 func TestMCPStdioServerResumesApprovedRunWithDurableHandle(t *testing.T) {
@@ -245,8 +266,48 @@ func TestMCPStdioServerSurfacesUnknownTestPresetAsToolError(t *testing.T) {
 		t.Fatalf("unknown preset start result = %#v", result)
 	}
 	structured := result["structuredContent"].(map[string]any)
-	if got, _ := structured["error"].(string); !strings.Contains(got, `unknown test_preset "no-such-preset"`) {
+	if structured["code"] != "operation_failed" || structured["recoverable"] != true {
+		t.Fatalf("unknown preset error contract = %#v", structured)
+	}
+	if got, _ := structured["reason"].(string); !strings.Contains(got, `unknown test_preset "no-such-preset"`) {
 		t.Fatalf("structured error = %#v", structured)
+	}
+}
+
+func TestMCPStdioServerSurfacesTypedLifecycleErrors(t *testing.T) {
+	repo, baseline := createResumeFixtureRepo(t)
+	stateRoot := t.TempDir()
+	runID := "mcp-typed-errors"
+	runDir, err := createRunDir(repo, stateRoot, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeResumeFixture(t, runDir, runID, repo, baseline, RunStatusRunning)
+	repository, err := resolveControlRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume := ControlResumeRequest{SchemaVersion: ControlContractVersion, Repository: repository, RunID: runID}
+	cancel := ControlCancelRequest{SchemaVersion: ControlContractVersion, Repository: repository, RunID: runID}
+	service := ControlService{RepositoryRoot: repo, StateRoot: stateRoot, ProducerVersion: "test"}
+	runtime := NewControlRuntime(service, DefaultConfig(), nil)
+	responses := runMCPStdioWithRuntime(t, service, runtime,
+		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}},
+		map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tagteam_resume", "arguments": resume}},
+		map[string]any{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": map[string]any{"name": "tagteam_cancel", "arguments": cancel}},
+	)
+	for index, wantCode := range []string{"approval_missing", "approval_missing"} {
+		result := responses[index+1]["result"].(map[string]any)
+		if result["isError"] != true {
+			t.Fatalf("lifecycle result = %#v", result)
+		}
+		structured := result["structuredContent"].(map[string]any)
+		if structured["code"] != wantCode || structured["recoverable"] != true {
+			t.Fatalf("lifecycle error contract = %#v", structured)
+		}
+		if reason, _ := structured["reason"].(string); reason == "" {
+			t.Fatalf("lifecycle error lacked bounded reason: %#v", structured)
+		}
 	}
 }
 
@@ -282,12 +343,12 @@ func TestMCPStdioServerStartsWithTrustedTestPreset(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		status, statusErr := runtime.Status(runID)
-		if statusErr == nil && status.Run.Status == string(RunStatusFailed) {
+		if statusErr == nil && (status.Run.Status == string(RunStatusFailed) || status.Run.Status == string(RunStatusCancelled)) {
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatalf("MCP-started preset run %q did not persist its terminal preflight failure", runID)
+	t.Fatalf("MCP-started preset run %q did not persist a terminal result", runID)
 }
 
 func TestMCPToolSurfaceExcludesCommandCwdAndArtifactReaders(t *testing.T) {
