@@ -3,6 +3,7 @@ package tagteam
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,7 +52,7 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 	opts.InvocationBudget = budget
 	activateRun(opts.Workdir, state.RunID, runDir, opts.Mode)
 	runCompleted := false
-	defer func() { deactivateRun(opts.Workdir, state.RunID, runCompleted) }()
+	defer func() { deactivateRun(opts.Workdir, state.RunID, runCompleted && err == nil) }()
 	defer func() {
 		if err == nil || !final.FinishedAt.IsZero() {
 			return
@@ -71,8 +72,11 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 		} else {
 			runDir = current
 		}
-		_ = writeRunState(runDir, RunState{RunID: state.RunID, Mode: opts.Mode, Status: string(final.Status), Phase: final.Phase, CurrentRound: max(1, state.CurrentRound), LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode, RecoveryStatus: "resume_failed"})
-		_ = a.persistFinal(opts.Workdir, final)
+		terminalState := runStateForFinal(final, opts.Mode, final.Phase, "resume_failed")
+		terminalState.CurrentRound = max(1, state.CurrentRound)
+		if persistErr := a.persistTerminalRun(opts.Workdir, &final, terminalState); persistErr != nil {
+			err = errors.Join(err, persistErr)
+		}
 	}()
 
 	rt, err := a.prepareResumeRuntime(ctx, opts, runDir, &final, gate)
@@ -101,7 +105,9 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 	if runDir, err = rebindControlResumeRunDir(gate, runDir, &final, "state.json"); err != nil {
 		return final, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
-	_ = writeRunState(runDir, RunState{RunID: state.RunID, Mode: opts.Mode, Status: "running", Phase: string(phase), CurrentRound: round, LatestDiffPath: state.LatestDiffPath, LatestReviewPath: state.LatestReviewPath, RecoveryStatus: "resuming"})
+	if stateErr := writeRunState(runDir, RunState{RunID: state.RunID, Mode: opts.Mode, Status: "running", Phase: string(phase), CurrentRound: round, LatestDiffPath: state.LatestDiffPath, LatestReviewPath: state.LatestReviewPath, RecoveryStatus: "resuming"}); stateErr != nil {
+		return final, mandatoryPersistenceError("resume state", stateErr)
+	}
 	if phase == PhasePlanning {
 		if err := a.resumePlanning(ctx, opts, runDir, &rt, &final); err != nil {
 			return final, err

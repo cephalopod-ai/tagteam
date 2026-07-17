@@ -85,10 +85,27 @@ func phaseOrder(phase RunPhase) int {
 }
 
 func persistRunState(runDir string, state RunState) error {
+	return persistRunStateWithIO(runDir, state, writeJSONWithNewline, appendStateEvent)
+}
+
+// persistRunStateWithIO commits the rebuildable event journal before replacing
+// the canonical state snapshot. A journal entry may therefore be ahead after a
+// snapshot-write failure, but state.json never claims a transition whose event
+// could not be durably recorded. Status readers and resume use state.json as the
+// source of truth; events.jsonl is diagnostic history that can be rebuilt.
+func persistRunStateWithIO(
+	runDir string,
+	state RunState,
+	writeState func(string, any) error,
+	appendEvent func(string, StateEvent) error,
+) error {
 	if runDir == "" {
 		return nil
 	}
-	previous, _ := readRunState(runDir)
+	previous, err := readRunState(runDir)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read canonical run state: %w", err)
+	}
 	state.SchemaVersion = runStateSchemaVersion
 	state.Phase = string(normalizeRunPhase(state.Phase))
 	state.CompletedPhase = completedPhaseForTransition(previous, state)
@@ -118,13 +135,10 @@ func persistRunState(runDir string, state RunState) error {
 	if state.DiffHash == "" {
 		state.DiffHash = diffHashForState(state.LatestDiffPath)
 	}
-	if err := writeJSONWithNewline(filepath.Join(runDir, "state.json"), state); err != nil {
-		return err
-	}
 	if previous.Phase == state.Phase && previous.Status == state.Status && previous.DiffHash == state.DiffHash && previous.CurrentRound == state.CurrentRound {
-		return nil
+		return writeState(filepath.Join(runDir, "state.json"), state)
 	}
-	return appendStateEvent(filepath.Join(runDir, "events.jsonl"), StateEvent{
+	if err := appendEvent(filepath.Join(runDir, "events.jsonl"), StateEvent{
 		SchemaVersion: runStateSchemaVersion,
 		RunID:         state.RunID,
 		FromPhase:     normalizeRunPhase(previous.Phase),
@@ -134,7 +148,13 @@ func persistRunState(runDir string, state RunState) error {
 		InvocationID:  state.InvocationID,
 		DiffHash:      state.DiffHash,
 		At:            state.UpdatedAt,
-	})
+	}); err != nil {
+		return fmt.Errorf("append state transition journal: %w", err)
+	}
+	if err := writeState(filepath.Join(runDir, "state.json"), state); err != nil {
+		return fmt.Errorf("commit canonical run state: %w", err)
+	}
+	return nil
 }
 
 func appendStateEvent(path string, event StateEvent) error {
@@ -171,16 +191,19 @@ func diffHashForState(path string) string {
 	return hash
 }
 
-func recordInvocationState(req *Request, record DeliveryRecord) {
+func recordInvocationState(req *Request, record DeliveryRecord) error {
 	if err := rebindRequestControlResume(req, "state.json"); err != nil {
-		return
+		return err
 	}
 	if req.RunDir == "" {
-		return
+		return nil
 	}
 	state, err := readRunState(req.RunDir)
 	if err != nil {
-		return
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read invocation run state: %w", err)
 	}
 	state.Status = "running"
 	state.Phase = string(invocationPhase(record.Role, req.Phase))
@@ -195,9 +218,12 @@ func recordInvocationState(req *Request, record DeliveryRecord) {
 		}
 	}
 	if err := guardControlResumeWritePath(req.controlResumeGate, filepath.Join(req.RunDir, "state.json")); err != nil {
-		return
+		return err
 	}
-	_ = persistRunState(req.RunDir, state)
+	if err := persistRunState(req.RunDir, state); err != nil {
+		return fmt.Errorf("persist invocation run state: %w", err)
+	}
+	return nil
 }
 
 func contextOrBackground(ctx context.Context) context.Context {

@@ -79,7 +79,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		if err != nil {
 			return Result{}, err
 		}
-		recordInvocationState(&req, record)
+		if err := recordInvocationState(&req, record); err != nil {
+			return Result{}, &ExitError{Code: ExitAdapterFailure, Err: err}
+		}
 		if !dryRun && req.Workdir != "" {
 			refreshed, snapshotErr := captureIntegritySnapshot(req)
 			if snapshotErr != nil {
@@ -267,7 +269,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	if err != nil {
 		return Result{}, err
 	}
-	recordInvocationState(&req, record)
+	if err := recordInvocationState(&req, record); err != nil {
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: err}
+	}
 	if !dryRun && req.Workdir != "" {
 		refreshed, snapshotErr := captureIntegritySnapshot(req)
 		if snapshotErr != nil {
@@ -665,7 +669,9 @@ func (a *App) persistFinal(workdir string, final FinalRun) error {
 	return writeJSON(statePathForWorkdir(workdir, "latest.json"), latest)
 }
 
-func preflight(opts RunOptions, runID string) (string, func(), error) {
+type preflightCleanup func(runDir string) error
+
+func preflight(opts RunOptions, runID string) (string, preflightCleanup, error) {
 	baseline := opts.Baseline
 	if baseline == "" {
 		var err error
@@ -706,12 +712,12 @@ func preflight(opts RunOptions, runID string) (string, func(), error) {
 		return baseline, nil, nil
 	}
 	if opts.Autostash || opts.GitSafety == "autostash" {
-		stashRef, err := gitAutostash(opts.Workdir)
+		stashRef, err := gitAutostash(opts.Workdir, runID)
 		if err != nil {
 			return "", nil, err
 		}
-		return baseline, func() {
-			_, _ = runCommand(context.Background(), opts.Workdir, "git", "stash", "pop", stashRef)
+		return baseline, func(runDir string) error {
+			return restoreAutostash(opts.Workdir, runDir, stashRef)
 		}, nil
 	}
 	return "", nil, &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("worktree is dirty; use --allow-dirty or --autostash")}

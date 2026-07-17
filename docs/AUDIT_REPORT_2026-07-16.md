@@ -13,9 +13,9 @@ The findings below preserve the evidence and repository posture observed at the
 audited commit. A local repair campaign began on 2026-07-16; its live evidence
 and checkpoints are recorded in
 [Defect Repair Campaign — 2026-07-16](REPAIR_CAMPAIGN_2026-07-16.md).
-AUD-001, AUD-003, AUD-009, and AUD-012 are implemented and locally validated on
-the campaign branch. The remaining findings retain their original status until
-their campaign stages pass.
+AUD-001, AUD-003 through AUD-005, AUD-009, and AUD-012 are implemented and
+locally validated on the campaign branch. The remaining findings retain their
+original status until their campaign stages pass.
 
 ## Executive summary
 

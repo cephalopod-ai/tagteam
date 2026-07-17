@@ -211,6 +211,17 @@ func TestControlRuntimeResumePersistsDiagnosticAfterConsumedApprovalPreflightFai
 	}
 }
 
+func TestControlRuntimeResumeFailsAfterClose(t *testing.T) {
+	runtime := NewControlRuntime(ControlService{}, DefaultConfig(), nil)
+	runtime.Close()
+
+	_, err := runtime.Resume(context.Background(), ControlResumeRequest{})
+	resumeErr, ok := err.(*ControlResumeError)
+	if !ok || resumeErr.ReasonCode != "runtime_closed" {
+		t.Fatalf("Resume after Close error = %#v, want runtime_closed", err)
+	}
+}
+
 func validResumeApproval(t *testing.T, request ControlResumeRequest, nonce string) ControlApproval {
 	t.Helper()
 	digest, err := ControlResumeActionDigest(request)

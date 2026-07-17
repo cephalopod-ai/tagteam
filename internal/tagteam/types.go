@@ -61,6 +61,8 @@ const (
 	ReasonCancelled             ReasonCode = "cancelled"
 	ReasonStalled               ReasonCode = "stalled"
 	ReasonQuarantined           ReasonCode = "quarantined"
+	ReasonPersistenceFailed     ReasonCode = "persistence_failed"
+	ReasonAutostashRestore      ReasonCode = "autostash_restore_failed"
 )
 
 type LossPolicy string

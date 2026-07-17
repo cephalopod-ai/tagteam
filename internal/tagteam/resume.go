@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -221,7 +222,9 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 		}
 	}
 	record := ResumeRecord{SchemaVersion: ArtifactSchemaVersion, SourceRunID: runID, VerifiedPhase: phase, Baseline: meta.Baseline, DiffHash: currentDiffHash, Status: "verified", CreatedAt: time.Now().UTC()}
-	_ = writeJSONWithNewline(filepath.Join(runDir, "resume.json"), record)
+	if err := writeJSONWithNewline(filepath.Join(runDir, "resume.json"), record); err != nil {
+		return FinalRun{}, mandatoryPersistenceError("verified resume record", err)
+	}
 	var prior *Review
 	if state.LatestReviewPath != "" {
 		if runDir, err = rebindControlResumeRunDir(gate, runDir, nil); err != nil {
@@ -266,7 +269,9 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 	} else {
 		runDir = writeDir
 	}
-	_ = writeJSONWithNewline(filepath.Join(runDir, "resume.json"), record)
+	if recordErr := writeJSONWithNewline(filepath.Join(runDir, "resume.json"), record); recordErr != nil {
+		err = errors.Join(err, mandatoryPersistenceError("terminal resume record", recordErr))
+	}
 	return continued, err
 }
 
@@ -477,11 +482,15 @@ func quarantineResume(runDir string, state RunState, cause error, gate *controlR
 	}
 	state.Status = string(RunStatusQuarantined)
 	state.RecoveryStatus = cause.Error()
-	_ = writeRunState(runDir, state)
+	stateErr := writeRunState(runDir, state)
 	record := ResumeRecord{SchemaVersion: ArtifactSchemaVersion, SourceRunID: state.RunID, VerifiedPhase: normalizeRunPhase(state.Phase), Baseline: state.BaselineSHA, DiffHash: state.DiffHash, Status: "quarantined", Message: cause.Error(), CreatedAt: time.Now().UTC()}
-	_ = writeJSONWithNewline(filepath.Join(runDir, "resume.json"), record)
+	recordErr := writeJSONWithNewline(filepath.Join(runDir, "resume.json"), record)
 	final := FinalRun{RunID: state.RunID, RunDir: runDir, Workdir: state.Workdir, Baseline: state.BaselineSHA, Mode: state.Mode, Status: RunStatusQuarantined, Verdict: "quarantined", BlockingReason: string(ReasonQuarantined), ExitCode: ExitAdapterFailure}
-	return final, &ExitError{Code: ExitAdapterFailure, Err: cause}
+	return final, errors.Join(
+		&ExitError{Code: ExitAdapterFailure, Err: cause},
+		mandatoryPersistenceError("quarantined resume state", stateErr),
+		mandatoryPersistenceError("quarantined resume record", recordErr),
+	)
 }
 
 func metaMode(meta Meta) Mode {

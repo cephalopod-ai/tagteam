@@ -25,10 +25,16 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	if err != nil {
 		return FinalRun{}, err
 	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-	runDir, err := createRunDir(opts.Workdir, opts.StateRoot, runID)
+	var runDir string
+	runCompleted := false
+	runActivated := false
+	defer func() {
+		a.finishPreflightCleanup(opts, runDir, cleanup, &final, &err)
+		if runActivated {
+			deactivateRun(opts.Workdir, runID, runCompleted && err == nil)
+		}
+	}()
+	runDir, err = createRunDir(opts.Workdir, opts.StateRoot, runID)
 	if err != nil {
 		return FinalRun{}, &ExitError{Code: ExitAdapterFailure, Err: err}
 	}
@@ -44,8 +50,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	}
 	defer lock.Release()
 	activateRun(opts.Workdir, runID, runDir, opts.Mode)
-	runCompleted := false
-	defer func() { deactivateRun(opts.Workdir, runID, runCompleted) }()
+	runActivated = true
 	workerSchemaPath := filepath.Join(runDir, "worker-result-schema.json")
 	if err := writeFileDurable(workerSchemaPath, []byte(WorkerResultSchema+"\n"), 0o644, false); err != nil {
 		return FinalRun{}, err
@@ -142,10 +147,14 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		setFinalBlocking(&final, classifyRoleFailure(currentRole, err), err.Error())
 		applyInvocationBudget(&final, budget)
 		finalizeRunState(&final)
-		_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: string(final.Status), Phase: final.Phase, Degraded: final.Degraded, DegradedReason: final.DegradedReason, BlockingReason: final.BlockingReason, RoleStatuses: final.RoleStatuses, CurrentRound: final.RoundsCompleted, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode})
-		_ = a.persistFinal(opts.Workdir, final)
+		state := runStateForFinal(final, opts.Mode, final.Phase, "")
+		if persistErr := a.persistTerminalRun(opts.Workdir, &final, state); persistErr != nil {
+			err = errors.Join(err, persistErr)
+		}
 	}()
-	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: "preflight"})
+	if stateErr := writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: "preflight"}); stateErr != nil {
+		return final, mandatoryPersistenceError("preflight run state", stateErr)
+	}
 	logProgress(opts, "run %s started mode=%s baseline=%s run-dir=%s", runID, opts.Mode, baseline, runDir)
 	logJSONRepairPolicy(opts)
 
@@ -612,7 +621,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		final.Phase = editorLabel
 		currentRole = editorLabel
 		setRoleStatus(&final, editorLabel, opts.Coder, "running", "", "")
-		_ = writeRunState(runDir, RunState{
+		if stateErr := writeRunState(runDir, RunState{
 			RunID:            runID,
 			Mode:             opts.Mode,
 			Status:           "running",
@@ -621,7 +630,9 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			CurrentRound:     round,
 			LatestDiffPath:   final.LatestDiffPath,
 			LatestReviewPath: final.LatestReviewPath,
-		})
+		}); stateErr != nil {
+			return final, mandatoryPersistenceError("round implementation state", stateErr)
+		}
 		editorPrompt, err := buildRoundEditorPrompt(ctx, opts, round, runDir, baseline, latestDiff, latestReview, initialReview, relay, selectedPackage, workPlan, brief, implementSelectedPackage)
 		if err != nil {
 			return final, err

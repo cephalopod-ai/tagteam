@@ -2,6 +2,7 @@ package tagteam
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -98,8 +99,11 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (final
 		setFinalBlocking(&final, classifyRoleFailure(reviewerLabel, err), err.Error())
 		applyInvocationBudget(&final, budget)
 		finalizeRunState(&final)
-		_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: string(final.Status), Phase: "review", Degraded: final.Degraded, DegradedReason: final.DegradedReason, BlockingReason: final.BlockingReason, RoleStatuses: final.RoleStatuses, CurrentRound: 1, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode})
-		_ = a.persistFinal(opts.Workdir, final)
+		state := runStateForFinal(final, opts.Mode, "review", "")
+		state.CurrentRound = 1
+		if persistErr := a.persistTerminalRun(opts.Workdir, &final, state); persistErr != nil {
+			err = errors.Join(err, persistErr)
+		}
 	}()
 	logJSONRepairPolicy(opts)
 	if err = writeRedactedBytes(filepath.Join(runDir, "input.md"), []byte(prompt), opts.EnvOverlay); err != nil {
@@ -126,7 +130,7 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (final
 	}
 	setRoleStatus(&final, reviewerLabel, opts.Adversary, "running", "", "")
 	final.Phase = "review"
-	_ = writeRunState(runDir, RunState{
+	if stateErr := writeRunState(runDir, RunState{
 		RunID:            runID,
 		Mode:             opts.Mode,
 		Status:           "running",
@@ -135,7 +139,9 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (final
 		CurrentRound:     1,
 		LatestDiffPath:   final.LatestDiffPath,
 		LatestReviewPath: final.LatestReviewPath,
-	})
+	}); stateErr != nil {
+		return final, mandatoryPersistenceError("running review state", stateErr)
+	}
 	schemaPath := filepath.Join(runDir, "review-schema.json")
 	if err = writeFileDurable(schemaPath, []byte(ReviewSchema), 0o644, true); err != nil {
 		return final, err
@@ -195,8 +201,9 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (final
 	setRoleStatus(&final, reviewerLabel, opts.Adversary, "completed", "", "")
 	applyInvocationBudget(&final, budget)
 	finalizeRunState(&final)
-	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: string(final.Status), Phase: "review", Degraded: final.Degraded, DegradedReason: final.DegradedReason, BlockingReason: final.BlockingReason, RoleStatuses: final.RoleStatuses, CurrentRound: 1, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode})
-	if err := a.persistFinal(opts.Workdir, final); err != nil {
+	state := runStateForFinal(final, opts.Mode, "review", "")
+	state.CurrentRound = 1
+	if err := a.persistTerminalRun(opts.Workdir, &final, state); err != nil {
 		return final, err
 	}
 	// runCompleted is set only once every artifact this function is

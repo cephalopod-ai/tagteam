@@ -105,8 +105,8 @@ are appended here at each stage gate.
 
 ### Stage 1 — control runtime and configuration boundaries
 
-Status: implemented and locally validated; checkpoint commit follows this
-documentation update.
+Status: implemented and locally validated. Checkpoint: `84c07e3`
+(`fix: harden control runtime and config boundaries`).
 
 - AUD-001: stdio explicitly owns its process-scoped runtime; socket sessions
   borrow a daemon-owned runtime. Daemon shutdown closes once, cancels jobs, and
@@ -136,3 +136,45 @@ risks—an 826-line source file and an unbounded per-runtime Steward map. Both
 were corrected and regression-tested. No unresolved Stage 1 blocker remains.
 Abrupt process death still cannot execute an in-process join; persisted recovery
 continues to cover that separate restart boundary.
+
+### Stage 2 — persistence and recovery truth
+
+Status: implemented and locally validated; checkpoint commit follows this
+documentation update.
+
+- AUD-004: autostash creation uses a unique message and resolves the created
+  immutable object ID rather than `stash@{0}`. Cleanup applies that object even
+  when another stash is pushed later. Restore conflicts fail the run and write
+  `autostash-recovery.json` with the untouched object identity and safe recovery
+  commands. Successful apply deliberately retains the stash recovery point
+  because Git only drops by a movable positional selector.
+- AUD-005: ignored mandatory state, quality-gate, recovery, resume, and terminal
+  writes now propagate. `events.jsonl` is explicitly rebuildable and is fsynced
+  before the atomic, canonical `state.json` replacement. Shared terminal
+  persistence rewrites attempted success to `persistence_failed`, retries the
+  failed projection, and always returns the original write error.
+- MCP resume workers now use the same tracked runtime worker path as starts;
+  shutdown joins them, and resume rejects new work after runtime closure.
+- Asynchronous MCP start/resume terminal-persistence errors are retained in the
+  runtime and surfaced through status when no readable terminal state exists.
+
+Validation:
+
+- Autostash/persistence fault suite: pass, including newer-stash, conflict,
+  interruption, journal-before-snapshot, terminal retry, error-finalization,
+  and quality-gate write failures.
+- Focused stress (`-count=10`): pass in 13.133s.
+- Focused race stress (`-race -count=5`): pass in 12.445s.
+- Broad run/review/resume/recovery suite: pass in 67.102s.
+- `go test ./...`: pass; `internal/tagteam` completed in 174.653s.
+- `go vet ./...`, `go build ./...`, `go mod verify`, formatting, Go file line
+  gate, and `git diff --check`: pass.
+
+Adversarial review disposition: resolving `refs/stash` after `stash push` still
+allowed a newer external stash to steal the identity, so creation now searches
+for a cryptographically unique stash message. Dropping by a previously resolved
+`stash@{n}` remained position-racy; successful restores therefore retain the
+immutable recovery point instead of risking deletion of unrelated user work.
+The first terminal helper also failed to replace an existing running MCP resume
+diagnostic when `state.json` was removed; the missing-state recovery case was
+restored and regression-tested. No unresolved Stage 2 blocker remains.

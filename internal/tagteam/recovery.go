@@ -130,7 +130,9 @@ func (a *App) recoverEditorFailure(
 	if err := guardControlResumeWritePath(gate, filepath.Join(runDir, "state.json")); err != nil {
 		return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
-	_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseRepairing), CurrentRound: round, RecoveryStatus: "checkpointing", RoleStatuses: final.RoleStatuses})
+	if err := writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseRepairing), CurrentRound: round, RecoveryStatus: "checkpointing", RoleStatuses: final.RoleStatuses}); err != nil {
+		return Result{}, originalTarget, originalAdapter, mandatoryPersistenceError("recovery checkpoint state", err)
+	}
 	diff, err := captureDiffArtifact(ctx, opts.Workdir, baseline, runDir, round)
 	if err != nil {
 		return Result{}, originalTarget, originalAdapter, failure
@@ -173,7 +175,9 @@ func (a *App) recoverEditorFailure(
 	if err := guardControlResumeWritePath(gate, schemaPath); err != nil {
 		return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
-	_ = writeFileDurable(schemaPath, []byte(RecoveryDecisionSchema+"\n"), 0o644, false)
+	if err := writeFileDurable(schemaPath, []byte(RecoveryDecisionSchema+"\n"), 0o644, false); err != nil {
+		return Result{}, originalTarget, originalAdapter, mandatoryPersistenceError("recovery decision schema", err)
+	}
 	if reviewer != nil {
 		result, decisionErr := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
 			Context:         ctx,
@@ -226,7 +230,9 @@ func (a *App) recoverEditorFailure(
 	if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
 		return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
-	_ = writeJSONWithNewline(artifactPath, artifact)
+	if err := writeJSONWithNewline(artifactPath, artifact); err != nil {
+		return Result{}, selectedTarget, selectedAdapter, mandatoryPersistenceError("recovery artifact", err)
+	}
 	if artifact.Status == "quarantined" {
 		final.Status = RunStatusQuarantined
 		setFinalBlocking(final, ReasonQuarantined, decision.Reason)
@@ -269,7 +275,9 @@ func (a *App) recoverEditorFailure(
 		if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
 			return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
-		_ = writeJSONWithNewline(artifactPath, artifact)
+		if err := writeJSONWithNewline(artifactPath, artifact); err != nil {
+			return Result{}, selectedTarget, selectedAdapter, mandatoryPersistenceError("quarantined recovery artifact", err)
+		}
 		final.Status = RunStatusQuarantined
 		setFinalBlocking(final, ReasonQuarantined, retryErr.Error())
 		return Result{}, selectedTarget, selectedAdapter, retryErr
@@ -283,7 +291,9 @@ func (a *App) recoverEditorFailure(
 	if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
 		return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
-	_ = writeJSONWithNewline(artifactPath, artifact)
+	if err := writeJSONWithNewline(artifactPath, artifact); err != nil {
+		return Result{}, selectedTarget, selectedAdapter, mandatoryPersistenceError("completed recovery artifact", err)
+	}
 	return result, selectedTarget, selectedAdapter, nil
 }
 
@@ -340,7 +350,9 @@ func (a *App) retryZeroDeltaEditorWithFallback(
 	if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
 		return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
-	_ = writeJSONWithNewline(artifactPath, artifact)
+	if err := writeJSONWithNewline(artifactPath, artifact); err != nil {
+		return Result{}, originalTarget, originalAdapter, mandatoryPersistenceError("fallback recovery artifact", err)
+	}
 
 	retryRequest := originalRequest
 	retryRequest.Context = ctx
@@ -377,7 +389,9 @@ func (a *App) retryZeroDeltaEditorWithFallback(
 			if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
 				return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 			}
-			_ = writeJSONWithNewline(artifactPath, artifact)
+			if err := writeJSONWithNewline(artifactPath, artifact); err != nil {
+				return Result{}, selectedTarget, selectedAdapter, mandatoryPersistenceError("quarantined fallback recovery artifact", err)
+			}
 			final.Status = RunStatusQuarantined
 			setFinalBlocking(final, ReasonQuarantined, "fallback editor failed after changing the worktree")
 			return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("fallback partial work quarantined: %w", retryErr)}
@@ -391,7 +405,9 @@ func (a *App) retryZeroDeltaEditorWithFallback(
 		if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
 			return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
-		_ = writeJSONWithNewline(artifactPath, artifact)
+		if err := writeJSONWithNewline(artifactPath, artifact); err != nil {
+			return Result{}, selectedTarget, selectedAdapter, mandatoryPersistenceError("failed fallback recovery artifact", err)
+		}
 		return Result{}, selectedTarget, selectedAdapter, retryErr
 	}
 	artifact.Status = "recovered"
@@ -403,7 +419,9 @@ func (a *App) retryZeroDeltaEditorWithFallback(
 	if err := guardControlResumeWritePath(gate, artifactPath); err != nil {
 		return Result{}, selectedTarget, selectedAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
-	_ = writeJSONWithNewline(artifactPath, artifact)
+	if err := writeJSONWithNewline(artifactPath, artifact); err != nil {
+		return Result{}, selectedTarget, selectedAdapter, mandatoryPersistenceError("completed fallback recovery artifact", err)
+	}
 	return result, selectedTarget, selectedAdapter, nil
 }
 

@@ -1,6 +1,6 @@
 # Test Ledger
 
-Derived from the current test files. 537 test functions across 57 files (large
+Derived from the current test files. 547 test functions across 59 files (large
 suites are mechanically split to keep every Go source file within the 800-line
 gate). The full local suite and focused repeated/race MCP repair tests were
 re-validated on 2026-07-16 on branch `repair/audit-2026-07-16`. Local checks
@@ -17,6 +17,7 @@ historical evidence for AUD-001 until the branch is published and CI executes.
 | Run state / reasons | `go test ./internal/tagteam/` (`run_state_test.go`, 5 tests) | pass | `run_state_test.go` | Failure classification, exit→reason, budget wiring, overlay redaction | — |
 | External state / lifecycle | `go test ./internal/tagteam/` | pass | `artifact_store_test.go`, `active_run_test.go`, `testmain_test.go` | Repository identity, isolated external state, active/latest lifecycle, legacy reconciliation, and pointer-publication fault recovery | — |
 | Resilience / integrity | `go test ./internal/tagteam/` | pass | `integrity_test.go`, runner tests | Read-only mutation rejection, protected pointer restoration, dirty-worktree checkpoint branches, durable streams/contracts, recovery/state paths | Real vendor timeout behavior remains adapter-dependent |
+| Persistence / autostash | focused suite `-count=10`; focused race suite `-count=5`; full `go test ./...` | pass locally on repair branch | `autostash_test.go`, `run_persistence_test.go`, `state_machine.go`, run/review/resume/recovery tests | Immutable stash identity survives a newer external stash; conflict preserves current work and the original stash with a recovery artifact; interrupted cleanup restores changes; journal failure cannot advance canonical state; snapshot/final/error-finalization and quality-gate write faults propagate and rewrite attempted success as `persistence_failed`. | Successful autostash apply deliberately retains its immutable stash recovery point; operators may remove it after verification. Abrupt process kill remains outside in-process cleanup. |
 | Quality gates / findings | `go test ./internal/tagteam/` | pass | `findings_test.go`, `hardening_test.go`, runner tests | Persistent major findings, evidence disposition, operator deferral, scope/churn/regression wiring, and fail-closed churn measurement when Git diff commands fail | Transfer uses host-only Git fixtures rather than vendor agents |
 | MCP resume direct artifacts | `go test ./internal/tagteam/ -run 'TestOpenAICompatibleRunAdapter'` | pass | `control_resume_direct_adapter_test.go` | Runner-owned raw and validation artifacts persist for ungated direct-adapter parse failures; response-time run-dir replacement fails closed without external sidecar writes | Pure syscall-level TOCTOU after the final path check remains out of scope |
 | Snapshot / live status | `go test ./internal/tagteam/` (`snapshot_test.go`, 11 tests) | pass | `snapshot_test.go` | `RunSnapshot` assembly from `active.json`, `state.json`, `final.json`, `plan.json`; active-before-latest CLI resolution; compatibility regressions | — |
@@ -34,9 +35,9 @@ historical evidence for AUD-001 until the branch is published and CI executes.
 | Formatting | `gofmt -l .` | pass (empty) | CI | CI gate | — |
 | Vet | `go vet ./...` | pass | CI | CI gate | — |
 | Build | `go build ./...` | pass | local validation | Buildability across packages | — |
-| Race suite | `go test -race ./...` plus focused repaired MCP/Steward race run `-count=10` | pass locally | local validation | Full pre-repair race baseline plus repeated race coverage for socket ownership, runtime drain, permission failure, and per-run Steward budget state | Full post-repair race suite is rerun at the final campaign gate. |
-| Coverage | `go test -cover ./...` | pass | local validation | CLI 42.7%, tagteam 72.6%, TUI 62.7% statement coverage | Percentages predate the repair branch; AUD-004 and AUD-005 still require negative/fault scenarios. |
-| Full suite | `go test ./...` | pass locally on repair branch (117.361s for `internal/tagteam`) | local validation | End-to-end package-level regression signal | Does not exercise real vendor CLIs; repair branch has not been pushed to GitHub CI. |
+| Race suite | `go test -race ./...` plus focused repaired MCP/Steward race run `-count=10` and persistence/autostash race run `-count=5` | pass locally | local validation | Full pre-repair race baseline plus repeated race coverage for socket ownership, runtime drain, permission failure, per-run Steward budget state, immutable stash restoration, and persistence failure handlers | Full post-repair race suite is rerun at the final campaign gate. |
+| Coverage | `go test -cover ./...` | pass | local validation | CLI 42.7%, tagteam 72.6%, TUI 62.7% statement coverage | Percentages predate the repair branch and are rerun at the final campaign gate. |
+| Full suite | `go test ./...` | pass locally on repair branch (`internal/tagteam` 174.653s in the Stage 2 run) | local validation | End-to-end package-level regression signal | Does not exercise real vendor CLIs; repair branch has not been pushed to GitHub CI. |
 
 ## Known gaps
 

@@ -227,6 +227,12 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - Unix/macOS Claude locking is runtime-tested with real multi-process contention. The Windows PID-file fallback is compile-checked but not runtime-tested in CI; ownership-record write failures and same-process concurrent invocations remain residual risks there. Prefer one Claude-backed Tagteam run at a time on Windows until that path has equivalent runtime coverage.
 - Do not launch two Tagteam runs against the same worktree. Run-state locking and integrity checks assume one active writer per worktree; use separate Git worktrees when runs need to proceed concurrently, even when their Claude invocations would otherwise serialize.
 - `--allow-dirty` is isolation, not an integrity bypass: Tagteam creates a `tagteam/<run-id>` branch, commits the pre-existing tracked and untracked changes as a local checkpoint, and uses that clean commit as the run baseline. The source branch remains unchanged. The checkpoint requires a usable local Git author configuration and is intentionally preserved for recovery and review.
+- `--autostash` records the created stash by immutable Git object ID and restores
+  that exact object even if another process pushes a newer stash. A successful
+  apply retains the stash as a recovery point because Git only drops entries by
+  movable reflog position. A conflict fails the run and writes
+  `autostash-recovery.json` with the untouched object ID and safe recovery
+  commands.
 - A stalled or externally interrupted adapter process may leave `state.json` at `status=running` / an early phase without writing `final.json`. Treat that run as interrupted and use `tagteam resume [RUN_ID]`; resume verifies the baseline, diff hash, and required artifacts, then continues the first incomplete phase or quarantines unsafe partial work. Do not treat `active.json` or the TUI alone as evidence of success.
 - Different adapters do not expose identical capabilities. Some support schema-constrained output, stdin, or session resume; others do not. `tagteam` degrades where possible, but behavior is not perfectly uniform.
 - Grok remains buggy in the worker/coder role. In particular, `grok-4.5` with `medium` or `low` reasoning effort has not been reliable; prefer another implementation adapter, or treat Grok worker runs as experimental and validate them closely.
@@ -744,7 +750,17 @@ Override the root with `--state-root`, `TAGTEAM_STATE_ROOT`, or `state_root` in 
 
 `active.json`, `latest.json`, locks, and all run artifacts are authoritative only in the external repository state directory. On first use, legacy `.tagteam/runs`, `.tagteam/active.json`, and `.tagteam/latest.json` are checksum-copied, verified, and only then removed. Unmigrated legacy artifacts remain readable but are not resumable.
 
-State changes are atomic and journaled through `state.json` plus `events.jsonl`. `tagteam resume [RUN_ID]` verifies repository identity, baseline, artifact hashes, the final journal transition, current diff, and lock ownership before continuing the first incomplete phase in the same authoritative run. Completed implementation and test phases are not repeated. Timeouts, stalls, cancellation, and invalid worker output preserve streams and partial diffs; changed work enters a supervisor recovery decision (`repair`, `continue_with_fallback`, or `quarantine`) instead of being discarded.
+`state.json` is the canonical, atomically replaced run snapshot. Before each
+snapshot transition, Tagteam durably appends its diagnostic event to
+`events.jsonl`; an event failure prevents the canonical snapshot from advancing.
+The journal is rebuildable and may contain an uncommitted final entry if the
+subsequent snapshot replacement fails. `tagteam resume [RUN_ID]` verifies
+repository identity, baseline, artifact hashes, the final journal transition,
+current diff, and lock ownership before continuing the first incomplete phase.
+Completed implementation and test phases are not repeated. Timeouts, stalls,
+cancellation, and invalid worker output preserve streams and partial diffs;
+changed work enters a supervisor recovery decision (`repair`,
+`continue_with_fallback`, or `quarantine`) instead of being discarded.
 
 <details>
 <summary><strong>Typical contents</strong></summary>
@@ -782,6 +798,7 @@ State changes are atomic and journaled through `state.json` plus `events.jsonl`.
 - `final.json`
 - `state.json`
 - `events.jsonl`
+- `autostash-recovery.json` (only when restoring pre-existing changes fails)
 
 </details>
 

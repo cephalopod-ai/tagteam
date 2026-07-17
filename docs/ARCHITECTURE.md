@@ -83,6 +83,13 @@ reviews, tests, recovery and gate artifacts, `final.json`, `state.json`, optiona
 Diffs are captured through a temporary Git index, always excluding `.tagteam/`.
 `final.json` / `state.json` carry machine-readable `status`, `degraded`,
 `blocking_reason`, `role_statuses`, `role_losses`, `budgets`, `exit_code`.
+`state.json` is the canonical status/resume snapshot. `events.jsonl` is a
+rebuildable diagnostic journal: the event is fsynced before the atomic snapshot
+replacement, so a journal failure cannot advance canonical state; a later
+snapshot failure can leave one non-authoritative event ahead. State,
+quality-gate, recovery, and terminal artifacts are mandatory and their failures
+propagate to the caller. Optional progress and calibration telemetry may degrade
+without changing the authoritative result.
 `snapshot.go` assembles those files into a `RunSnapshot` for live readers such
 as the TUI. See the README
 "Run Artifacts" section for the full field contract and reason-code vocabulary.
@@ -137,10 +144,6 @@ No bridge performs a network request or promotes evidence to memory.
 
 ## Known architecture risks
 
-- Authoritative state, event, quality-gate, and terminal persistence errors are
-  discarded on multiple run/resume paths. This can make snapshot consumers
-  disagree with execution; see
-  [AUD-005](AUDIT_REPORT_2026-07-16.md#aud-005--authoritative-state-and-terminal-artifact-errors-are-broadly-discarded).
 - `internal/tagteam` remains a broad package, but runner, config, type, adapter,
   TUI-state, and test declarations are split into focused files capped at 800
   lines. Further package-boundary extraction should preserve the current

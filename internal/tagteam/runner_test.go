@@ -530,7 +530,11 @@ func TestPreflightBranchModeCreatesBranch(t *testing.T) {
 		t.Fatalf("preflight() error = %v", err)
 	}
 	if cleanup != nil {
-		defer cleanup()
+		defer func() {
+			if err := cleanup(""); err != nil {
+				t.Errorf("preflight cleanup: %v", err)
+			}
+		}()
 	}
 	branch := strings.TrimSpace(runGit(t, repo, "rev-parse", "--abbrev-ref", "HEAD"))
 	if branch != "tagteam/2026-07-07T120000Z" {

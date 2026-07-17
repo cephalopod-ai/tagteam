@@ -140,11 +140,15 @@ func captureAndTestRound(ctx context.Context, opts RunOptions, baseline, runDir,
 	final.LatestFilesPath = diffArtifact.FilesPath
 	final.LatestSHA256Path = diffArtifact.SHA256Path
 	final.LatestDiffSHA256 = diffArtifact.Metadata.DiffSHA256
-	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: string(PhaseImplementing), RoleStatuses: final.RoleStatuses, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath})
+	if err := writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: string(PhaseImplementing), RoleStatuses: final.RoleStatuses, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath}); err != nil {
+		return DiffArtifact{}, "", mandatoryPersistenceError("implementation run state", err)
+	}
 	logProgress(opts, "round %d diff captured bytes=%d path=%s", round, len(diffArtifact.Patch), diffArtifact.PatchPath)
 	gateResult := evaluateQualityGates(ctx, opts, baseline, round, diffArtifact, allowedScopeForRound(opts, selectedPackage))
 	final.QualityGates = append(final.QualityGates, gateResult)
-	_ = writeJSONWithNewline(filepath.Join(runDir, fmt.Sprintf("quality-gates-round-%d.json", round)), gateResult)
+	if err := writeJSONWithNewline(filepath.Join(runDir, fmt.Sprintf("quality-gates-round-%d.json", round)), gateResult); err != nil {
+		return DiffArtifact{}, "", mandatoryPersistenceError("quality gate", err)
+	}
 	if summary, ledgerErr := updateFindingsLedger(runDir, round, nil, &gateResult); ledgerErr != nil {
 		return DiffArtifact{}, "", &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("update findings ledger: %w", ledgerErr)}
 	} else {
@@ -154,7 +158,9 @@ func captureAndTestRound(ctx context.Context, opts RunOptions, baseline, runDir,
 	if opts.TestCmd == "" || opts.NoTest {
 		return diffArtifact, testOutput, nil
 	}
-	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: string(PhaseTesting), RoleStatuses: final.RoleStatuses, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath})
+	if err := writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: string(PhaseTesting), RoleStatuses: final.RoleStatuses, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath}); err != nil {
+		return DiffArtifact{}, "", mandatoryPersistenceError("testing run state", err)
+	}
 	testPath := filepath.Join(runDir, fmt.Sprintf("test-round-%d.txt", round))
 	logProgress(opts, "round %d tests started command=%q", round, opts.TestCmd)
 	testRun, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, testPath, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
@@ -257,7 +263,9 @@ func (a *App) runRoundReview(ctx context.Context, opts RunOptions, round int, ru
 	logProgress(opts, "round %d %s started adapter=%s", round, reviewerLabel, reviewer.ID())
 	final.Phase = reviewerLabel
 	setRoleStatus(final, reviewerLabel, opts.Adversary, "running", "", "")
-	_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseReviewing), RoleStatuses: final.RoleStatuses, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath})
+	if err := writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseReviewing), RoleStatuses: final.RoleStatuses, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath}); err != nil {
+		return nil, mandatoryPersistenceError("review run state", err)
+	}
 	var priorReview *Review
 	if latestReview.Verdict != "" {
 		priorReview = &latestReview
@@ -287,7 +295,9 @@ func (a *App) runRoundReview(ctx context.Context, opts RunOptions, round int, ru
 	if runDir, rebindErr = rebindControlResumeFromContext(ctx, runDir, final, "state.json"); rebindErr != nil {
 		return nil, &ExitError{Code: ExitPreflightFailed, Err: rebindErr}
 	}
-	_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseReviewing), RoleStatuses: final.RoleStatuses, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath})
+	if err := writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseReviewing), RoleStatuses: final.RoleStatuses, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath}); err != nil {
+		return nil, mandatoryPersistenceError("completed review run state", err)
+	}
 	return review, nil
 }
 
@@ -332,6 +342,6 @@ func (a *App) finalizeReviewedRunWithGate(opts RunOptions, runDir string, budget
 	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "state.json", "final.json"); err != nil {
 		return &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
-	_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: string(final.Status), Phase: string(PhaseReviewing), Degraded: final.Degraded, DegradedReason: final.DegradedReason, BlockingReason: final.BlockingReason, RoleStatuses: final.RoleStatuses, CurrentRound: final.RoundsCompleted, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, ExitCode: final.ExitCode})
-	return a.persistFinal(opts.Workdir, *final)
+	state := runStateForFinal(*final, opts.Mode, string(PhaseReviewing), "")
+	return a.persistTerminalRun(opts.Workdir, final, state)
 }

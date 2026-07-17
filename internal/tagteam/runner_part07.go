@@ -524,13 +524,6 @@ func gitDirty(workdir string) (bool, error) {
 	return false, nil
 }
 
-func gitAutostash(workdir string) (string, error) {
-	if _, err := runCommand(context.Background(), workdir, "git", "stash", "push", "-u", "-m", "tagteam-autostash"); err != nil {
-		return "", &ExitError{Code: ExitPreflightFailed, Err: err}
-	}
-	return "stash@{0}", nil
-}
-
 func gitCreateBranch(workdir, branch string) error {
 	if _, err := runCommand(context.Background(), workdir, "git", "switch", "-c", branch); err == nil {
 		return nil

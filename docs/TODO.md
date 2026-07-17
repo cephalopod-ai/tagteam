@@ -18,10 +18,10 @@ before closing an item.
 
 ### P1 — persistence, recovery, and repository security
 
-- [ ] **AUD-005:** classify mandatory versus advisory artifacts, propagate all
+- [x] **AUD-005:** classify mandatory versus advisory artifacts, propagate all
   mandatory state/quality/final persistence failures, and define a consistent
   state-snapshot/event-journal commit protocol with fault-injection tests.
-- [ ] **AUD-004:** restore autostashes by recorded object identity, surface
+- [x] **AUD-004:** restore autostashes by recorded object identity, surface
   restore conflicts in the terminal result, and persist a recovery artifact
   that leaves the original user changes recoverable.
 - [ ] **AUD-006:** pin GitHub Actions to reviewed commit SHAs and scope
@@ -190,7 +190,8 @@ own recovery action.
   gain execution authority through prompt text or tool output.
 - [ ] Killing or disconnecting an attached MCP host leaves either a cleanly
   cancelled run or an explicitly recoverable persisted state; no run is
-  reported as successful from missing or malformed evidence. Blocked by
-  AUD-005; AUD-001's graceful disconnect/shutdown lifecycle is repaired.
+  reported as successful from missing or malformed evidence. Graceful
+  disconnect/shutdown and mandatory terminal persistence are repaired; an
+  abrupt process-kill playtest remains open.
 - Gosling and other hosts consume this contract rather than duplicating
   Tagteam profiles, model catalogs, reason codes, or recovery rules.

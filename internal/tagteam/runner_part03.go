@@ -2,13 +2,14 @@ package tagteam
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
-func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
+func (a *App) runSolo(ctx context.Context, opts RunOptions) (final FinalRun, err error) {
 	if opts.MaxWallTime > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, opts.MaxWallTime)
@@ -24,10 +25,16 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	if err != nil {
 		return FinalRun{}, err
 	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-	runDir, err := createRunDir(opts.Workdir, opts.StateRoot, runID)
+	var runDir string
+	runCompleted := false
+	runActivated := false
+	defer func() {
+		a.finishPreflightCleanup(opts, runDir, cleanup, &final, &err)
+		if runActivated {
+			deactivateRun(opts.Workdir, runID, runCompleted && err == nil)
+		}
+	}()
+	runDir, err = createRunDir(opts.Workdir, opts.StateRoot, runID)
 	if err != nil {
 		return FinalRun{}, &ExitError{Code: ExitAdapterFailure, Err: err}
 	}
@@ -43,8 +50,7 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	}
 	defer lock.Release()
 	activateRun(opts.Workdir, runID, runDir, opts.Mode)
-	runCompleted := false
-	defer func() { deactivateRun(opts.Workdir, runID, runCompleted) }()
+	runActivated = true
 	workerSchemaPath := filepath.Join(runDir, "worker-result-schema.json")
 	if err := writeFileDurable(workerSchemaPath, []byte(WorkerResultSchema+"\n"), 0o644, false); err != nil {
 		return FinalRun{}, err
@@ -87,7 +93,7 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 		return FinalRun{}, err
 	}
 
-	final := FinalRun{
+	final = FinalRun{
 		SchemaVersion:   ArtifactSchemaVersion,
 		RunID:           runID,
 		ResumedFrom:     opts.ResumedFrom,
@@ -113,20 +119,48 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	final.RoleLosses = selectionState.RoleLosses
 	budget := &InvocationBudget{Max: opts.MaxRoleInvocations}
 	opts.InvocationBudget = budget
+	defer func() {
+		if err == nil || final.RunID == "" || !final.FinishedAt.IsZero() {
+			return
+		}
+		final.ExitCode = ExitCode(err)
+		final.Verdict = "error"
+		final.Summary = redactSecretsWithOverlay(err.Error(), opts.EnvOverlay)
+		final.FinishedAt = time.Now().UTC()
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			final.Status = RunStatusCancelled
+			final.BlockingReason = string(ReasonCancelled)
+		}
+		if IsIntegrityViolation(err) {
+			final.Status = RunStatusQuarantined
+			final.BlockingReason = string(ReasonQuarantined)
+		}
+		setRoleStatus(&final, editorLabel, opts.Coder, "failed", classifyRoleFailure(editorLabel, err), err.Error())
+		setFinalBlocking(&final, classifyRoleFailure(editorLabel, err), err.Error())
+		applyInvocationBudget(&final, budget)
+		finalizeRunState(&final)
+		state := runStateForFinal(final, opts.Mode, "solo", "")
+		state.CurrentRound = max(1, final.RoundsCompleted)
+		if persistErr := a.persistTerminalRun(opts.Workdir, &final, state); persistErr != nil {
+			err = errors.Join(err, persistErr)
+		}
+	}()
 	baselineTest, err := runBaselineTest(ctx, opts, runDir)
 	if err != nil {
 		return final, err
 	}
 	final.BaselineTest = baselineTest
 	setRoleStatus(&final, editorLabel, opts.Coder, "running", "", "")
-	_ = writeRunState(runDir, RunState{
+	if stateErr := writeRunState(runDir, RunState{
 		RunID:        runID,
 		Mode:         opts.Mode,
 		Status:       "running",
 		Phase:        "solo",
 		RoleStatuses: final.RoleStatuses,
 		CurrentRound: 1,
-	})
+	}); stateErr != nil {
+		return final, mandatoryPersistenceError("running solo state", stateErr)
+	}
 
 	logProgress(opts, "solo implementation started adapter=%s", editor.ID())
 	outputPath := filepath.Join(runDir, "solo-round-1.md")
@@ -195,7 +229,7 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 			setFinalBlocking(&final, reason, err.Error())
 			applyInvocationBudget(&final, budget)
 			finalizeRunState(&final)
-			_ = writeRunState(runDir, RunState{
+			state := RunState{
 				RunID:          runID,
 				Mode:           opts.Mode,
 				Status:         status,
@@ -204,8 +238,10 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 				RoleStatuses:   final.RoleStatuses,
 				CurrentRound:   1,
 				ExitCode:       final.ExitCode,
-			})
-			_ = a.persistFinal(opts.Workdir, final)
+			}
+			if persistErr := a.persistTerminalRun(opts.Workdir, &final, state); persistErr != nil {
+				err = errors.Join(err, persistErr)
+			}
 			return final, err
 		}
 	}
@@ -213,14 +249,16 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	final.Costs[editorLabel] += editorResult.CostUSD
 	final.Summary = strings.TrimSpace(editorResult.Text)
 	final.RoundsCompleted = 1
-	_ = writeRunState(runDir, RunState{
+	if stateErr := writeRunState(runDir, RunState{
 		RunID:        runID,
 		Mode:         opts.Mode,
 		Status:       "running",
 		Phase:        "diff",
 		RoleStatuses: final.RoleStatuses,
 		CurrentRound: 1,
-	})
+	}); stateErr != nil {
+		return final, mandatoryPersistenceError("solo diff state", stateErr)
+	}
 	logProgress(opts, "solo implementation completed output=%s", outputPath)
 
 	diffArtifact, err := captureDiffArtifact(ctx, opts.Workdir, baseline, runDir, 1)
@@ -236,7 +274,9 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	logProgress(opts, "solo diff captured bytes=%d path=%s", len(diffArtifact.Patch), diffArtifact.PatchPath)
 	gateResult := evaluateQualityGates(ctx, opts, baseline, 1, diffArtifact, allowedScopeForRound(opts, nil))
 	final.QualityGates = append(final.QualityGates, gateResult)
-	_ = writeJSONWithNewline(filepath.Join(runDir, "quality-gates-round-1.json"), gateResult)
+	if err := writeJSONWithNewline(filepath.Join(runDir, "quality-gates-round-1.json"), gateResult); err != nil {
+		return final, mandatoryPersistenceError("quality gate", err)
+	}
 	if summary, ledgerErr := updateFindingsLedger(runDir, 1, nil, &gateResult); ledgerErr != nil {
 		return final, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("update findings ledger: %w", ledgerErr)}
 	} else {
@@ -272,8 +312,9 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	applyInvocationBudget(&final, budget)
 	finalizeRunState(&final)
 	logProgress(opts, "run %s finished mode=solo exit=%d", runID, final.ExitCode)
-	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: string(final.Status), Phase: "solo", Degraded: final.Degraded, DegradedReason: final.DegradedReason, BlockingReason: final.BlockingReason, RoleStatuses: final.RoleStatuses, CurrentRound: 1, LatestDiffPath: final.LatestDiffPath, ExitCode: final.ExitCode})
-	if err := a.persistFinal(opts.Workdir, final); err != nil {
+	state := runStateForFinal(final, opts.Mode, "solo", "")
+	state.CurrentRound = 1
+	if err := a.persistTerminalRun(opts.Workdir, &final, state); err != nil {
 		return final, err
 	}
 	// See the equivalent comment in Review: only mark the active-run pointer

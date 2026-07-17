@@ -94,7 +94,9 @@ func (a *App) resumeReviewedRun(ctx context.Context, opts RunOptions, state RunS
 		if runDir, err = rebindControlResumeRunDir(gate, runDir, &final, "state.json"); err != nil {
 			return final, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
-		_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseRepairing), CurrentRound: round + 1, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, RecoveryStatus: "review_requested_repairs"})
+		if err := writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: "running", Phase: string(PhaseRepairing), CurrentRound: round + 1, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath, RecoveryStatus: "review_requested_repairs"}); err != nil {
+			return final, mandatoryPersistenceError("resume repair state", err)
+		}
 	}
 	if runDir, err = rebindControlResumeRunDir(gate, runDir, &final); err != nil {
 		return final, &ExitError{Code: ExitPreflightFailed, Err: err}
@@ -152,8 +154,11 @@ func (a *App) resumeSoloRun(ctx context.Context, opts RunOptions, state RunState
 	if runDir, err = rebindControlResumeRunDir(gate, runDir, &final, "state.json", "final.json"); err != nil {
 		return final, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
-	_ = writeRunState(runDir, RunState{RunID: final.RunID, Mode: opts.Mode, Status: string(final.Status), Phase: string(PhaseTesting), CurrentRound: round, LatestDiffPath: diff.PatchPath, DiffHash: diff.Metadata.DiffSHA256, ExitCode: final.ExitCode, RecoveryStatus: "resumed"})
-	if err := a.persistFinal(opts.Workdir, final); err != nil {
+	terminalState := runStateForFinal(final, opts.Mode, string(PhaseTesting), "resumed")
+	terminalState.CurrentRound = round
+	terminalState.LatestDiffPath = diff.PatchPath
+	terminalState.DiffHash = diff.Metadata.DiffSHA256
+	if err := a.persistTerminalRun(opts.Workdir, &final, terminalState); err != nil {
 		return final, err
 	}
 	if final.ExitCode != ExitSuccess {
@@ -261,7 +266,9 @@ func resumeCaptureRound(ctx context.Context, opts RunOptions, baseline, runDir, 
 	} else {
 		final.Findings = summary
 	}
-	_ = writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: string(PhaseTesting), CurrentRound: round, LatestDiffPath: diff.PatchPath, DiffHash: diff.Metadata.DiffSHA256, LatestReviewPath: final.LatestReviewPath, RecoveryStatus: "resuming"})
+	if err := writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: string(PhaseTesting), CurrentRound: round, LatestDiffPath: diff.PatchPath, DiffHash: diff.Metadata.DiffSHA256, LatestReviewPath: final.LatestReviewPath, RecoveryStatus: "resuming"}); err != nil {
+		return DiffArtifact{}, "", mandatoryPersistenceError("resumed testing state", err)
+	}
 	if !runTests || opts.TestCmd == "" || opts.NoTest {
 		return diff, "", nil
 	}

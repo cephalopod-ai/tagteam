@@ -78,5 +78,26 @@ func (r *ControlRuntime) Close() {
 			<-watcherDone
 		}
 		r.workers.Wait()
+		r.mu.Lock()
+		r.terminalErrors = map[string]error{}
+		r.mu.Unlock()
 	})
+}
+
+func (r *ControlRuntime) recordTerminalError(runID string, err error) {
+	if err == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.terminalErrors) >= controlMaxApprovalRecords {
+		return
+	}
+	r.terminalErrors[runID] = err
+}
+
+func (r *ControlRuntime) terminalError(runID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.terminalErrors[runID]
 }

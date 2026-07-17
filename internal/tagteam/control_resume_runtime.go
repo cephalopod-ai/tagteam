@@ -3,6 +3,7 @@ package tagteam
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -57,6 +58,14 @@ func newControlResumeError(reasonCode, reason string, cause error) error {
 // persisted run identity. The approval ledger is separate from run artifacts
 // so replay protection survives a fresh ControlRuntime instance or process.
 func (r *ControlRuntime) Resume(ctx context.Context, request ControlResumeRequest) (ControlRunHandle, error) {
+	r.lifecycleMu.RLock()
+	defer r.lifecycleMu.RUnlock()
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return ControlRunHandle{}, newControlResumeError("runtime_closed", "control runtime is shutting down", nil)
+	}
 	if request.SchemaVersion != ControlContractVersion {
 		return ControlRunHandle{}, newControlResumeError("invalid_request", fmt.Sprintf("unsupported control schema_version %d (want %d)", request.SchemaVersion, ControlContractVersion), nil)
 	}
@@ -130,8 +139,7 @@ func (r *ControlRuntime) Resume(ctx context.Context, request ControlResumeReques
 	}
 
 	runContext, cancel := context.WithCancel(ctx)
-	r.registerJob(request.RunID, cancel)
-	go r.runResume(runContext, opts, request.RunID)
+	r.startJob(request.RunID, cancel, func() { r.runResume(runContext, opts, request.RunID) })
 	return controlRunHandle(r.service.ProducerVersion, request.RunID), nil
 }
 
@@ -210,7 +218,6 @@ func (r *ControlRuntime) resumeOptions(repository string) (RunOptions, error) {
 }
 
 func (r *ControlRuntime) runResume(ctx context.Context, opts RunOptions, runID string) {
-	defer r.unregisterJob(runID)
 	// MCP-owned resume never uses the generic raw locator path alone: re-resolve
 	// the run directory and artifacts immediately before lock/mutation.
 	final, err := NewApp(r.config).ResumeControl(ctx, opts, runID)
@@ -220,26 +227,34 @@ func (r *ControlRuntime) runResume(ctx context.Context, opts RunOptions, runID s
 	// Resume consumes its approval before asynchronous dispatch. If execution
 	// fails before the normal resume path can build a final artifact, preserve a
 	// visible terminal diagnostic without relaxing the MCP run-path gate.
-	r.persistResumeFailure(opts, runID, err)
+	if persistErr := r.persistResumeFailure(opts, runID, err); persistErr != nil {
+		r.recordTerminalError(runID, persistErr)
+	}
 }
 
-func (r *ControlRuntime) persistResumeFailure(opts RunOptions, runID string, cause error) {
+func (r *ControlRuntime) persistResumeFailure(opts RunOptions, runID string, cause error) error {
 	gate, err := newControlResumePathGate(opts.Workdir, opts.StateRoot, runID)
 	if err != nil {
-		return
+		return mandatoryPersistenceError("MCP resume failure path gate", err)
 	}
 	runDir, err := gate.ready("state.json", "final.json")
 	if err != nil {
-		return
+		return mandatoryPersistenceError("MCP resume failure path", err)
 	}
 
-	state, _ := readControlRunState(runDir)
+	state, stateErr := readControlRunState(runDir)
+	if stateErr != nil && !os.IsNotExist(stateErr) {
+		return mandatoryPersistenceError("existing MCP resume state", stateErr)
+	}
 	final, present, finalErr := readControlFinalOptional(runDir)
-	if finalErr != nil || !present {
+	if finalErr != nil {
+		return mandatoryPersistenceError("existing MCP resume final", finalErr)
+	}
+	if !present {
 		final = FinalRun{}
 	}
 	if final.RunID != "" && final.RunID != runID {
-		return
+		return mandatoryPersistenceError("MCP resume failure identity", fmt.Errorf("final run ID %q does not match %q", final.RunID, runID))
 	}
 	if final.Mode == "" {
 		final.Mode = state.Mode
@@ -291,11 +306,24 @@ func (r *ControlRuntime) persistResumeFailure(opts RunOptions, runID string, cau
 		ExitCode:         final.ExitCode,
 		RecoveryStatus:   "resume_failed",
 	}
-	if err := writeRunState(runDir, state); err != nil {
-		return
-	}
-	if _, err := gate.ready("state.json", "final.json"); err != nil {
-		return
-	}
-	_ = NewApp(r.config).persistFinal(opts.Workdir, final)
+	app := NewApp(r.config)
+	return persistTerminalRunWith(
+		&final,
+		state,
+		func(value RunState) error {
+			current, readyErr := gate.ready("state.json")
+			if readyErr != nil {
+				return readyErr
+			}
+			return writeRunState(current, value)
+		},
+		func(value FinalRun) error {
+			current, readyErr := gate.ready("final.json")
+			if readyErr != nil {
+				return readyErr
+			}
+			value.RunDir = current
+			return app.persistFinal(opts.Workdir, value)
+		},
+	)
 }
