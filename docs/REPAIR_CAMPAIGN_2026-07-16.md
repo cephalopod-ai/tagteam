@@ -212,7 +212,8 @@ unresolved Stage 3 blocker remains.
 ### Stage 4 — supply chain and GitHub governance
 
 Status: implemented; local configuration and live GitHub policy are validated.
-Checkpoint commit follows this documentation update.
+Checkpoint: `b48b224`
+(`ci: harden release provenance and repository policy`).
 
 - AUD-002: active repository ruleset `19084807` protects the default branch
   with pull requests, one code-owner approval, stale-review dismissal,
@@ -270,3 +271,16 @@ were unaffected. A real tag release has not been created, so OIDC signature,
 attestation publication, and consumer verification remain operationally
 unproven until the next release even though the supported configuration and
 non-OIDC release pipeline validate.
+
+## Campaign disposition
+
+All AUD-001–AUD-012 repair items are implemented and their TODO entries are
+closed. The four locality checkpoints are `84c07e3`, `86763e8`, `cbe9df6`, and
+`b48b224`. GitHub policy/security settings are live; source and workflow changes
+remain local on `repair/audit-2026-07-16` and have not been pushed by this
+campaign. No history was rewritten and no deferred non-audit TODO was changed.
+
+The only outstanding operational evidence is a real post-repair tag release.
+That event must prove GitHub OIDC keyless signing, attestation upload, release
+asset publication, and the documented consumer verification commands. This is
+an explicit runtime-validation boundary, not an omitted repository repair.
