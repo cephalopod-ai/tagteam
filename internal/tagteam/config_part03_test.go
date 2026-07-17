@@ -41,6 +41,12 @@ max_context_tokens = 32768
 reserved_output_tokens = 2048
 extra_headers = { "X-Test" = "yes" }
 extra_args = ["--future"]
+
+[steward]
+enabled = true
+base_url = "https://steward.example.invalid/v1"
+api_key_env = "STEWARD_KEY"
+model = "repo-model"
 `)
 	if err := os.WriteFile(filepath.Join(repo, ".tagteam.toml"), repoConfig, 0o644); err != nil {
 		t.Fatal(err)
@@ -95,6 +101,12 @@ extra_args = ["--future"]
 	if len(got.ExtraArgs) != 0 {
 		t.Fatalf("extra_args = %#v", got.ExtraArgs)
 	}
+	if cfg.Steward.Enabled == nil || *cfg.Steward.Enabled {
+		t.Fatalf("untrusted repo enabled steward: %#v", cfg.Steward)
+	}
+	if cfg.Steward.Model != "" || cfg.Steward.APIKeyEnv != "" {
+		t.Fatalf("untrusted repo steward authority survived: %#v", cfg.Steward)
+	}
 }
 
 func TestLoadConfig_TrustedRepoConfigAllowsHighAuthorityKeys(t *testing.T) {
@@ -116,6 +128,13 @@ extra_args = ["--extra"]
 base_url = "https://api.featherless.ai/v1"
 api_key_env = "FEATHERLESS_API_KEY"
 extra_headers = { "X-Test" = "yes" }
+
+[steward]
+enabled = true
+base_url = "https://steward.example.invalid/v1"
+api_key_env = "STEWARD_KEY"
+model = "trusted-model"
+max_calls_per_run = 3
 `)
 	if err := os.WriteFile(filepath.Join(repo, ".tagteam.toml"), repoConfig, 0o644); err != nil {
 		t.Fatal(err)
@@ -138,6 +157,44 @@ extra_headers = { "X-Test" = "yes" }
 	}
 	if cfg.Adapters.OpenAICompatible.ExtraHeaders["X-Test"] != "yes" {
 		t.Fatalf("headers = %#v", cfg.Adapters.OpenAICompatible.ExtraHeaders)
+	}
+	if cfg.Steward.Enabled == nil || !*cfg.Steward.Enabled || cfg.Steward.Model != "trusted-model" || cfg.Steward.MaxCallsPerRun != 3 {
+		t.Fatalf("trusted steward config = %#v", cfg.Steward)
+	}
+}
+
+func TestLoadConfig_TrustedUserStewardConfigMerges(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
+	userPath, err := userConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte(`
+[steward]
+enabled = true
+base_url = "http://127.0.0.1:11434/v1"
+model = "local-model"
+timeout_seconds = 4
+max_calls_per_run = 2
+min_interval_seconds = 9
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfig(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Steward.Enabled == nil || !*cfg.Steward.Enabled || cfg.Steward.Model != "local-model" || cfg.Steward.TimeoutSeconds != 4 || cfg.Steward.MaxCallsPerRun != 2 || cfg.Steward.MinIntervalSeconds != 9 {
+		t.Fatalf("user steward config = %#v", cfg.Steward)
 	}
 }
 
@@ -404,6 +461,40 @@ func TestMergeEnvConfig_OpenAICompatibleOverrides(t *testing.T) {
 	}
 	if len(got.ExtraArgs) != 2 || got.ExtraArgs[0] != "--future" || got.ExtraArgs[1] != "value" {
 		t.Fatalf("extra_args = %#v", got.ExtraArgs)
+	}
+}
+
+func TestMergeEnvConfigRejectsMalformedTypedValues(t *testing.T) {
+	cases := map[string]string{
+		"TAGTEAM_SCOUT_RETRIEVAL":                          "sometimes",
+		"TAGTEAM_SUPERVISOR_SLICING":                       "sometimes",
+		"TAGTEAM_MAX_PACKAGES":                             "0",
+		"TAGTEAM_AUTO_NEXT_PACKAGE":                        "sometimes",
+		"TAGTEAM_RESPECT_REPO_INSTRUCTIONS":                "sometimes",
+		"TAGTEAM_DECISION_MEMORY":                          "sometimes",
+		"TAGTEAM_MAX_FINDINGS":                             "nope",
+		"TAGTEAM_MAX_OUTPUT_BYTES":                         "-1",
+		"TAGTEAM_MAX_ROLE_INVOCATIONS":                     "0",
+		"TAGTEAM_ROUNDS":                                   "zero",
+		"TAGTEAM_CODEX_ARGS":                               `"unterminated`,
+		"TAGTEAM_CLAUDE_ARGS":                              `"unterminated`,
+		"TAGTEAM_CLAUDE_SERIALIZE":                         "sometimes",
+		"TAGTEAM_AGY_ARGS":                                 `"unterminated`,
+		"TAGTEAM_GOSLING_ARGS":                             `"unterminated`,
+		"TAGTEAM_GROK_ARGS":                                `"unterminated`,
+		"TAGTEAM_OPENAI_COMPATIBLE_MAX_CONTEXT_TOKENS":     "many",
+		"TAGTEAM_OPENAI_COMPATIBLE_RESERVED_OUTPUT_TOKENS": "many",
+		"TAGTEAM_OPENAI_COMPATIBLE_HEADERS":                "missing-equals",
+		"TAGTEAM_OPENAI_COMPATIBLE_ARGS":                   `"unterminated`,
+	}
+	for key, value := range cases {
+		t.Run(key, func(t *testing.T) {
+			cfg := DefaultConfig()
+			err := mergeEnvConfig(&cfg, map[string]string{key: value})
+			if err == nil || !strings.Contains(err.Error(), key) {
+				t.Fatalf("mergeEnvConfig error = %v, want field-specific %s error", err, key)
+			}
+		})
 	}
 }
 

@@ -19,7 +19,7 @@ import (
 // local OpenAI-compatible endpoint (e.g. Ollama); cloud or CLI stewards are
 // optional escalation targets constrained by the same budgets.
 type StewardConfig struct {
-	Enabled            bool   `toml:"enabled"`
+	Enabled            *bool  `toml:"enabled"`
 	BaseURL            string `toml:"base_url"`
 	APIKeyEnv          string `toml:"api_key_env"`
 	Model              string `toml:"model"`
@@ -205,7 +205,7 @@ func observationSignature(observation RunObservation) string {
 // disabled or unconfigured it returns the deterministic template steward so the
 // run always has a safe advisory tier.
 func BuildSteward(cfg StewardConfig, envOverlay map[string]string) Steward {
-	if !cfg.Enabled || strings.TrimSpace(cfg.Model) == "" || strings.TrimSpace(cfg.BaseURL) == "" {
+	if cfg.Enabled == nil || !*cfg.Enabled || strings.TrimSpace(cfg.Model) == "" || strings.TrimSpace(cfg.BaseURL) == "" {
 		return DeterministicSteward{}
 	}
 	apiKey := ""

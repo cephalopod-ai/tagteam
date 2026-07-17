@@ -668,20 +668,20 @@ func cloneStringMap(src map[string]string) map[string]string {
 	return dst
 }
 
-func parseHeaderPairs(raw string) map[string]string {
+func parseHeaderPairs(raw string) (map[string]string, error) {
 	headers := map[string]string{}
 	for _, part := range strings.Split(raw, ",") {
 		key, value, ok := strings.Cut(part, "=")
 		if !ok {
-			continue
+			return nil, fmt.Errorf("header entry must use name=value syntax")
 		}
 		key = strings.TrimSpace(key)
 		if key == "" {
-			continue
+			return nil, fmt.Errorf("header name must not be empty")
 		}
 		headers[key] = strings.TrimSpace(value)
 	}
-	return headers
+	return headers, nil
 }
 
 func mergePassthrough(base []string, raw string) ([]string, error) {

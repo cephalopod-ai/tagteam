@@ -27,7 +27,7 @@ orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`
 | Resilience | `state_machine.go`, `run_lock.go`, `invocation_lock.go`, `recovery.go`, `resume.go`, `resume_execution.go`, `resume_phases.go`, `timeout_calibration.go`, `invocation_stream.go` | Phase journaling, locks/cancellation, cross-process claude invocation serialization, partial-diff recovery, same-run phase continuation, calibrated deadlines, and durable subprocess streams. |
 | Quality / transfer | `quality_gates.go`, `findings.go`, `test_hardening.go`, `transfer.go`, `integrity.go` | Scope/churn/data-loss/findings/regression gates, isolated tests, structural integrity, and explicit patch transfer. |
 | Snapshot / live status | `internal/tagteam/snapshot.go` | Builds `RunSnapshot` from `active.json`, `state.json`, `final.json`, and `plan.json`. |
-| Control-plane contract | `internal/tagteam/control_contract.go`, `control_runtime.go`, `control_resume_assessment.go`, `mcp_stdio.go`, `mcp_daemon.go`, `internal/cli/mcp.go` | Versioned launch/action types, bounded projections, durable approval/idempotency records, non-mutating resume assessment, local MCP stdio, and an experimental unix-socket transport. Start, resume, and cancel are available only through the approval-gated lifecycle runtime. Socket session/runtime ownership remains an audited known risk. |
+| Control-plane contract | `internal/tagteam/control_contract.go`, `control_runtime.go`, `control_runtime_lifecycle.go`, `control_resume_assessment.go`, `mcp_stdio.go`, `mcp_daemon.go`, `internal/cli/mcp.go` | Versioned launch/action types, bounded projections, durable approval/idempotency records, non-mutating resume assessment, local MCP stdio, and a unix-socket transport. Start, resume, and cancel are available only through the approval-gated lifecycle runtime. Stdio owns and drains its runtime; socket sessions borrow one daemon-owned runtime so client disconnects do not cancel shared jobs. |
 | Run state / reasons | `internal/tagteam/run_state.go` | Failure classification, exit→reason mapping, role status/loss records, budget state, redacted persistence helpers. |
 | Orchestration decision | `internal/tagteam/orchestration.go` | Host-owned single advisory adjustment (relay↔supervisor) before implementation. |
 | Scout retrieval | `internal/tagteam/retrieval.go` | Bounded, local-only pre-scout retrieval evidence for relay `recon`. |
@@ -137,19 +137,10 @@ No bridge performs a network request or promotes evidence to memory.
 
 ## Known architecture risks
 
-- Unix-socket MCP sessions currently close the daemon's shared runtime on client
-  disconnect, cancelling registered jobs without joining their goroutines. Do
-  not treat socket mode as durable until
-  [AUD-001](AUDIT_REPORT_2026-07-16.md#aud-001--socket-clients-close-the-shared-runtime-and-daemon-shutdown-does-not-drain-jobs)
-  is repaired and clean-runner tests pass.
 - Authoritative state, event, quality-gate, and terminal persistence errors are
   discarded on multiple run/resume paths. This can make snapshot consumers
   disagree with execution; see
   [AUD-005](AUDIT_REPORT_2026-07-16.md#aud-005--authoritative-state-and-terminal-artifact-errors-are-broadly-discarded).
-- The optional model Steward is not wired end to end through config resolution,
-  and its budget wrapper is request-scoped rather than run-scoped. The
-  deterministic fallback remains usable; see
-  [AUD-003](AUDIT_REPORT_2026-07-16.md#aud-003--steward-configuration-is-discarded-and-per-run-budgets-reset-per-request).
 - `internal/tagteam` remains a broad package, but runner, config, type, adapter,
   TUI-state, and test declarations are split into focused files capped at 800
   lines. Further package-boundary extraction should preserve the current

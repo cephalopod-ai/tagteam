@@ -168,11 +168,13 @@ func TestStewardLeaseIsExclusivePerRun(t *testing.T) {
 }
 
 func TestBuildStewardDisabledReturnsDeterministic(t *testing.T) {
-	steward := BuildSteward(StewardConfig{Enabled: false, BaseURL: "http://127.0.0.1:11434/v1", Model: "x"}, nil)
+	disabled := false
+	enabled := true
+	steward := BuildSteward(StewardConfig{Enabled: &disabled, BaseURL: "http://127.0.0.1:11434/v1", Model: "x"}, nil)
 	if _, ok := steward.(DeterministicSteward); !ok {
 		t.Fatalf("disabled steward = %T, want DeterministicSteward", steward)
 	}
-	steward = BuildSteward(StewardConfig{Enabled: true, BaseURL: "", Model: "x"}, nil)
+	steward = BuildSteward(StewardConfig{Enabled: &enabled, BaseURL: "", Model: "x"}, nil)
 	if _, ok := steward.(DeterministicSteward); !ok {
 		t.Fatalf("unconfigured steward = %T, want DeterministicSteward", steward)
 	}
@@ -180,7 +182,8 @@ func TestBuildStewardDisabledReturnsDeterministic(t *testing.T) {
 
 func TestBuildStewardEnabledBuildsModelTier(t *testing.T) {
 	server := stewardChatServer(t, `{"action":"inspect","reason":"stalled worker"}`, nil)
-	cfg := StewardConfig{Enabled: true, BaseURL: server.URL, Model: "test-model", MaxCallsPerRun: 5}
+	enabled := true
+	cfg := StewardConfig{Enabled: &enabled, BaseURL: server.URL, Model: "test-model", MaxCallsPerRun: 5}
 	steward := BuildSteward(cfg, nil)
 	if _, ok := steward.(*BudgetedSteward); !ok {
 		t.Fatalf("enabled steward = %T, want *BudgetedSteward", steward)

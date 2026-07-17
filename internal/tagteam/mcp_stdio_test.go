@@ -407,7 +407,7 @@ func runMCPStdioWithRuntime(t *testing.T, service ControlService, runtime *Contr
 	var output bytes.Buffer
 	server := NewMCPStdioServer(service, &input, &output)
 	if runtime != nil {
-		server.WithRuntime(runtime)
+		server.WithOwnedRuntime(runtime)
 	}
 	if err := server.Serve(context.Background()); err != nil {
 		t.Fatal(err)

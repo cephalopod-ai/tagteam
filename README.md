@@ -576,12 +576,11 @@ An optional, local-first **Run Steward** can summarize a run's progress and reco
 
 Hosts read it through the read-only `tagteam_advise` MCP tool. The steward is **disabled by default**; when disabled, missing, slow, invalid, or over budget, a deterministic template steward is the guaranteed fallback, so a run never depends on a model. The intended model tier points at a local OpenAI-compatible endpoint (e.g. Ollama), uses conservative call, timeout, and deduplication budgets, and keeps a single-observer lease. The model request is text-only with no tool/function surface, so the steward cannot invoke Tagteam or inherit MCP/repository-write tools.
 
-> **Known implementation gap (2026-07-16):** the deterministic advisory path is
-> available, but config layering currently discards `[steward]` values and the
-> runtime rebuilds the budget wrapper per request. Until
-> [AUD-003](docs/AUDIT_REPORT_2026-07-16.md#aud-003--steward-configuration-is-discarded-and-per-run-budgets-reset-per-request)
-> is repaired, the model tier is not configurable end to end and its call/dedup
-> limits are not per-run on the real MCP path.
+Trusted user configuration and explicitly trusted repository configuration can
+enable the model tier. Untrusted repository configuration cannot supply its
+endpoint or API-key selector. The control runtime retains one bounded budget
+state per run; after 1,024 cached runs, new runs safely use the deterministic
+fallback instead of growing daemon memory without limit.
 
 ```toml
 [steward]

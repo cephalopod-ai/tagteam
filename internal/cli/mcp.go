@@ -65,7 +65,7 @@ func newMCPCommand(shared *flagState) *cobra.Command {
 
 			server := tagteam.NewMCPStdioServer(service, cmd.InOrStdin(), cmd.OutOrStdout())
 			if runtime != nil {
-				server.WithRuntime(runtime)
+				server.WithOwnedRuntime(runtime)
 			}
 			return server.Serve(cmd.Context())
 		},

@@ -108,6 +108,88 @@ func TestServeMCPSocketSupportsMultipleClients(t *testing.T) {
 	}
 }
 
+func TestServeMCPSocketClientDisconnectDoesNotCancelDaemonJob(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	service := ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}
+	runtime := NewControlRuntime(service, DefaultConfig(), nil)
+	jobContext, cancelJob := context.WithCancel(context.Background())
+	runtime.registerJob("daemon-owned-job", cancelJob)
+	t.Cleanup(func() {
+		cancelJob()
+		runtime.unregisterJob("daemon-owned-job")
+	})
+	socket := startMCPSocketDaemon(t, service, runtime)
+
+	// The round trip closes its client connection after initialization. A socket
+	// session borrows the daemon runtime, so that disconnect must not cancel a
+	// daemon-owned job.
+	mcpSocketRoundTrip(t, socket, 1,
+		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}},
+	)
+	select {
+	case <-jobContext.Done():
+		t.Fatal("client disconnect cancelled a daemon-owned job")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestControlRuntimeCloseWaitsForTrackedWorkers(t *testing.T) {
+	runtime := NewControlRuntime(ControlService{}, DefaultConfig(), nil)
+	jobContext, cancelJob := context.WithCancel(context.Background())
+	release := make(chan struct{})
+	runtime.startJob("tracked-worker", cancelJob, func() {
+		<-jobContext.Done()
+		<-release
+	})
+
+	closed := make(chan struct{})
+	go func() {
+		runtime.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("runtime Close returned before the tracked worker exited")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("runtime Close did not return after the tracked worker exited")
+	}
+}
+
+func TestControlRuntimeStartFailsAfterClose(t *testing.T) {
+	runtime := NewControlRuntime(ControlService{}, DefaultConfig(), nil)
+	runtime.Close()
+
+	_, err := runtime.Start(context.Background(), ControlStartRequest{})
+	startErr, ok := err.(*ControlStartError)
+	if !ok || startErr.ReasonCode != "runtime_closed" {
+		t.Fatalf("Start after Close error = %#v, want runtime_closed", err)
+	}
+}
+
+func TestListenMCPUnixSocketFailsClosedWhenPermissionsCannotBeSet(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.sock")
+	listener, err := listenMCPUnixSocket(path, func(string, os.FileMode) error {
+		return os.ErrPermission
+	})
+	if err == nil {
+		if listener != nil {
+			_ = listener.Close()
+		}
+		t.Fatal("socket listener succeeded after chmod failure")
+	}
+	if listener != nil {
+		t.Fatal("chmod failure returned a live listener")
+	}
+	if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("socket path survived chmod failure: %v", statErr)
+	}
+}
+
 func TestServeMCPSocketDurableOwnershipAcrossClientDisconnect(t *testing.T) {
 	repo, _ := createResumeFixtureRepo(t)
 	service := ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}
@@ -128,18 +210,29 @@ func TestServeMCPSocketDurableOwnershipAcrossClientDisconnect(t *testing.T) {
 		t.Fatalf("start handle = %#v", startResult)
 	}
 
-	// Client B is a fresh connection: the run is owned by the daemon, not by the
-	// originating connection, so B can still observe it after A disconnected.
-	statusResponses := mcpSocketRoundTrip(t, socket, 2,
-		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}},
-		map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tagteam_status", "arguments": map[string]any{"run_id": runID}}},
-	)
-	statusResult := statusResponses[1]["result"].(map[string]any)
-	if statusResult["isError"] != false {
-		t.Fatalf("status over reconnected socket errored: %#v", statusResult)
+	// Client B is a fresh connection. It must observe the run's expected
+	// preflight failure, never a cancellation caused by client A disconnecting.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		statusResponses := mcpSocketRoundTrip(t, socket, 2,
+			map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}},
+			map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tagteam_status", "arguments": map[string]any{"run_id": runID}}},
+		)
+		statusResult := statusResponses[1]["result"].(map[string]any)
+		if statusResult["isError"] != false {
+			t.Fatalf("status over reconnected socket errored: %#v", statusResult)
+		}
+		run := statusResult["structuredContent"].(map[string]any)["run"].(map[string]any)
+		if run["run_id"] != runID {
+			t.Fatalf("reconnected status run_id = %v, want %q", run["run_id"], runID)
+		}
+		switch run["status"] {
+		case string(RunStatusFailed):
+			return
+		case string(RunStatusCancelled):
+			t.Fatal("client disconnect cancelled the daemon-owned run")
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
-	run := statusResult["structuredContent"].(map[string]any)["run"].(map[string]any)
-	if run["run_id"] != runID {
-		t.Fatalf("reconnected status run_id = %v, want %q", run["run_id"], runID)
-	}
+	t.Fatalf("daemon-owned run %q did not reach its expected terminal failure", runID)
 }

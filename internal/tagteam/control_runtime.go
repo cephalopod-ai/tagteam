@@ -25,8 +25,14 @@ type ControlRuntime struct {
 	config  Config
 	sources []string
 
+	lifecycleMu sync.RWMutex
+	closeOnce   sync.Once
+	workers     sync.WaitGroup
+
 	mu            sync.Mutex
+	closed        bool
 	jobs          map[string]context.CancelFunc
+	stewards      map[string]Steward
 	watcherCancel context.CancelFunc
 	watcherDone   chan struct{}
 }
@@ -103,61 +109,12 @@ type controlStartRecord struct {
 }
 
 func NewControlRuntime(service ControlService, cfg Config, sources []string) *ControlRuntime {
-	return &ControlRuntime{service: service, config: cfg, sources: append([]string(nil), sources...), jobs: map[string]context.CancelFunc{}}
-}
-
-func (r *ControlRuntime) registerJob(runID string, cancel context.CancelFunc) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.jobs[runID] = cancel
-	if r.watcherCancel != nil {
-		return
-	}
-	watcherContext, watcherCancel := context.WithCancel(context.Background())
-	r.watcherCancel = watcherCancel
-	r.watcherDone = make(chan struct{})
-	go r.watchControlCancellation(watcherContext, r.watcherDone)
-}
-
-func (r *ControlRuntime) unregisterJob(runID string) {
-	r.mu.Lock()
-	delete(r.jobs, runID)
-	if len(r.jobs) != 0 || r.watcherCancel == nil {
-		r.mu.Unlock()
-		return
-	}
-	watcherCancel := r.watcherCancel
-	watcherDone := r.watcherDone
-	r.watcherCancel = nil
-	r.watcherDone = nil
-	r.mu.Unlock()
-
-	watcherCancel()
-	<-watcherDone
-}
-
-// Close cancels every job owned by this local runtime. MCP stdio calls it when
-// the host disconnects so its worker processes are not left running after a
-// normal transport shutdown.
-func (r *ControlRuntime) Close() {
-	r.mu.Lock()
-	cancels := make([]context.CancelFunc, 0, len(r.jobs))
-	for _, cancel := range r.jobs {
-		cancels = append(cancels, cancel)
-	}
-	r.jobs = map[string]context.CancelFunc{}
-	watcherCancel := r.watcherCancel
-	watcherDone := r.watcherDone
-	r.watcherCancel = nil
-	r.watcherDone = nil
-	r.mu.Unlock()
-
-	for _, cancel := range cancels {
-		cancel()
-	}
-	if watcherCancel != nil {
-		watcherCancel()
-		<-watcherDone
+	return &ControlRuntime{
+		service:  service,
+		config:   cfg,
+		sources:  append([]string(nil), sources...),
+		jobs:     map[string]context.CancelFunc{},
+		stewards: map[string]Steward{},
 	}
 }
 
@@ -199,6 +156,14 @@ func (r *ControlRuntime) Status(runID string) (ControlStatus, error) {
 }
 
 func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest) (ControlRunHandle, error) {
+	r.lifecycleMu.RLock()
+	defer r.lifecycleMu.RUnlock()
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return ControlRunHandle{}, newControlStartError("runtime_closed", "control runtime is shutting down", nil)
+	}
 	if request.SchemaVersion != ControlContractVersion {
 		return ControlRunHandle{}, newControlStartError("invalid_request", fmt.Sprintf("unsupported control schema_version %d (want %d)", request.SchemaVersion, ControlContractVersion), nil)
 	}
@@ -300,8 +265,7 @@ func (r *ControlRuntime) Start(ctx context.Context, request ControlStartRequest)
 
 	opts.RunID = runID
 	runContext, cancel := context.WithCancel(ctx)
-	r.registerJob(runID, cancel)
-	go r.runStart(runContext, opts, runID)
+	r.startJob(runID, cancel, func() { r.runStart(runContext, opts, runID) })
 	return ControlRunHandle{SchemaVersion: ControlContractVersion, RunID: runID, ProducerVersion: normalizedProducerVersion(r.service.ProducerVersion)}, nil
 }
 
@@ -583,7 +547,6 @@ func (r *ControlRuntime) watchControlCancellation(ctx context.Context, done chan
 }
 
 func (r *ControlRuntime) runStart(ctx context.Context, opts RunOptions, runID string) {
-	defer r.unregisterJob(runID)
 	final, err := NewApp(r.config).Run(ctx, opts)
 	if err == nil || final.RunID != "" {
 		return

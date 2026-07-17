@@ -35,6 +35,7 @@ func DefaultConfig() Config {
 	respectRepoInstructions := true
 	decisionMemory := false
 	scoutRetrieval := false
+	stewardEnabled := false
 	return Config{
 		Defaults: DefaultsConfig{
 			WatchdogTimeout:         "5m",
@@ -158,7 +159,7 @@ func DefaultConfig() Config {
 		// The default tier points at a local OpenAI-compatible endpoint (Ollama)
 		// with conservative per-run budgets that keep it below worker priority.
 		Steward: StewardConfig{
-			Enabled:            false,
+			Enabled:            &stewardEnabled,
 			BaseURL:            "http://127.0.0.1:11434/v1",
 			Model:              "",
 			TimeoutSeconds:     10,
@@ -211,7 +212,9 @@ func LoadConfigWithOptions(workdir string, opts LoadConfigOptions) (Config, []st
 		sources = append(sources, source)
 	}
 
-	mergeEnvConfig(&cfg, cfg.EnvOverlay)
+	if err := mergeEnvConfig(&cfg, cfg.EnvOverlay); err != nil {
+		return Config{}, nil, err
+	}
 	if err := normalizeTestPresets(&cfg); err != nil {
 		return Config{}, nil, err
 	}
@@ -423,6 +426,9 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 	src.Adapters.OpenAICompatible.APIKeyEnv = ""
 	src.Adapters.OpenAICompatible.ExtraHeaders = nil
 	src.Adapters.OpenAICompatible.ExtraArgs = nil
+	// A steward endpoint and API-key selector cross a network/auth boundary.
+	// Repo-local config may set them only after explicit trust.
+	src.Steward = StewardConfig{}
 	// Repo-local subprocesses and external bridge paths are authority-bearing.
 	// They are accepted only with --trust-repo-config.
 	src.CodeIntel = CodeIntelConfig{}
@@ -719,6 +725,7 @@ func mergeConfig(dst *Config, src Config) {
 	if len(src.Adapters.OpenAICompatible.ExtraArgs) > 0 {
 		dst.Adapters.OpenAICompatible.ExtraArgs = append([]string{}, src.Adapters.OpenAICompatible.ExtraArgs...)
 	}
+	mergeStewardConfig(&dst.Steward, src.Steward)
 	if src.TestPresets != nil {
 		if dst.TestPresets == nil {
 			dst.TestPresets = map[string]TestPresetConfig{}
@@ -727,6 +734,31 @@ func mergeConfig(dst *Config, src Config) {
 			// Later trusted layers fully replace an earlier entry with the same key.
 			dst.TestPresets[key] = preset
 		}
+	}
+}
+
+func mergeStewardConfig(dst *StewardConfig, src StewardConfig) {
+	if src.Enabled != nil {
+		enabled := *src.Enabled
+		dst.Enabled = &enabled
+	}
+	if src.BaseURL != "" {
+		dst.BaseURL = src.BaseURL
+	}
+	if src.APIKeyEnv != "" {
+		dst.APIKeyEnv = src.APIKeyEnv
+	}
+	if src.Model != "" {
+		dst.Model = src.Model
+	}
+	if src.TimeoutSeconds != 0 {
+		dst.TimeoutSeconds = src.TimeoutSeconds
+	}
+	if src.MaxCallsPerRun != 0 {
+		dst.MaxCallsPerRun = src.MaxCallsPerRun
+	}
+	if src.MinIntervalSeconds != 0 {
+		dst.MinIntervalSeconds = src.MinIntervalSeconds
 	}
 }
 

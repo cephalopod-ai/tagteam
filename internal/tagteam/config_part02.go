@@ -125,7 +125,7 @@ func hasTagteamEnv(overlay map[string]string) bool {
 	return false
 }
 
-func mergeEnvConfig(cfg *Config, overlay map[string]string) {
+func mergeEnvConfig(cfg *Config, overlay map[string]string) error {
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_STATE_ROOT"); ok {
 		cfg.Defaults.StateRoot = value
 	}
@@ -174,9 +174,11 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 		cfg.Defaults.LossPolicy.Supervisor = LossPolicy(value)
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_SCOUT_RETRIEVAL"); ok {
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			cfg.Defaults.ScoutRetrieval = &parsed
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_SCOUT_RETRIEVAL must be a boolean: %w", err)
 		}
+		cfg.Defaults.ScoutRetrieval = &parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CODE_INTEL_COMMAND"); ok {
 		cfg.Defaults.CodeIntelCommand = value
@@ -203,50 +205,66 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 		cfg.Defaults.Supervisor = value
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_SUPERVISOR_SLICING"); ok {
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			cfg.Defaults.SupervisorSlicing = &parsed
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_SUPERVISOR_SLICING must be a boolean: %w", err)
 		}
+		cfg.Defaults.SupervisorSlicing = &parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MAX_PACKAGES"); ok {
-		if maxPackages, err := strconv.Atoi(value); err == nil && maxPackages > 0 {
-			cfg.Defaults.MaxPackages = maxPackages
+		maxPackages, err := strconv.Atoi(value)
+		if err != nil || maxPackages <= 0 {
+			return fmt.Errorf("TAGTEAM_MAX_PACKAGES must be a positive integer")
 		}
+		cfg.Defaults.MaxPackages = maxPackages
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_PACKAGE"); ok {
 		cfg.Defaults.Package = value
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_AUTO_NEXT_PACKAGE"); ok {
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			cfg.Defaults.AutoNextPackage = &parsed
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_AUTO_NEXT_PACKAGE must be a boolean: %w", err)
 		}
+		cfg.Defaults.AutoNextPackage = &parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_RESPECT_REPO_INSTRUCTIONS"); ok {
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			cfg.Defaults.RespectRepoInstructions = &parsed
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_RESPECT_REPO_INSTRUCTIONS must be a boolean: %w", err)
 		}
+		cfg.Defaults.RespectRepoInstructions = &parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_DECISION_MEMORY"); ok {
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			cfg.Defaults.DecisionMemory = &parsed
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_DECISION_MEMORY must be a boolean: %w", err)
 		}
+		cfg.Defaults.DecisionMemory = &parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MAX_FINDINGS"); ok {
-		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
-			cfg.Defaults.MaxFindings = parsed
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed <= 0 {
+			return fmt.Errorf("TAGTEAM_MAX_FINDINGS must be a positive integer")
 		}
+		cfg.Defaults.MaxFindings = parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MAX_OUTPUT_BYTES"); ok {
-		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed > 0 {
-			cfg.Defaults.MaxOutputBytes = parsed
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed <= 0 {
+			return fmt.Errorf("TAGTEAM_MAX_OUTPUT_BYTES must be a positive integer")
 		}
+		cfg.Defaults.MaxOutputBytes = parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MAX_WALL_TIME"); ok {
 		cfg.Defaults.MaxWallTime = value
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MAX_ROLE_INVOCATIONS"); ok {
-		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
-			cfg.Defaults.MaxRoleInvocations = parsed
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed <= 0 {
+			return fmt.Errorf("TAGTEAM_MAX_ROLE_INVOCATIONS must be a positive integer")
 		}
+		cfg.Defaults.MaxRoleInvocations = parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_JSON_REPAIR"); ok {
 		cfg.Defaults.JSONRepair = value
@@ -266,9 +284,11 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 		cfg.Defaults.Mode = string(ModeAdversarial)
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_ROUNDS"); ok {
-		if rounds, err := strconv.Atoi(value); err == nil && rounds > 0 {
-			cfg.Defaults.Rounds = rounds
+		rounds, err := strconv.Atoi(value)
+		if err != nil || rounds <= 0 {
+			return fmt.Errorf("TAGTEAM_ROUNDS must be a positive integer")
 		}
+		cfg.Defaults.Rounds = rounds
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_TEST"); ok {
 		cfg.Defaults.Test = value
@@ -283,40 +303,52 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 		cfg.Defaults.GitSafety = value
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CODEX_ARGS"); ok {
-		if parsed, err := shlex.Split(value); err == nil {
-			cfg.Adapters.Codex.ExtraArgs = parsed
+		parsed, err := shlex.Split(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_CODEX_ARGS is not a valid argument list: %w", err)
 		}
+		cfg.Adapters.Codex.ExtraArgs = parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CODEX_REASONING_EFFORT"); ok {
 		cfg.Adapters.Codex.ReasoningEffort = value
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CLAUDE_ARGS"); ok {
-		if parsed, err := shlex.Split(value); err == nil {
-			cfg.Adapters.Claude.ExtraArgs = parsed
+		parsed, err := shlex.Split(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_CLAUDE_ARGS is not a valid argument list: %w", err)
 		}
+		cfg.Adapters.Claude.ExtraArgs = parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CLAUDE_EFFORT"); ok {
 		cfg.Adapters.Claude.Effort = value
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_CLAUDE_SERIALIZE"); ok {
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			cfg.Adapters.Claude.Serialize = &parsed
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_CLAUDE_SERIALIZE must be a boolean: %w", err)
 		}
+		cfg.Adapters.Claude.Serialize = &parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_AGY_ARGS"); ok {
-		if parsed, err := shlex.Split(value); err == nil {
-			cfg.Adapters.Agy.ExtraArgs = parsed
+		parsed, err := shlex.Split(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_AGY_ARGS is not a valid argument list: %w", err)
 		}
+		cfg.Adapters.Agy.ExtraArgs = parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_GOSLING_ARGS"); ok {
-		if parsed, err := shlex.Split(value); err == nil {
-			cfg.Adapters.Gosling.ExtraArgs = parsed
+		parsed, err := shlex.Split(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_GOSLING_ARGS is not a valid argument list: %w", err)
 		}
+		cfg.Adapters.Gosling.ExtraArgs = parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_GROK_ARGS"); ok {
-		if parsed, err := shlex.Split(value); err == nil {
-			cfg.Adapters.Grok.ExtraArgs = parsed
+		parsed, err := shlex.Split(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_GROK_ARGS is not a valid argument list: %w", err)
 		}
+		cfg.Adapters.Grok.ExtraArgs = parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_GROK_MODEL"); ok {
 		cfg.Adapters.Grok.DefaultModel = value
@@ -334,23 +366,34 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) {
 		cfg.Adapters.OpenAICompatible.DefaultModel = value
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_OPENAI_COMPATIBLE_MAX_CONTEXT_TOKENS"); ok {
-		if parsed, err := strconv.Atoi(value); err == nil {
-			cfg.Adapters.OpenAICompatible.MaxContextTokens = &parsed
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_OPENAI_COMPATIBLE_MAX_CONTEXT_TOKENS must be an integer: %w", err)
 		}
+		cfg.Adapters.OpenAICompatible.MaxContextTokens = &parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_OPENAI_COMPATIBLE_RESERVED_OUTPUT_TOKENS"); ok {
-		if parsed, err := strconv.Atoi(value); err == nil {
-			cfg.Adapters.OpenAICompatible.ReservedOutputTokens = &parsed
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_OPENAI_COMPATIBLE_RESERVED_OUTPUT_TOKENS must be an integer: %w", err)
 		}
+		cfg.Adapters.OpenAICompatible.ReservedOutputTokens = &parsed
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_OPENAI_COMPATIBLE_HEADERS"); ok {
-		cfg.Adapters.OpenAICompatible.ExtraHeaders = parseHeaderPairs(value)
+		headers, err := parseHeaderPairs(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_OPENAI_COMPATIBLE_HEADERS is invalid: %w", err)
+		}
+		cfg.Adapters.OpenAICompatible.ExtraHeaders = headers
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_OPENAI_COMPATIBLE_ARGS"); ok {
-		if parsed, err := shlex.Split(value); err == nil {
-			cfg.Adapters.OpenAICompatible.ExtraArgs = parsed
+		parsed, err := shlex.Split(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_OPENAI_COMPATIBLE_ARGS is not a valid argument list: %w", err)
 		}
+		cfg.Adapters.OpenAICompatible.ExtraArgs = parsed
 	}
+	return nil
 }
 
 func validateConfig(cfg Config) error {
@@ -399,6 +442,23 @@ func validateConfig(cfg Config) error {
 	}
 	if err := validateTestPresets(cfg.TestPresets); err != nil {
 		return err
+	}
+	if cfg.Steward.TimeoutSeconds < 0 {
+		return fmt.Errorf("steward.timeout_seconds must be >= 0")
+	}
+	if cfg.Steward.MaxCallsPerRun < 0 {
+		return fmt.Errorf("steward.max_calls_per_run must be >= 0")
+	}
+	if cfg.Steward.MinIntervalSeconds < 0 {
+		return fmt.Errorf("steward.min_interval_seconds must be >= 0")
+	}
+	if cfg.Steward.Enabled != nil && *cfg.Steward.Enabled {
+		if strings.TrimSpace(cfg.Steward.BaseURL) == "" {
+			return fmt.Errorf("steward.base_url is required when enabled")
+		}
+		if strings.TrimSpace(cfg.Steward.Model) == "" {
+			return fmt.Errorf("steward.model is required when enabled")
+		}
 	}
 	return nil
 }

@@ -21,6 +21,9 @@ import (
 // operations through its existing mutex and run lock. Cancelling ctx closes the
 // listener and every live connection, then waits for in-flight sessions to drain.
 func ServeMCPSocket(ctx context.Context, listener net.Listener, service ControlService, runtime *ControlRuntime) error {
+	if runtime != nil {
+		defer runtime.Close()
+	}
 	var (
 		mu    sync.Mutex
 		conns = map[net.Conn]struct{}{}
@@ -79,6 +82,10 @@ func ServeMCPSocket(ctx context.Context, listener net.Listener, service ControlS
 // It refuses to replace a path that is not already a socket so it cannot clobber
 // an unrelated file.
 func ListenMCPUnixSocket(path string) (net.Listener, error) {
+	return listenMCPUnixSocket(path, os.Chmod)
+}
+
+func listenMCPUnixSocket(path string, chmod func(string, os.FileMode) error) (net.Listener, error) {
 	if path == "" {
 		return nil, fmt.Errorf("mcp socket path is required")
 	}
@@ -96,6 +103,19 @@ func ListenMCPUnixSocket(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen on mcp socket: %w", err)
 	}
-	_ = os.Chmod(path, 0o600)
+	if err := chmod(path, 0o600); err != nil {
+		closeErr := listener.Close()
+		removeErr := os.Remove(path)
+		return nil, errors.Join(fmt.Errorf("set owner-only MCP socket permissions: %w", err), closeErr, removeErr)
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		if err == nil {
+			err = fmt.Errorf("MCP socket mode is %04o, want 0600", info.Mode().Perm())
+		}
+		closeErr := listener.Close()
+		removeErr := os.Remove(path)
+		return nil, errors.Join(fmt.Errorf("verify owner-only MCP socket permissions: %w", err), closeErr, removeErr)
+	}
 	return listener, nil
 }

@@ -2,7 +2,12 @@ package tagteam
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -46,6 +51,64 @@ func TestControlRuntimeAdviseRejectsUnknownRun(t *testing.T) {
 	runtime := NewControlRuntime(service, DefaultConfig(), nil)
 	if _, err := runtime.Advise(context.Background(), "no-such-run"); err == nil {
 		t.Fatal("advise on an unknown run did not error")
+	}
+}
+
+func TestControlRuntimeAdviseKeepsOneBudgetPerRun(t *testing.T) {
+	service, runID, runDir := controlServiceFixture(t)
+	writeRunningStateFixture(t, runDir, runID)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": `{"action":"inspect","reason":"model result"}`}}},
+		})
+	}))
+	t.Cleanup(server.Close)
+	enabled := true
+	cfg := DefaultConfig()
+	cfg.Steward = StewardConfig{
+		Enabled:        &enabled,
+		BaseURL:        server.URL,
+		Model:          "test-model",
+		TimeoutSeconds: 1,
+		MaxCallsPerRun: 1,
+	}
+	runtime := NewControlRuntime(service, cfg, nil)
+	first, err := runtime.Advise(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Source != "model" {
+		t.Fatalf("first advisory source = %q, want model", first.Source)
+	}
+	second, err := runtime.Advise(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Source != "deterministic" {
+		t.Fatalf("budget-exhausted advisory source = %q, want deterministic", second.Source)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("model calls = %d, want one per-run budgeted call", got)
+	}
+}
+
+func TestControlRuntimeStewardCacheIsBounded(t *testing.T) {
+	runtime := NewControlRuntime(ControlService{}, DefaultConfig(), nil)
+	for index := 0; index < controlMaxStewardStates; index++ {
+		runtime.stewards[fmt.Sprintf("run-%d", index)] = DeterministicSteward{}
+	}
+
+	steward := runtime.stewardForRun("overflow-run")
+	if _, ok := steward.(DeterministicSteward); !ok {
+		t.Fatalf("overflow steward = %T, want deterministic fallback", steward)
+	}
+	if got := len(runtime.stewards); got != controlMaxStewardStates {
+		t.Fatalf("steward cache size = %d, want %d", got, controlMaxStewardStates)
+	}
+	if _, cached := runtime.stewards["overflow-run"]; cached {
+		t.Fatal("overflow steward was cached")
 	}
 }
 

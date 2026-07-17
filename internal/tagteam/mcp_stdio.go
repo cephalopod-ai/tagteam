@@ -16,11 +16,12 @@ const (
 )
 
 type MCPStdioServer struct {
-	service ControlService
-	runtime *ControlRuntime
-	in      io.Reader
-	out     io.Writer
-	mu      sync.Mutex
+	service     ControlService
+	runtime     *ControlRuntime
+	ownsRuntime bool
+	in          io.Reader
+	out         io.Writer
+	mu          sync.Mutex
 }
 
 func NewMCPStdioServer(service ControlService, in io.Reader, out io.Writer) *MCPStdioServer {
@@ -29,13 +30,24 @@ func NewMCPStdioServer(service ControlService, in io.Reader, out io.Writer) *MCP
 
 func (s *MCPStdioServer) WithRuntime(runtime *ControlRuntime) *MCPStdioServer {
 	s.runtime = runtime
+	s.ownsRuntime = false
+	return s
+}
+
+// WithOwnedRuntime attaches the lifecycle runtime to a process-scoped stdio
+// session. The session cancels and drains the runtime when its input closes.
+// Socket sessions use WithRuntime because the daemon, not a connection, owns
+// the shared runtime.
+func (s *MCPStdioServer) WithOwnedRuntime(runtime *ControlRuntime) *MCPStdioServer {
+	s.runtime = runtime
+	s.ownsRuntime = true
 	return s
 }
 
 // Serve runs a newline-delimited MCP stdio session. It exposes only bounded,
 // implemented control operations; start requires the explicit runtime gate.
 func (s *MCPStdioServer) Serve(ctx context.Context) error {
-	if s.runtime != nil {
+	if s.runtime != nil && s.ownsRuntime {
 		defer s.runtime.Close()
 	}
 	scanner := bufio.NewScanner(s.in)

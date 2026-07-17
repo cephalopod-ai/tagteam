@@ -23,6 +23,9 @@ Canonical entry point for `tagteam` documentation.
 - [Full Repository Audit — 2026-07-16](AUDIT_REPORT_2026-07-16.md) —
   source-backed implementation, reliability, security, dataflow, dead-code,
   dependency, release, and GitHub-posture findings with remediation order.
+- [Defect Repair Campaign — 2026-07-16](REPAIR_CAMPAIGN_2026-07-16.md) — gated
+  inventory, locality-grouped repair stages, validation evidence, adversarial
+  review dispositions, and stage commit checkpoints for AUD-001–AUD-012.
 - [Test Ledger](TEST_LEDGER.md) — test areas, evidence, latest results, and
   known gaps.
 - [v0.1.0 to current](V0.1.0_TO_CURRENT.md) — detailed release-to-development
