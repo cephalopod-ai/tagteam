@@ -27,6 +27,10 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	modeRaw := cfg.Defaults.Mode
 	rounds := cfg.Defaults.Rounds
 	testCmd := cfg.Defaults.Test
+	testCommands := configuredConfigTestCommands(cfg.Defaults.Test, cfg.Defaults.Tests)
+	if len(testCommands) > 0 {
+		testCmd = testCommands[0]
+	}
 	lintCmd := cfg.Defaults.Lint
 	testIdentityRegex := cfg.Defaults.TestIdentityRegex
 	churn := cfg.Defaults.Churn
@@ -120,8 +124,12 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		if profile.Rounds != 0 {
 			rounds = profile.Rounds
 		}
-		if profile.Test != "" {
+		if profile.Tests != nil {
+			testCommands = append([]string(nil), profile.Tests...)
+			testCmd = testCommands[0]
+		} else if profile.Test != "" {
 			testCmd = profile.Test
+			testCommands = []string{testCmd}
 		}
 		if profile.Lint != "" {
 			lintCmd = profile.Lint
@@ -434,7 +442,17 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		rounds = flags.Rounds
 	}
 	if changed["test"] {
-		testCmd = flags.Test
+		if flags.Tests != nil {
+			normalized, normalizeErr := normalizeTestCommandList(flags.Tests, "--test")
+			if normalizeErr != nil {
+				return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: normalizeErr}
+			}
+			testCommands = normalized
+			testCmd = testCommands[0]
+		} else {
+			testCmd = flags.Test
+			testCommands = configuredConfigTestCommands(testCmd, nil)
+		}
 	}
 	if changed["test-identity-regex"] {
 		testIdentityRegex = flags.TestIdentityRegex
@@ -631,6 +649,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		JSONRepair:                jsonRepair,
 		Rounds:                    rounds,
 		TestCmd:                   testCmd,
+		TestCommands:              append([]string(nil), testCommands...),
 		LintCmd:                   lintCmd,
 		TestIdentityRegex:         testIdentityRegex,
 		Churn:                     churn,

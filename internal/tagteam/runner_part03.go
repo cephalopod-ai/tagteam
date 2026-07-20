@@ -283,10 +283,10 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (final FinalRun, err
 		final.Findings = summary
 	}
 
-	if opts.TestCmd != "" && !opts.NoTest {
+	if hasConfiguredTests(opts) && !opts.NoTest {
 		testPath := filepath.Join(runDir, "test-round-1.txt")
-		logProgress(opts, "solo tests started command=%q", opts.TestCmd)
-		testRun, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, testPath, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
+		logProgress(opts, "solo tests started command=%q", testCommandDescription(opts))
+		testRun, err := runConfiguredTestCommands(ctx, opts, testPath)
 		if err != nil {
 			return final, err
 		}

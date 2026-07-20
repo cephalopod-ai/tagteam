@@ -155,15 +155,15 @@ func captureAndTestRound(ctx context.Context, opts RunOptions, baseline, runDir,
 		final.Findings = summary
 	}
 	testOutput := ""
-	if opts.TestCmd == "" || opts.NoTest {
+	if !hasConfiguredTests(opts) || opts.NoTest {
 		return diffArtifact, testOutput, nil
 	}
 	if err := writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: string(PhaseTesting), RoleStatuses: final.RoleStatuses, CurrentRound: round, LatestDiffPath: final.LatestDiffPath, LatestReviewPath: final.LatestReviewPath}); err != nil {
 		return DiffArtifact{}, "", mandatoryPersistenceError("testing run state", err)
 	}
 	testPath := filepath.Join(runDir, fmt.Sprintf("test-round-%d.txt", round))
-	logProgress(opts, "round %d tests started command=%q", round, opts.TestCmd)
-	testRun, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, testPath, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
+	logProgress(opts, "round %d tests started command=%q", round, testCommandDescription(opts))
+	testRun, err := runConfiguredTestCommands(ctx, opts, testPath)
 	if err != nil {
 		return DiffArtifact{}, "", err
 	}

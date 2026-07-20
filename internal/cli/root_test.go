@@ -79,6 +79,17 @@ func TestRunCommandAndModelFlagUseExistingRunSurface(t *testing.T) {
 	}
 }
 
+func TestTestFlagAcceptsIndependentParallelCommands(t *testing.T) {
+	cmd := NewRootCommand()
+	testFlag := cmd.PersistentFlags().Lookup("test")
+	if testFlag == nil || testFlag.Value.Type() != "stringArray" {
+		t.Fatalf("test flag = %#v, want repeatable stringArray", testFlag)
+	}
+	if !strings.Contains(testFlag.Usage, "concurrently") {
+		t.Fatalf("test flag usage = %q", testFlag.Usage)
+	}
+}
+
 func TestMCPCommandUsesLocalStdioSurface(t *testing.T) {
 	cmd := NewRootCommand()
 	mcp, _, err := cmd.Find([]string{"mcp"})

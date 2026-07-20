@@ -277,7 +277,7 @@ func compareRegression(baseline, current TestRun) RegressionResult {
 }
 
 func runBaselineTest(ctx context.Context, opts RunOptions, runDir string) (*TestRun, error) {
-	if opts.TestCmd == "" || opts.NoTest {
+	if !hasConfiguredTests(opts) || opts.NoTest {
 		return nil, nil
 	}
 	started := time.Now().UTC()
@@ -290,7 +290,7 @@ func runBaselineTest(ctx context.Context, opts RunOptions, runDir string) (*Test
 		Actor:      "tagteam-host",
 		Phase:      "baseline-test",
 		Status:     "running",
-		Command:    opts.TestCmd,
+		Command:    testCommandDescription(opts),
 		OutputPath: path,
 		StartedAt:  started,
 	}
@@ -332,7 +332,7 @@ func runBaselineTest(ctx context.Context, opts RunOptions, runDir string) (*Test
 	}
 	path = filepath.Join(runDir, "baseline-test.txt")
 	activity.OutputPath = path
-	test, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, path, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
+	test, err := runConfiguredTestCommands(ctx, opts, path)
 	if err != nil {
 		finish("failed", nil, err)
 		if finishGateErr != nil {

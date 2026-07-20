@@ -269,14 +269,14 @@ func resumeCaptureRound(ctx context.Context, opts RunOptions, baseline, runDir, 
 	if err := writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: string(PhaseTesting), CurrentRound: round, LatestDiffPath: diff.PatchPath, DiffHash: diff.Metadata.DiffSHA256, LatestReviewPath: final.LatestReviewPath, RecoveryStatus: "resuming"}); err != nil {
 		return DiffArtifact{}, "", mandatoryPersistenceError("resumed testing state", err)
 	}
-	if !runTests || opts.TestCmd == "" || opts.NoTest {
+	if !runTests || !hasConfiguredTests(opts) || opts.NoTest {
 		return diff, "", nil
 	}
 	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("test-round-%d.txt", round)); err != nil {
 		return DiffArtifact{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
 	path := filepath.Join(runDir, fmt.Sprintf("test-round-%d.txt", round))
-	test, err := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, path, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
+	test, err := runConfiguredTestCommands(ctx, opts, path)
 	if err != nil {
 		return DiffArtifact{}, "", err
 	}

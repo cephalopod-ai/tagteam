@@ -269,7 +269,7 @@ func buildReviewBundle(runDir string, opts RunOptions, role string, round int, b
 		"adversary":       opts.Adversary,
 		"scout":           opts.Scout,
 		"rounds":          opts.Rounds,
-		"test_configured": opts.TestCmd != "",
+		"test_configured": hasConfiguredTests(opts),
 		"loss_policy":     opts.LossPolicy,
 		"fallbacks":       opts.Fallbacks,
 	}

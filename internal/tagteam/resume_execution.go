@@ -36,8 +36,8 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 	if state.CurrentRound > opts.Rounds {
 		opts.Rounds = state.CurrentRound
 	}
-	if opts.TestCmd != "" && !opts.NoTest {
-		if err := validateTestCommand(opts.Workdir, opts.TestCmd); err != nil {
+	if hasConfiguredTests(opts) && !opts.NoTest {
+		if err := validateConfiguredTestCommands(opts); err != nil {
 			return FinalRun{}, err
 		}
 	}

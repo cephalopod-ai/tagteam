@@ -177,7 +177,7 @@ func bindSharedFlags(cmd *cobra.Command, flags *flagState) {
 	flagSet.StringSliceVar(&flags.AllowedPaths, "allow-path", nil, "Allow an exact repo-relative file or directory prefix ending in / (repeatable; required for solo)")
 	flagSet.DurationVar(&flags.WatchdogTimeout, "watchdog-timeout", 0, "Cancel an invocation after this period without Git or output progress (default 5m)")
 	flagSet.IntVarP(&flags.Rounds, "rounds", "r", 0, "Hard cap on implementation/review rounds before final no-edit reports")
-	flagSet.StringVarP(&flags.Test, "test", "t", "", "Test command")
+	flagSet.StringArrayVarP(&flags.Tests, "test", "t", nil, "Test command (repeat for independent commands run concurrently)")
 	flagSet.StringVar(&flags.Lint, "lint", "", "Lint command required by the transfer gate")
 	flagSet.BoolVar(&flags.NoTest, "no-test", false, "Skip tests")
 	flagSet.BoolVar(&flags.JSON, "json", false, "Print machine-readable final result")

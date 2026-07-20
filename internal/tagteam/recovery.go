@@ -151,12 +151,12 @@ func (a *App) recoverEditorFailure(
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	}
-	if opts.TestCmd != "" && !opts.NoTest {
+	if hasConfiguredTests(opts) && !opts.NoTest {
 		if runDir, err = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("recovery-test-round-%d.txt", round)); err != nil {
 			return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
 		testPath := filepath.Join(runDir, fmt.Sprintf("recovery-test-round-%d.txt", round))
-		test, _ := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, testPath, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
+		test, _ := runConfiguredTestCommands(ctx, opts, testPath)
 		artifact.Test = &test
 	}
 	allowed := map[string]bool{"quarantine": true}

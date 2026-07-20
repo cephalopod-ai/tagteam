@@ -88,13 +88,15 @@ func TransferRun(ctx context.Context, opts RunOptions, runID, targetOverride str
 			return record, fmt.Errorf("scope gate is unresolved: %s", finding.Message)
 		}
 	}
-	if strings.TrimSpace(opts.TestCmd) == "" {
+	if !hasConfiguredTests(opts) {
 		return record, fmt.Errorf("transfer requires a focused test command")
 	}
 	if strings.TrimSpace(opts.LintCmd) == "" {
 		return record, fmt.Errorf("transfer requires a lint command")
 	}
-	if err := validateTestCommand(final.Workdir, opts.TestCmd); err != nil {
+	testOpts := opts
+	testOpts.Workdir = final.Workdir
+	if err := validateConfiguredTestCommands(testOpts); err != nil {
 		return record, err
 	}
 	if err := validateTestCommand(final.Workdir, opts.LintCmd); err != nil {
@@ -145,7 +147,7 @@ func TransferRun(ctx context.Context, opts RunOptions, runID, targetOverride str
 	if statusErr != nil || len(bytes.TrimSpace(status)) != 0 {
 		return record, fmt.Errorf("target worktree is not clean")
 	}
-	record.FocusedTest, err = runTestCommand(ctx, final.Workdir, opts.TestCmd, opts.Timeout, filepath.Join(runDir, "transfer-test.txt"), false, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
+	record.FocusedTest, err = runConfiguredTestCommands(ctx, testOpts, filepath.Join(runDir, "transfer-test.txt"))
 	if err != nil || !record.FocusedTest.Passed {
 		return record, fmt.Errorf("focused transfer test failed")
 	}

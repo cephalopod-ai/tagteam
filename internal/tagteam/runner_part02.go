@@ -165,10 +165,10 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (final
 		return final, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("update findings ledger: %w", err)}
 	}
 	testOutput := ""
-	if opts.TestCmd != "" && !opts.NoTest {
+	if hasConfiguredTests(opts) && !opts.NoTest {
 		testPath := filepath.Join(runDir, "test-round-1.txt")
-		logProgress(opts, "review tests started command=%q", opts.TestCmd)
-		testRun, testErr := runTestCommand(ctx, opts.Workdir, opts.TestCmd, opts.Timeout, testPath, opts.DryRun, opts.EnvOverlay, opts.MaxOutputBytes, opts.TestIdentityRegex)
+		logProgress(opts, "review tests started command=%q", testCommandDescription(opts))
+		testRun, testErr := runConfiguredTestCommands(ctx, opts, testPath)
 		if testErr != nil {
 			return final, testErr
 		}

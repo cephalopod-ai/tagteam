@@ -631,8 +631,9 @@ func ParseRoleTarget(raw string) (RoleTarget, error) {
 // or untrusted repo .tagteam.toml). Lookup is exact-match on the normalized
 // name (no case folding).
 type TestPresetConfig struct {
-	Command       string `toml:"command"`
-	IdentityRegex string `toml:"identity_regex,omitempty"`
+	Command       string   `toml:"command"`
+	Commands      []string `toml:"commands"`
+	IdentityRegex string   `toml:"identity_regex,omitempty"`
 }
 
 type Config struct {

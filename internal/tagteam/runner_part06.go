@@ -683,8 +683,8 @@ func preflight(opts RunOptions, runID string) (string, preflightCleanup, error) 
 	if err := ensureRepositoryRuntimeIgnored(opts.Workdir); err != nil {
 		return "", nil, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
-	if opts.TestCmd != "" && !opts.NoTest {
-		if err := validateTestCommand(opts.Workdir, opts.TestCmd); err != nil {
+	if hasConfiguredTests(opts) && !opts.NoTest {
+		if err := validateConfiguredTestCommands(opts); err != nil {
 			return "", nil, err
 		}
 	}

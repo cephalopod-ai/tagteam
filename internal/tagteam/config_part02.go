@@ -292,6 +292,7 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) error {
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_TEST"); ok {
 		cfg.Defaults.Test = value
+		cfg.Defaults.Tests = nil
 	}
 	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_LINT"); ok {
 		cfg.Defaults.Lint = value
@@ -440,6 +441,9 @@ func validateConfig(cfg Config) error {
 	if err := validateChoice("adapters.claude.effort", cfg.Adapters.Claude.Effort, "low", "medium", "high", "xhigh", "max"); err != nil {
 		return err
 	}
+	if err := validateConfigTestCommands(cfg); err != nil {
+		return err
+	}
 	if err := validateTestPresets(cfg.TestPresets); err != nil {
 		return err
 	}
@@ -463,6 +467,94 @@ func validateConfig(cfg Config) error {
 	return nil
 }
 
+const maxConcurrentTestCommands = 16
+
+func normalizeConfigTestCommands(cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	if err := normalizeConfigTestCommandList(&cfg.Defaults.Test, &cfg.Defaults.Tests, "defaults"); err != nil {
+		return err
+	}
+	for name, profile := range cfg.Profiles {
+		if err := normalizeConfigTestCommandList(&profile.Test, &profile.Tests, "profiles."+name); err != nil {
+			return err
+		}
+		cfg.Profiles[name] = profile
+	}
+	return nil
+}
+
+func normalizeConfigTestCommandList(legacy *string, commands *[]string, label string) error {
+	if strings.TrimSpace(*legacy) != "" && *commands != nil {
+		return fmt.Errorf("%s may set either test or tests, not both", label)
+	}
+	normalized, err := normalizeTestCommandList(*commands, label+".tests")
+	if err != nil {
+		return err
+	}
+	*commands = normalized
+	return nil
+}
+
+func normalizeTestCommandList(commands []string, label string) ([]string, error) {
+	if commands == nil {
+		return nil, nil
+	}
+	if len(commands) == 0 || len(commands) > maxConcurrentTestCommands {
+		return nil, fmt.Errorf("%s must contain between 1 and %d commands", label, maxConcurrentTestCommands)
+	}
+	normalized := make([]string, 0, len(commands))
+	seen := make(map[string]bool, len(commands))
+	for _, raw := range commands {
+		command := strings.TrimSpace(raw)
+		if command == "" || containsControl(command) {
+			return nil, fmt.Errorf("%s must contain non-empty commands without control characters", label)
+		}
+		if seen[command] {
+			return nil, fmt.Errorf("%s must not contain duplicate commands", label)
+		}
+		seen[command] = true
+		normalized = append(normalized, command)
+	}
+	return normalized, nil
+}
+
+func validateConfigTestCommands(cfg Config) error {
+	if err := validateConfigTestCommandList(cfg.Defaults.Test, cfg.Defaults.Tests, "defaults"); err != nil {
+		return err
+	}
+	for name, profile := range cfg.Profiles {
+		if err := validateConfigTestCommandList(profile.Test, profile.Tests, "profiles."+name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateConfigTestCommandList(legacy string, commands []string, label string) error {
+	if strings.TrimSpace(legacy) != "" && commands != nil {
+		return fmt.Errorf("%s may set either test or tests, not both", label)
+	}
+	if commands == nil {
+		return nil
+	}
+	if len(commands) == 0 || len(commands) > maxConcurrentTestCommands {
+		return fmt.Errorf("%s.tests must contain between 1 and %d commands", label, maxConcurrentTestCommands)
+	}
+	seen := make(map[string]bool, len(commands))
+	for _, command := range commands {
+		if command == "" || strings.TrimSpace(command) != command || containsControl(command) {
+			return fmt.Errorf("%s.tests must contain normalized commands without control characters", label)
+		}
+		if seen[command] {
+			return fmt.Errorf("%s.tests must not contain duplicate commands", label)
+		}
+		seen[command] = true
+	}
+	return nil
+}
+
 // normalizeTestPresets trims keys/commands from trusted config and rewrites the
 // registry under exact-match normalized names. Fail closed on empty commands,
 // control characters, over-length keys, or collisions after trim.
@@ -480,10 +572,17 @@ func normalizeTestPresets(cfg *Config) error {
 			return fmt.Errorf("test_presets: duplicate name %q after normalization", name)
 		}
 		command := strings.TrimSpace(preset.Command)
-		if command == "" {
-			return fmt.Errorf("test_presets.%s.command is required", name)
+		if command != "" && preset.Commands != nil {
+			return fmt.Errorf("test_presets.%s may set either command or commands, not both", name)
 		}
-		if containsControl(command) {
+		commands, err := normalizeTestCommandList(preset.Commands, "test_presets."+name+".commands")
+		if err != nil {
+			return err
+		}
+		if command == "" && commands == nil {
+			return fmt.Errorf("test_presets.%s.command or commands is required", name)
+		}
+		if command != "" && containsControl(command) {
 			return fmt.Errorf("test_presets.%s.command must not contain control characters", name)
 		}
 		identity := strings.TrimSpace(preset.IdentityRegex)
@@ -493,7 +592,7 @@ func normalizeTestPresets(cfg *Config) error {
 				return fmt.Errorf("test_presets.%s.identity_regex must compile and contain a capture group", name)
 			}
 		}
-		out[name] = TestPresetConfig{Command: command, IdentityRegex: identity}
+		out[name] = TestPresetConfig{Command: command, Commands: commands, IdentityRegex: identity}
 	}
 	cfg.TestPresets = out
 	return nil
@@ -506,8 +605,22 @@ func validateTestPresets(presets map[string]TestPresetConfig) error {
 		if key == "" || strings.TrimSpace(key) != key || len(key) > controlMaxRoleBytes || containsControl(key) {
 			return fmt.Errorf("test_presets key %q must be a normalized identifier no longer than %d bytes", key, controlMaxRoleBytes)
 		}
-		if preset.Command == "" || strings.TrimSpace(preset.Command) != preset.Command || containsControl(preset.Command) {
-			return fmt.Errorf("test_presets.%s.command must be a non-empty normalized command", key)
+		if preset.Command != "" && preset.Commands != nil {
+			return fmt.Errorf("test_presets.%s may set either command or commands, not both", key)
+		}
+		if preset.Command == "" && preset.Commands == nil {
+			return fmt.Errorf("test_presets.%s.command or commands is required", key)
+		}
+		if preset.Command != "" && (strings.TrimSpace(preset.Command) != preset.Command || containsControl(preset.Command)) {
+			return fmt.Errorf("test_presets.%s.command must be a normalized command", key)
+		}
+		if _, err := normalizeTestCommandList(preset.Commands, "test_presets."+key+".commands"); err != nil {
+			return err
+		}
+		if preset.Commands != nil {
+			if err := validateConfigTestCommandList("", preset.Commands, "test_presets."+key); err != nil {
+				return err
+			}
 		}
 		if preset.IdentityRegex != "" {
 			if strings.TrimSpace(preset.IdentityRegex) != preset.IdentityRegex {

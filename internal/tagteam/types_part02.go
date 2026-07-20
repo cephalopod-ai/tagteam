@@ -37,6 +37,7 @@ type DefaultsConfig struct {
 	JSONRepair              string           `toml:"json_repair"`
 	Rounds                  int              `toml:"rounds"`
 	Test                    string           `toml:"test"`
+	Tests                   []string         `toml:"tests"`
 	Lint                    string           `toml:"lint"`
 	TestIdentityRegex       string           `toml:"test_identity_regex"`
 	Churn                   ChurnThresholds  `toml:"churn"`
@@ -74,6 +75,7 @@ type ProfileConfig struct {
 	JSONRepair              string           `toml:"json_repair"`
 	Rounds                  int              `toml:"rounds"`
 	Test                    string           `toml:"test"`
+	Tests                   []string         `toml:"tests"`
 	Lint                    string           `toml:"lint"`
 	TestIdentityRegex       string           `toml:"test_identity_regex"`
 	Churn                   ChurnThresholds  `toml:"churn"`
@@ -213,6 +215,7 @@ type FlagInputs struct {
 	WatchdogTimeout         time.Duration
 	Rounds                  int
 	Test                    string
+	Tests                   []string
 	TestIdentityRegex       string
 	Lint                    string
 	NoTest                  bool
@@ -294,6 +297,7 @@ type RunOptions struct {
 	JSONRepair                string
 	Rounds                    int
 	TestCmd                   string
+	TestCommands              []string
 	LintCmd                   string
 	TestIdentityRegex         string
 	Churn                     ChurnThresholds
@@ -336,12 +340,25 @@ type Meta struct {
 }
 
 type TestRun struct {
+	Command           string           `json:"command"`
+	Output            string           `json:"output,omitempty"`
+	Passed            bool             `json:"passed"`
+	FailureIdentities []string         `json:"failure_identities,omitempty"`
+	StateRoot         string           `json:"state_root,omitempty"`
+	TempDir           string           `json:"temp_dir,omitempty"`
+	Commands          []TestCommandRun `json:"commands,omitempty"`
+}
+
+// TestCommandRun records one command within an explicitly parallel test set.
+// Single-command runs keep the legacy TestRun shape without Commands.
+type TestCommandRun struct {
 	Command           string   `json:"command"`
 	Output            string   `json:"output,omitempty"`
 	Passed            bool     `json:"passed"`
 	FailureIdentities []string `json:"failure_identities,omitempty"`
 	StateRoot         string   `json:"state_root,omitempty"`
 	TempDir           string   `json:"temp_dir,omitempty"`
+	OutputPath        string   `json:"output_path,omitempty"`
 }
 
 type DiffFile struct {

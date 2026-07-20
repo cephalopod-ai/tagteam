@@ -215,6 +215,9 @@ func LoadConfigWithOptions(workdir string, opts LoadConfigOptions) (Config, []st
 	if err := mergeEnvConfig(&cfg, cfg.EnvOverlay); err != nil {
 		return Config{}, nil, err
 	}
+	if err := normalizeConfigTestCommands(&cfg); err != nil {
+		return Config{}, nil, err
+	}
 	if err := normalizeTestPresets(&cfg); err != nil {
 		return Config{}, nil, err
 	}
@@ -384,6 +387,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 	src.Defaults.StateRoot = ""
 	src.Defaults.WatchdogTimeout = ""
 	src.Defaults.Test = ""
+	src.Defaults.Tests = nil
 	src.Defaults.Lint = ""
 	src.Defaults.TestIdentityRegex = ""
 	src.Defaults.GitSafety = ""
@@ -400,6 +404,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 		profile.StateRoot = ""
 		profile.WatchdogTimeout = ""
 		profile.Test = ""
+		profile.Tests = nil
 		profile.Lint = ""
 		profile.TestIdentityRegex = ""
 		profile.MaxOutputBytes = 0
@@ -535,8 +540,12 @@ func mergeConfig(dst *Config, src Config) {
 	if src.Defaults.Rounds != 0 {
 		dst.Defaults.Rounds = src.Defaults.Rounds
 	}
-	if src.Defaults.Test != "" {
+	if src.Defaults.Tests != nil {
+		dst.Defaults.Tests = append([]string(nil), src.Defaults.Tests...)
+		dst.Defaults.Test = ""
+	} else if src.Defaults.Test != "" {
 		dst.Defaults.Test = src.Defaults.Test
+		dst.Defaults.Tests = nil
 	}
 	if src.Defaults.Lint != "" {
 		dst.Defaults.Lint = src.Defaults.Lint
@@ -635,8 +644,12 @@ func mergeConfig(dst *Config, src Config) {
 			if profile.Rounds != 0 {
 				current.Rounds = profile.Rounds
 			}
-			if profile.Test != "" {
+			if profile.Tests != nil {
+				current.Tests = append([]string(nil), profile.Tests...)
+				current.Test = ""
+			} else if profile.Test != "" {
 				current.Test = profile.Test
+				current.Tests = nil
 			}
 			if profile.Lint != "" {
 				current.Lint = profile.Lint

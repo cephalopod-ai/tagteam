@@ -664,7 +664,11 @@ func (r *ControlRuntime) optionsForLaunch(spec ControlLaunchSpec) (RunOptions, e
 		if !ok {
 			return RunOptions{}, fmt.Errorf("unknown test_preset %q", spec.TestPreset)
 		}
-		flags.Test = preset.Command
+		flags.Tests = configuredPresetTestCommands(preset)
+		if len(flags.Tests) == 0 {
+			return RunOptions{}, fmt.Errorf("test_preset %q has no commands", spec.TestPreset)
+		}
+		flags.Test = flags.Tests[0]
 		changed["test"] = true
 		if preset.IdentityRegex != "" {
 			flags.TestIdentityRegex = preset.IdentityRegex

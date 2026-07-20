@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -231,6 +232,29 @@ func TestControlRuntimeResolvesTrustedTestPresetIntoRunOptions(t *testing.T) {
 	}
 	if opts.TestIdentityRegex != `FAIL:\s+(\S+)` {
 		t.Fatalf("TestIdentityRegex = %q", opts.TestIdentityRegex)
+	}
+}
+
+func TestControlRuntimeResolvesParallelTestPresetIntoRunOptions(t *testing.T) {
+	repo, _ := createResumeFixtureRepo(t)
+	cfg := DefaultConfig()
+	cfg.TestPresets = map[string]TestPresetConfig{
+		"parallel": {Commands: []string{"go test ./one", "go test ./two"}},
+	}
+	runtime := NewControlRuntime(ControlService{RepositoryRoot: repo, StateRoot: t.TempDir(), ProducerVersion: "test"}, cfg, nil)
+	spec := controlLaunchFixture(t, repo)
+	spec.TestPreset = "parallel"
+	normalized, err := NormalizeControlLaunch(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, err := runtime.optionsForLaunch(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"go test ./one", "go test ./two"}
+	if opts.TestCmd != want[0] || !reflect.DeepEqual(opts.TestCommands, want) {
+		t.Fatalf("parallel preset options = command:%q commands:%#v", opts.TestCmd, opts.TestCommands)
 	}
 }
 

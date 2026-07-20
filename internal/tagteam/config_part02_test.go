@@ -24,6 +24,17 @@ func TestResolveOptions_EnvCanSetScoutFailurePolicy(t *testing.T) {
 	}
 }
 
+func TestMergeEnvConfigTestOverridesParallelDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Defaults.Tests = []string{"go test ./one", "go test ./two"}
+	if err := mergeEnvConfig(&cfg, map[string]string{"TAGTEAM_TEST": "go test ./override"}); err != nil {
+		t.Fatalf("mergeEnvConfig() error = %v", err)
+	}
+	if cfg.Defaults.Test != "go test ./override" || cfg.Defaults.Tests != nil {
+		t.Fatalf("environment test override = %#v", cfg.Defaults)
+	}
+}
+
 func TestResolveOptions_StrictScoutMapsToFail(t *testing.T) {
 	cfg := DefaultConfig()
 	opts, err := ResolveOptions(cfg, nil, FlagInputs{
