@@ -376,6 +376,9 @@ func TestResolveOptions_DefaultsToSupervisorMode(t *testing.T) {
 	if opts.MaxPackages != 5 {
 		t.Fatalf("max packages = %d", opts.MaxPackages)
 	}
+	if opts.MaxWallTime != time.Hour {
+		t.Fatalf("max wall time = %s, want 1h", opts.MaxWallTime)
+	}
 }
 
 func TestResolveOptions_AdversarialModeUsesDefaults(t *testing.T) {

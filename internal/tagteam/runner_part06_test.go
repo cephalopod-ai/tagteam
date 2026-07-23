@@ -3,7 +3,7 @@ package tagteam
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -334,7 +334,7 @@ func TestConciseAdapterErrorPreservesHeadTailAndArtifactPath(t *testing.T) {
 	}
 }
 
-func TestRunAdapterPersistsStalledStatusAfterWatchdogCancellation(t *testing.T) {
+func TestRunAdapterSoftWatchdogDoesNotCancelLiveProcess(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
 	runGit(t, repo, "config", "user.email", "test@example.com")
@@ -359,25 +359,25 @@ func TestRunAdapterPersistsStalledStatusAfterWatchdogCancellation(t *testing.T) 
 		Context:         context.Background(),
 		Workdir:         repo,
 		RunDir:          runDir,
-		Timeout:         5 * time.Second,
-		WatchdogTimeout: 500 * time.Millisecond,
+		Timeout:         1200 * time.Millisecond,
+		WatchdogTimeout: 50 * time.Millisecond,
 		Phase:           "watchdog regression",
 	}, false)
-	if err == nil || !strings.Contains(err.Error(), string(ReasonStalled)) {
-		t.Fatalf("runAdapter() error = %v, want stalled reason", err)
+	if err == nil || strings.Contains(err.Error(), string(ReasonStalled)) {
+		t.Fatalf("runAdapter() error = %v, want invocation timeout without stalled reason", err)
 	}
-	if elapsed := time.Since(started); elapsed > 4*time.Second {
-		t.Fatalf("watchdog cancellation took %s", elapsed)
+	if elapsed := time.Since(started); elapsed < time.Second || elapsed > 4*time.Second {
+		t.Fatalf("invocation elapsed = %s, want hard timeout rather than soft watchdog cancellation", elapsed)
 	}
 
 	var progress LiveProgress
 	readJSONFile(t, filepath.Join(runDir, liveProgressArtifact), &progress)
-	if progress.Status != "stalled" {
-		t.Fatalf("live progress status = %q, want stalled", progress.Status)
+	if progress.Status != "failed" {
+		t.Fatalf("live progress status = %q, want failed", progress.Status)
 	}
 }
 
-func TestRunDirectAdapterUsesWatchdogAndPersistsLogicalProgress(t *testing.T) {
+func TestRunDirectAdapterSoftWatchdogDoesNotCancel(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
 	runGit(t, repo, "config", "user.email", "test@example.com")
@@ -392,8 +392,23 @@ func TestRunDirectAdapterUsesWatchdogAndPersistsLogicalProgress(t *testing.T) {
 			return &CommandSpec{Argv: []string{"direct"}, Dir: repo}, nil
 		},
 		direct: func(role Role, req Request) (Result, error) {
-			<-req.Context.Done()
-			return Result{}, req.Context.Err()
+			time.Sleep(1100 * time.Millisecond)
+			if req.Context.Err() != nil {
+				return Result{}, req.Context.Err()
+			}
+			deadline := time.Now().Add(500 * time.Millisecond)
+			for {
+				var progress LiveProgress
+				readJSONFile(t, filepath.Join(req.RunDir, liveProgressArtifact), &progress)
+				if progress.Status == "awaiting_telemetry" {
+					break
+				}
+				if time.Now().After(deadline) {
+					return Result{}, fmt.Errorf("progress status = %q, want awaiting_telemetry", progress.Status)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			return Result{Text: "completed"}, nil
 		},
 	}
 	started := time.Now()
@@ -406,15 +421,15 @@ func TestRunDirectAdapterUsesWatchdogAndPersistsLogicalProgress(t *testing.T) {
 		Phase:           "relay scout",
 		ProgressRole:    RoleScout,
 	}, false)
-	if !errors.Is(err, errInvocationStalled) {
-		t.Fatalf("runAdapter() error = %v, want stalled", err)
+	if err != nil {
+		t.Fatalf("runAdapter() error = %v", err)
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("direct watchdog took %s", elapsed)
+	if elapsed := time.Since(started); elapsed < time.Second || elapsed > 2*time.Second {
+		t.Fatalf("direct invocation elapsed = %s, want soft watchdog to preserve the live call", elapsed)
 	}
 	var progress LiveProgress
 	readJSONFile(t, filepath.Join(runDir, liveProgressArtifact), &progress)
-	if progress.Status != "stalled" || progress.Role != RoleScout {
+	if progress.Status != "completed" || progress.Role != RoleScout {
 		t.Fatalf("direct progress = %#v", progress)
 	}
 }

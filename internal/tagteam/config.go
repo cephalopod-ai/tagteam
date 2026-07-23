@@ -61,10 +61,12 @@ func DefaultConfig() Config {
 			DecisionMemory:          &decisionMemory,
 			MaxFindings:             50,
 			MaxOutputBytes:          2 * 1024 * 1024,
-			MaxWallTime:             "0s",
-			MaxRoleInvocations:      0,
-			JSONRepair:              "off",
-			Rounds:                  2,
+			// Keep a bounded total run lifetime even when each individual model
+			// invocation is making observable progress.
+			MaxWallTime:        "60m",
+			MaxRoleInvocations: 0,
+			JSONRepair:         "off",
+			Rounds:             2,
 			Churn: ChurnThresholds{
 				MaxFiles:             25,
 				MaxChangedLines:      1000,

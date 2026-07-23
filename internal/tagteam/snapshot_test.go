@@ -367,6 +367,41 @@ func TestBuildRunSnapshot_ActiveJSONFailedOverridesStaleRunningState(t *testing.
 	}
 }
 
+func TestBuildRunSnapshot_RunningActiveRunIgnoresStaleFinal(t *testing.T) {
+	workdir, runDir, runID := newRunDirForSnapshotTest(t)
+	state := RunState{RunID: runID, Mode: ModeSupervisor, Status: "running", Phase: "round-2", CurrentRound: 2}
+	if err := writeJSONWithNewline(filepath.Join(runDir, "state.json"), state); err != nil {
+		t.Fatal(err)
+	}
+	staleFinal := FinalRun{
+		SchemaVersion:  ArtifactSchemaVersion,
+		RunID:          runID,
+		RunDir:         runDir,
+		Mode:           ModeSupervisor,
+		Status:         RunStatusFailed,
+		Phase:          "final",
+		Verdict:        "error",
+		ExitCode:       ExitAdapterFailure,
+		BlockingReason: "old failure",
+		FinishedAt:     time.Now().Add(-time.Minute),
+	}
+	if err := writeJSONWithNewline(filepath.Join(runDir, "final.json"), staleFinal); err != nil {
+		t.Fatal(err)
+	}
+	activateRun(workdir, runID, runDir, ModeSupervisor)
+
+	snapshot, err := BuildRunSnapshot(workdir, runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != "running" || snapshot.Phase != "round-2" {
+		t.Fatalf("live snapshot = %#v", snapshot)
+	}
+	if snapshot.Verdict != "" || snapshot.ExitCode != 0 || snapshot.BlockingReason != "" {
+		t.Fatalf("stale terminal state leaked into live snapshot: %#v", snapshot)
+	}
+}
+
 func TestBuildRunSnapshot_MatchesCompletedSoloRun(t *testing.T) {
 	installFakeClaudeBinary(t)
 
