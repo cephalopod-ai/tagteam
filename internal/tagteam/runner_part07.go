@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -716,10 +717,16 @@ func runTestCommand(ctx context.Context, workdir, testCmd string, timeout time.D
 	if out.Exceeded() {
 		err = outputLimitError("test command", maxBytes)
 	}
+	exitCode := 0
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		exitCode = exitErr.ExitCode()
+	}
 	testRun := TestRun{
 		Command:           testCmd,
 		Output:            redactSecretsWithOverlay(string(output), envOverlay),
 		Passed:            err == nil,
+		ExitCode:          exitCode,
 		FailureIdentities: extractFailureIdentitiesWithRegex(string(output), identityRegex),
 		StateRoot:         stateRoot,
 		TempDir:           tempDir,

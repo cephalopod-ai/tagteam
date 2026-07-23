@@ -124,6 +124,7 @@ func runTestCommands(ctx context.Context, workdir string, commands []string, tim
 			Command:           commands[index],
 			Output:            child.Output,
 			Passed:            child.Passed && result.err == nil,
+			ExitCode:          child.ExitCode,
 			FailureIdentities: append([]string(nil), child.FailureIdentities...),
 			StateRoot:         child.StateRoot,
 			TempDir:           child.TempDir,
