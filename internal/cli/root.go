@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -565,12 +566,16 @@ func newDoctorCommand(shared *flagState) *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer stop()
 			status, err := app.Doctor(ctx, opts)
-			for _, key := range []string{"codex", "codex-oss", "claude", "agy", "gosling", "openai-compatible"} {
-				item := status[key]
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\tfound=%t\tversion=%s\tauth=%s\thint=%s\n", key, item.Found, item.Version, item.Auth, item.Hint)
-			}
+			renderDoctorStatus(cmd.OutOrStdout(), status)
 			return err
 		},
+	}
+}
+
+func renderDoctorStatus(out io.Writer, status map[string]tagteam.VersionInfo) {
+	for _, key := range tagteam.DoctorAdapterIDs() {
+		item := status[key]
+		fmt.Fprintf(out, "%s\tfound=%t\tversion=%s\tauth=%s\thint=%s\n", key, item.Found, item.Version, item.Auth, item.Hint)
 	}
 }
 

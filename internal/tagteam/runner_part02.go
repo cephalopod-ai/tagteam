@@ -469,7 +469,7 @@ func validateRoleTarget(role Role, target RoleTarget) error {
 func (a *App) Doctor(ctx context.Context, opts RunOptions) (map[string]VersionInfo, error) {
 	registry := Registry(a.Config, opts)
 	status := map[string]VersionInfo{}
-	for _, key := range []string{"codex", "codex-oss", "claude", "agy", "gosling", "grok", "openai-compatible"} {
+	for _, key := range DoctorAdapterIDs() {
 		info, err := registry[key].Detect(ctx)
 		if err != nil {
 			return nil, err
@@ -501,4 +501,11 @@ func (a *App) Doctor(ctx context.Context, opts RunOptions) (map[string]VersionIn
 		}
 	}
 	return status, nil
+}
+
+// DoctorAdapterIDs returns the adapters presented by both the API and CLI
+// doctor surfaces. Keep the list centralized so a probed provider is never
+// hidden from the operator report.
+func DoctorAdapterIDs() []string {
+	return []string{"codex", "codex-oss", "claude", "agy", "gosling", "grok", "openai-compatible"}
 }

@@ -282,6 +282,58 @@ func TestRunLoop_RelaySimplifiesToSupervisorBeforeScout(t *testing.T) {
 	}
 }
 
+func TestRunLoop_RelayKeepsExplicitScoutBeforeImplementation(t *testing.T) {
+	t.Setenv("TAGTEAM_TEST_ORCH_ADVISORY", "simplify")
+	installFakeBinaries(t, map[string]string{
+		"agy":    fakeAgyScript,
+		"claude": fakeClaudeScript,
+	})
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	app := NewApp(DefaultConfig())
+	final, err := app.Run(context.Background(), RunOptions{
+		Prompt:             "fix typo",
+		Workdir:            repo,
+		Mode:               ModeRelay,
+		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.6-flash-medium"},
+		ScoutExplicit:      true,
+		ScoutExplicitMode:  ModeRelay,
+		Coder:              RoleTarget{Adapter: "claude"},
+		Adversary:          RoleTarget{Adapter: "claude"},
+		ScoutMode:          "recon",
+		PostScoutMode:      "polish",
+		ScoutRetrieval:     false,
+		ScoutFailurePolicy: "continue",
+		Rounds:             1,
+		Timeout:            10 * time.Second,
+		EnvOverlay:         map[string]string{"TAGTEAM_TEST_ORCH_ADVISORY": "simplify"},
+	})
+	if err == nil {
+		t.Fatal("expected blocking review error from fake supervisor")
+	}
+	if final.Mode != ModeRelay {
+		t.Fatalf("mode = %q error=%v", final.Mode, err)
+	}
+	if !fileExists(filepath.Join(final.RunDir, "scout-round-1.json")) {
+		t.Fatal("explicitly selected scout should run before implementation")
+	}
+	var decision OrchestrationDecision
+	readJSONFile(t, filepath.Join(final.RunDir, orchestrationDecisionArtifact), &decision)
+	if decision.AppliedTransition != nil || decision.FinalMode != ModeRelay {
+		t.Fatalf("decision = %#v", decision)
+	}
+	if decision.HostReason != "explicit scout target preserves relay topology" {
+		t.Fatalf("decision host reason = %q", decision.HostReason)
+	}
+}
+
 func TestRunLoop_SupervisorEscalatesToRelayWhenBothAgentsAgree(t *testing.T) {
 	t.Setenv("TAGTEAM_TEST_ORCH_ADVISORY", "escalate")
 	installFakeBinaries(t, map[string]string{

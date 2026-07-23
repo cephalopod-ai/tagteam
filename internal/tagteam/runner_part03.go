@@ -334,6 +334,10 @@ func (a *App) resolveOrchestrationDecision(ctx context.Context, opts RunOptions,
 	}
 	switch opts.Mode {
 	case ModeRelay:
+		if constraint := relaySimplificationConstraint(opts); constraint != "" {
+			decision.HostReason = constraint
+			return decision, ModeRelay
+		}
 		advisory, err := a.collectOrchestrationAdvisory(ctx, opts, reviewer, "supervisor", opts.Mode, "", runDir)
 		if err != nil {
 			markOrchestrationDecisionDegraded(&decision, err.Error())

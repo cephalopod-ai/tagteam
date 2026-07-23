@@ -358,7 +358,7 @@ tagteam \
 
 Supervisor slicing also creates a run checklist. `plan.json` records package status, and `plan-events.jsonl` records status transitions and review-added items. `tagteam status` shows the latest checklist when present; use `tagteam plan [RUN_ID]` to print a run's checklist directly.
 
-Supervisor and relay runs may perform one bounded orchestration adjustment before implementation starts. Agents can emit compact advisory signals, but `tagteam` owns the decision: relay may simplify to supervisor mode for small tasks, and supervisor mode may escalate to relay only when the worker reports insufficient context and the supervisor agrees. There is no back-and-forth replanning loop.
+Supervisor and relay runs may perform one bounded orchestration adjustment before implementation starts. Agents can emit compact advisory signals, but `tagteam` owns the decision: an unconstrained relay run may simplify to supervisor mode for small tasks, and supervisor mode may escalate to relay only when the worker reports insufficient context and the supervisor agrees. An explicit `--scout` target (including one supplied by a selected profile), `--strict-scout`, or a blocking scout loss policy preserves relay topology. There is no back-and-forth replanning loop.
 
 ### Solo mode
 
@@ -380,7 +380,7 @@ Relay mode runs a cost-aware three-agent pipeline: read-only scout reconnaissanc
 tagteam --relay "add OAuth login"
 ```
 
-For small tasks, relay can simplify to supervisor mode before scout runs when the supervisor advises that the direct worker/review path is enough. The host records the decision and skips scout-heavy relay setup; the supervisor review remains the authoritative gate.
+For small tasks, an unconstrained relay run can simplify to supervisor mode before scout runs when the supervisor advises that the direct worker/review path is enough. The host records the decision and skips scout-heavy relay setup; the supervisor review remains the authoritative gate. When a caller selects `--scout`, enables `--strict-scout`, or sets a blocking scout loss policy, Tagteam keeps the relay topology and runs that scout before implementation.
 
 Relay mode is a full-run workflow. It does not currently have a review-only variant: `tagteam review` remains adversary-only and does not run scout or supervisor relay steps.
 
