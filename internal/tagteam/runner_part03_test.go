@@ -259,6 +259,13 @@ func TestReview_PersistsFinalOnReviewerFailure(t *testing.T) {
 	if persisted.LatestDiffPath == "" {
 		t.Fatalf("expected diff path in persisted failure")
 	}
+	state, stateErr := readRunState(final.RunDir)
+	if stateErr != nil {
+		t.Fatal(stateErr)
+	}
+	if state.Phase != string(PhaseReviewing) {
+		t.Fatalf("persisted phase = %q, want %q", state.Phase, PhaseReviewing)
+	}
 	if status := persisted.RoleStatuses["adversary"]; status.Status != "failed" {
 		t.Fatalf("adversary status = %#v", status)
 	}

@@ -28,6 +28,17 @@ func runStateForFinal(final FinalRun, mode Mode, phase, recoveryStatus string) R
 	}
 }
 
+// terminalPhaseForFailure preserves the last durable workflow phase rather
+// than the human-facing role currently displayed in FinalRun.Phase. Resume
+// relies on this value to decide whether a completed worker may be skipped.
+func terminalPhaseForFailure(runDir, fallback string) string {
+	state, err := readRunState(runDir)
+	if err == nil && strings.TrimSpace(state.Phase) != "" {
+		return state.Phase
+	}
+	return fallback
+}
+
 func mandatoryPersistenceError(artifact string, err error) error {
 	if err == nil {
 		return nil

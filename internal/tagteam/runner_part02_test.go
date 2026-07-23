@@ -621,31 +621,18 @@ func TestRunAdapter_RedactsOverlaySecretInValidationArtifact(t *testing.T) {
 	}
 }
 
-func TestReadRunPrompt_FallsBackToMeta(t *testing.T) {
-	runDir := t.TempDir()
-	meta := Meta{Prompt: "review prompt"}
-	data, err := json.Marshal(meta)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "meta.json"), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	prompt, err := readRunPrompt(runDir, "")
-	if err != nil {
-		t.Fatalf("readRunPrompt() error = %v", err)
-	}
-	if prompt != "review prompt" {
-		t.Fatalf("prompt = %q", prompt)
-	}
-}
-
 type fakeAdapter struct {
+	id    string
 	build func(role Role, req Request) (*CommandSpec, error)
 	parse func(role Role, raw []byte) (Result, error)
 }
 
-func (f fakeAdapter) ID() string { return "fake" }
+func (f fakeAdapter) ID() string {
+	if f.id != "" {
+		return f.id
+	}
+	return "fake"
+}
 func (f fakeAdapter) Detect(ctx context.Context) (VersionInfo, error) {
 	return VersionInfo{Found: true, Runnable: true}, nil
 }

@@ -343,6 +343,7 @@ type TestRun struct {
 	Command           string           `json:"command"`
 	Output            string           `json:"output,omitempty"`
 	Passed            bool             `json:"passed"`
+	ExitCode          int              `json:"exit_code,omitempty"`
 	FailureIdentities []string         `json:"failure_identities,omitempty"`
 	StateRoot         string           `json:"state_root,omitempty"`
 	TempDir           string           `json:"temp_dir,omitempty"`
@@ -355,6 +356,7 @@ type TestCommandRun struct {
 	Command           string   `json:"command"`
 	Output            string   `json:"output,omitempty"`
 	Passed            bool     `json:"passed"`
+	ExitCode          int      `json:"exit_code,omitempty"`
 	FailureIdentities []string `json:"failure_identities,omitempty"`
 	StateRoot         string   `json:"state_root,omitempty"`
 	TempDir           string   `json:"temp_dir,omitempty"`

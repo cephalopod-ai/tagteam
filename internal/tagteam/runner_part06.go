@@ -165,7 +165,12 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		if err != nil {
 			var validationErr *directValidationError
 			if errors.As(err, &validationErr) {
-				rawPath, artifactErr := writeOutputContractArtifacts(req, role, Result{}, validationErr.raw)
+				safeRaw := sanitizeAdapterArtifact(adapter.ID(), validationErr.raw)
+				if artifactErr := writeRecoveryOutput(req, safeRaw); artifactErr != nil {
+					finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
+					return Result{}, artifactErr
+				}
+				rawPath, artifactErr := writeOutputContractArtifacts(req, role, Result{}, safeRaw)
 				if artifactErr != nil {
 					finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
 					return Result{}, artifactErr
@@ -200,13 +205,14 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		if len(raw) == 0 {
 			raw = []byte(result.Text)
 		}
+		artifactRaw := sanitizeAdapterArtifact(adapter.ID(), raw)
 		if record.StdoutPath != "" {
 			if err := guardControlResumeWritePath(req.controlResumeGate, record.StdoutPath); err != nil {
 				finishDeliveryRecord(req, recordPath, record, "failed", err)
 				return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 			}
-			_ = writeRedactedBytes(record.StdoutPath, raw, req.EnvOverlay)
-			record.StdoutBytes = int64(len(raw))
+			_ = writeRedactedBytes(record.StdoutPath, artifactRaw, req.EnvOverlay)
+			record.StdoutBytes = int64(len(artifactRaw))
 		}
 		if int64(len(raw)) > maxOutputBytes(req) {
 			err := &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("%s output exceeded max_output_bytes=%d", adapter.ID(), maxOutputBytes(req))}
@@ -220,7 +226,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 				return Result{}, artifactErr
 			}
 			record.ValidationErrorPath = validationPath
-			_, _ = writeOutputContractArtifacts(req, role, result, raw)
+			_, _ = writeOutputContractArtifacts(req, role, result, artifactRaw)
 			finishDeliveryRecord(req, recordPath, record, "failed", err)
 			return Result{}, err
 		}
@@ -237,17 +243,13 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 				return Result{}, contractErr
 			}
 		}
-		if req.OutputPath != "" && !fileExists(req.OutputPath) {
-			if err := guardControlResumeWritePath(req.controlResumeGate, req.OutputPath); err != nil {
-				finishDeliveryRecord(req, recordPath, record, "failed", err)
-				return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
-			}
-			if writeErr := writeRedactedBytes(req.OutputPath, raw, req.EnvOverlay); writeErr != nil {
-				finishDeliveryRecord(req, recordPath, record, "failed", writeErr)
-				return Result{}, writeErr
-			}
+		normalizeReview(result.Review)
+		normalizeScout(result.Scout)
+		if err := writeNormalizedOutput(req, role, result); err != nil {
+			finishDeliveryRecord(req, recordPath, record, "failed", err)
+			return Result{}, err
 		}
-		rawPath, artifactErr := writeOutputContractArtifacts(req, role, result, raw)
+		rawPath, artifactErr := writeOutputContractArtifacts(req, role, result, artifactRaw)
 		if artifactErr != nil {
 			finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
 			return Result{}, artifactErr
@@ -256,8 +258,6 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		if req.OutputPath != "" && (role == RoleCoder || role == RoleAdversary || role == RoleScout) {
 			record.ParsedPath = req.OutputPath + ".parsed.json"
 		}
-		normalizeReview(result.Review)
-		normalizeScout(result.Scout)
 		finishDeliveryRecord(req, recordPath, record, "completed", nil)
 		return result, nil
 	}
@@ -527,18 +527,20 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		finishDeliveryRecord(req, recordPath, record, "failed", err)
 		return Result{}, err
 	}
-	if req.OutputPath != "" && !fileExists(req.OutputPath) {
-		if err := guardControlResumeWritePath(req.controlResumeGate, req.OutputPath); err != nil {
+	artifactRaw := sanitizeAdapterArtifact(adapter.ID(), raw)
+	if record.StdoutPath != "" {
+		if err := guardControlResumeWritePath(req.controlResumeGate, record.StdoutPath); err != nil {
 			finishDeliveryRecord(req, recordPath, record, "failed", err)
 			return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
-		if writeErr := writeRedactedBytes(req.OutputPath, raw, req.EnvOverlay); writeErr != nil {
-			finishDeliveryRecord(req, recordPath, record, "failed", writeErr)
-			return Result{}, writeErr
-		}
+		_ = writeRedactedBytes(record.StdoutPath, artifactRaw, req.EnvOverlay)
 	}
 	result, err = adapter.ParseResult(role, raw)
 	if err != nil {
+		if artifactErr := writeRecoveryOutput(req, artifactRaw); artifactErr != nil {
+			finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
+			return Result{}, artifactErr
+		}
 		validationPath, artifactErr := writeValidationErrorArtifact(req, err)
 		if artifactErr != nil {
 			finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
@@ -555,7 +557,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			return Result{}, artifactErr
 		}
 		record.ValidationErrorPath = validationPath
-		_, _ = writeOutputContractArtifacts(req, role, result, raw)
+		_, _ = writeOutputContractArtifacts(req, role, result, artifactRaw)
 		finishDeliveryRecord(req, recordPath, record, "failed", err)
 		return Result{}, err
 	}
@@ -574,17 +576,11 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	}
 	normalizeReview(result.Review)
 	normalizeScout(result.Scout)
-	if role == RoleScout && req.OutputPath != "" && result.Scout != nil {
-		if err := guardControlResumeWritePath(req.controlResumeGate, req.OutputPath); err != nil {
-			finishDeliveryRecord(req, recordPath, record, "failed", err)
-			return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
-		}
-		if err := writeJSONWithNewline(req.OutputPath, result.Scout); err != nil {
-			finishDeliveryRecord(req, recordPath, record, "failed", err)
-			return Result{}, err
-		}
+	if err := writeNormalizedOutput(req, role, result); err != nil {
+		finishDeliveryRecord(req, recordPath, record, "failed", err)
+		return Result{}, err
 	}
-	rawPath, artifactErr := writeOutputContractArtifacts(req, role, result, raw)
+	rawPath, artifactErr := writeOutputContractArtifacts(req, role, result, artifactRaw)
 	if artifactErr != nil {
 		finishDeliveryRecord(req, recordPath, record, "failed", artifactErr)
 		return Result{}, artifactErr

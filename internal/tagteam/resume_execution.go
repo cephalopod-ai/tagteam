@@ -72,7 +72,7 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 		} else {
 			runDir = current
 		}
-		terminalState := runStateForFinal(final, opts.Mode, final.Phase, "resume_failed")
+		terminalState := runStateForFinal(final, opts.Mode, terminalPhaseForFailure(runDir, final.Phase), "resume_failed")
 		terminalState.CurrentRound = max(1, state.CurrentRound)
 		if persistErr := a.persistTerminalRun(opts.Workdir, &final, terminalState); persistErr != nil {
 			err = errors.Join(err, persistErr)

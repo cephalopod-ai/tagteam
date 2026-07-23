@@ -147,7 +147,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		setFinalBlocking(&final, classifyRoleFailure(currentRole, err), err.Error())
 		applyInvocationBudget(&final, budget)
 		finalizeRunState(&final)
-		state := runStateForFinal(final, opts.Mode, final.Phase, "")
+		state := runStateForFinal(final, opts.Mode, terminalPhaseForFailure(runDir, final.Phase), "")
 		if persistErr := a.persistTerminalRun(opts.Workdir, &final, state); persistErr != nil {
 			err = errors.Join(err, persistErr)
 		}

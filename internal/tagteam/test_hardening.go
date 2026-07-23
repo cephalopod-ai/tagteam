@@ -361,6 +361,13 @@ func runBaselineTest(ctx context.Context, opts RunOptions, runDir string) (*Test
 		}
 		return nil, violation
 	}
+	if startErr := baselineTestStartError(test); startErr != nil {
+		finish("failed", nil, startErr)
+		if finishGateErr != nil {
+			return nil, finishGateErr
+		}
+		return nil, startErr
+	}
 	status := "failed"
 	if test.Passed {
 		status = "passed"
@@ -370,4 +377,23 @@ func runBaselineTest(ctx context.Context, opts RunOptions, runDir string) (*Test
 		return nil, finishGateErr
 	}
 	return &test, nil
+}
+
+// baselineTestStartError distinguishes a genuine failing test suite from a
+// shell that could not launch the configured test command. POSIX shells use
+// 127 for that condition, which cannot be compared meaningfully after agents
+// have changed the worktree.
+func baselineTestStartError(test TestRun) error {
+	if len(test.Commands) == 0 {
+		if test.ExitCode != 127 {
+			return nil
+		}
+		return &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("baseline test command could not start (shell exit status 127): %s", test.Command)}
+	}
+	for _, command := range test.Commands {
+		if command.ExitCode == 127 {
+			return &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("baseline test command could not start (shell exit status 127): %s", command.Command)}
+		}
+	}
+	return nil
 }

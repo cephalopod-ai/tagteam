@@ -171,6 +171,8 @@ Tagteam's existing mutation gate.
 > [!IMPORTANT]
 > The selected `--workdir` (the current directory, if unset) must itself be a Git repo with at least one commit — `tagteam` runs `git rev-parse --verify HEAD` there during preflight and uses that commit as the diff baseline for every round. A folder that only *contains* repos (e.g. a workspace directory with several projects as subfolders) does not qualify; point `--workdir` at the actual repo, not a parent above it. Failing this check exits with `workdir is not a git repo or has no HEAD`.
 
+Configured baseline tests run before any model invocation. A shell exit status of `127` is treated as a deterministic preflight error because the configured test command could not start; correct the command or its environment before retrying.
+
 Supported adapters in this repo today:
 
 | Adapter | Role support |

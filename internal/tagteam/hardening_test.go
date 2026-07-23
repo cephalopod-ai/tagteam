@@ -78,6 +78,33 @@ func TestRunBaselineTestRejectsTrackedWorktreeMutation(t *testing.T) {
 	}
 }
 
+func TestRunBaselineTestRejectsUnavailableCommandBeforeAgentsRun(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "baseline\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+	runDir := t.TempDir()
+	test, err := runBaselineTest(context.Background(), RunOptions{
+		Workdir: repo,
+		TestCmd: "tagteam-test-command-that-does-not-exist",
+		Timeout: 5 * time.Second,
+	}, runDir)
+	if err == nil || ExitCode(err) != ExitPreflightFailed {
+		t.Fatalf("runBaselineTest() = %#v, %v; want preflight failure", test, err)
+	}
+	if !strings.Contains(err.Error(), "could not start") || !strings.Contains(err.Error(), "127") {
+		t.Fatalf("preflight error = %v", err)
+	}
+	var activity HostActivity
+	readJSONFile(t, filepath.Join(runDir, hostActivityArtifact), &activity)
+	if activity.Status != "failed" || !strings.Contains(activity.Error, "could not start") {
+		t.Fatalf("baseline host activity = %#v", activity)
+	}
+}
+
 func TestRegressionComparesFailureIdentitySets(t *testing.T) {
 	baseline := TestRun{Passed: false, FailureIdentities: []string{"TestKnown"}}
 	known := compareRegression(baseline, TestRun{Passed: false, FailureIdentities: []string{"TestKnown"}})
