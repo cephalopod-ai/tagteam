@@ -53,7 +53,7 @@ func TestNewRootCommandHelpIncludesModeModelAndFlags(t *testing.T) {
 		"--scout",
 		"--no-scout-retrieval",
 		"tagteam --solo codex:gpt-5.6-terra",
-		"tagteam run -m 'agy:Gemini 3.5 Flash (Medium)'",
+		"tagteam run -m agy:gemini-3.6-flash-medium",
 		"tagteam --relay --scout openai-compatible:gemma4:latest",
 		"tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma codex:gpt-5.6-sol",
 	}

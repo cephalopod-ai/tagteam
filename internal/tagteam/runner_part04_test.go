@@ -175,7 +175,7 @@ func TestRunLoop_RelayModeWritesExpectedArtifacts(t *testing.T) {
 		Prompt:           "add a feature",
 		Workdir:          repo,
 		Mode:             ModeRelay,
-		Scout:            RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Scout:            RoleTarget{Adapter: "agy", Model: "gemini-3.6-flash-low"},
 		Coder:            RoleTarget{Adapter: "claude"},
 		Adversary:        RoleTarget{Adapter: "claude"},
 		ScoutMode:        "recon",
@@ -246,7 +246,7 @@ func TestRunLoop_RelaySimplifiesToSupervisorBeforeScout(t *testing.T) {
 		Prompt:             "fix typo",
 		Workdir:            repo,
 		Mode:               ModeRelay,
-		Scout:              RoleTarget{Adapter: "agy", Model: "Gemini 3.5 Flash (Medium)"},
+		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.6-flash-medium"},
 		Coder:              RoleTarget{Adapter: "claude"},
 		Adversary:          RoleTarget{Adapter: "claude"},
 		ScoutMode:          "recon",
@@ -300,7 +300,7 @@ func TestRunLoop_SupervisorEscalatesToRelayWhenBothAgentsAgree(t *testing.T) {
 	cfg := DefaultConfig()
 	// Keep this orchestration transition test hermetic; the built-in relay scout
 	// may use a local HTTP adapter that is covered separately.
-	cfg.Defaults.Scout = "agy:Gemini 3.5 Flash (Medium)"
+	cfg.Defaults.Scout = "agy:gemini-3.6-flash-medium"
 	app := NewApp(cfg)
 	final, err := app.Run(context.Background(), RunOptions{
 		Prompt:             "map this unfamiliar repo and fix the bug",
@@ -364,7 +364,7 @@ func TestRunLoop_AdvisoryFailureFallsBackToOriginalMode(t *testing.T) {
 		Prompt:             "add a feature",
 		Workdir:            repo,
 		Mode:               ModeRelay,
-		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.6-flash-low"},
 		Coder:              RoleTarget{Adapter: "claude"},
 		Adversary:          RoleTarget{Adapter: "claude"},
 		ScoutMode:          "recon",
@@ -412,7 +412,7 @@ func TestRunLoop_RelayModeDisabledScoutRetrievalSkipsArtifact(t *testing.T) {
 		Prompt:             "add a feature",
 		Workdir:            repo,
 		Mode:               ModeRelay,
-		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.6-flash-low"},
 		Coder:              RoleTarget{Adapter: "claude"},
 		Adversary:          RoleTarget{Adapter: "claude"},
 		ScoutMode:          "recon",
@@ -466,7 +466,7 @@ func TestRunLoop_RelayModeRetrievalUnavailableStillRunsScout(t *testing.T) {
 		Prompt:             "add a feature",
 		Workdir:            repo,
 		Mode:               ModeRelay,
-		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Scout:              RoleTarget{Adapter: "agy", Model: "gemini-3.6-flash-low"},
 		Coder:              RoleTarget{Adapter: "claude"},
 		Adversary:          RoleTarget{Adapter: "claude"},
 		ScoutMode:          "recon",
@@ -651,7 +651,7 @@ func TestRunLoop_RelayModeScoutContextUnknownKeepsRetrieval(t *testing.T) {
 		Prompt:         "add codex feature",
 		Workdir:        repo,
 		Mode:           ModeRelay,
-		Scout:          RoleTarget{Adapter: "agy", Model: "gemini-3.5-flash-low"},
+		Scout:          RoleTarget{Adapter: "agy", Model: "gemini-3.6-flash-low"},
 		Coder:          RoleTarget{Adapter: "claude"},
 		Adversary:      RoleTarget{Adapter: "claude"},
 		ScoutMode:      "recon",

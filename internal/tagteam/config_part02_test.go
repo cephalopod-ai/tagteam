@@ -214,7 +214,7 @@ func TestResolveOptions_ProfileWorkerSupervisorForcesSupervisorMode(t *testing.T
 	cfg := DefaultConfig()
 	cfg.Defaults.Mode = string(ModeAdversarial)
 	cfg.Profiles["supervised"] = ProfileConfig{
-		Worker:     "agy:Gemini 3.5 Flash (High)",
+		Worker:     "agy:gemini-3.6-flash-high",
 		Supervisor: "claude:opus",
 	}
 	opts, err := ResolveOptions(cfg, nil, FlagInputs{
@@ -572,7 +572,7 @@ func TestLoadConfig_ExplicitSupervisorModeWinsOverLegacyDefaultRoles(t *testing.
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	repoConfig := []byte("[defaults]\nmode = \"supervisor\"\ncoder = \"codex:gpt-5\"\nadversary = \"claude:sonnet\"\nworker = \"agy:Gemini 3.5 Flash (High)\"\nsupervisor = \"claude:opus\"\n")
+	repoConfig := []byte("[defaults]\nmode = \"supervisor\"\ncoder = \"codex:gpt-5\"\nadversary = \"claude:sonnet\"\nworker = \"agy:gemini-3.6-flash-high\"\nsupervisor = \"claude:opus\"\n")
 	if err := os.WriteFile(filepath.Join(repo, ".tagteam.toml"), repoConfig, 0o644); err != nil {
 		t.Fatal(err)
 	}

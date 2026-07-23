@@ -314,7 +314,7 @@ func TestClaudeParseResultWrapsContractErrors(t *testing.T) {
 }
 
 func TestAgyBuildCmdCoder(t *testing.T) {
-	adapter := &AgyAdapter{DefaultModel: "gemini-3.5-flash", ExtraArgs: []string{"--project", "demo"}}
+	adapter := &AgyAdapter{DefaultModel: "gemini-3.6-flash-medium", ExtraArgs: []string{"--project", "demo"}}
 	spec, err := adapter.BuildCmd(RoleCoder, Request{
 		Prompt:  "make it work",
 		Workdir: "/repo",
@@ -325,7 +325,7 @@ func TestAgyBuildCmdCoder(t *testing.T) {
 	}
 	want := []string{
 		"agy", "--print=make it work",
-		"--model", "gemini-3.5-flash",
+		"--model", "gemini-3.6-flash-medium",
 		"--print-timeout", "15s",
 		"--dangerously-skip-permissions",
 		"--project", "demo",
@@ -339,7 +339,7 @@ func TestAgyBuildCmdCoder(t *testing.T) {
 }
 
 func TestAgyBuildCmdAdversary(t *testing.T) {
-	adapter := &AgyAdapter{DefaultModel: "gemini-3.5-flash"}
+	adapter := &AgyAdapter{DefaultModel: "gemini-3.6-flash-high"}
 	spec, err := adapter.BuildCmd(RoleAdversary, Request{
 		Prompt:  "review",
 		Workdir: "/repo",
@@ -347,7 +347,7 @@ func TestAgyBuildCmdAdversary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildCmd() error = %v", err)
 	}
-	want := []string{"agy", "--print=review", "--model", "gemini-3.5-flash", "--sandbox", "--mode", "plan"}
+	want := []string{"agy", "--print=review", "--model", "gemini-3.6-flash-high", "--sandbox", "--mode", "plan"}
 	if !reflect.DeepEqual(spec.Argv, want) {
 		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
 	}
@@ -357,7 +357,7 @@ func TestAgyBuildCmdAdversary(t *testing.T) {
 }
 
 func TestAgyBuildCmdSupervisor(t *testing.T) {
-	adapter := &AgyAdapter{DefaultModel: "gemini-3.5-flash"}
+	adapter := &AgyAdapter{DefaultModel: "gemini-3.6-flash-medium"}
 	spec, err := adapter.BuildCmd(RoleSupervisor, Request{
 		Prompt:  "write a brief",
 		Workdir: "/repo",
@@ -365,7 +365,7 @@ func TestAgyBuildCmdSupervisor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildCmd() error = %v", err)
 	}
-	want := []string{"agy", "--print=write a brief", "--model", "gemini-3.5-flash", "--sandbox", "--mode", "plan"}
+	want := []string{"agy", "--print=write a brief", "--model", "gemini-3.6-flash-medium", "--sandbox", "--mode", "plan"}
 	if !reflect.DeepEqual(spec.Argv, want) {
 		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
 	}
@@ -375,7 +375,7 @@ func TestAgyBuildCmdSupervisor(t *testing.T) {
 }
 
 func TestAgyBuildCmdReporter(t *testing.T) {
-	adapter := &AgyAdapter{DefaultModel: "gemini-3.5-flash"}
+	adapter := &AgyAdapter{DefaultModel: "gemini-3.6-flash-high"}
 	spec, err := adapter.BuildCmd(RoleReporter, Request{
 		Prompt:  "report remaining work",
 		Workdir: "/repo",
@@ -383,7 +383,7 @@ func TestAgyBuildCmdReporter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildCmd() error = %v", err)
 	}
-	want := []string{"agy", "--print=report remaining work", "--model", "gemini-3.5-flash", "--sandbox", "--mode", "plan"}
+	want := []string{"agy", "--print=report remaining work", "--model", "gemini-3.6-flash-high", "--sandbox", "--mode", "plan"}
 	if !reflect.DeepEqual(spec.Argv, want) {
 		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
 	}
@@ -393,7 +393,7 @@ func TestAgyBuildCmdReporter(t *testing.T) {
 }
 
 func TestAgyBuildCmdScout(t *testing.T) {
-	adapter := &AgyAdapter{DefaultModel: "gemini-3.5-flash-low"}
+	adapter := &AgyAdapter{DefaultModel: "gemini-3.6-flash-low"}
 	spec, err := adapter.BuildCmd(RoleScout, Request{
 		Prompt:  "scout the repo",
 		Workdir: "/repo",
@@ -401,7 +401,7 @@ func TestAgyBuildCmdScout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildCmd() error = %v", err)
 	}
-	want := []string{"agy", "--print=scout the repo", "--model", "gemini-3.5-flash-low", "--sandbox", "--mode", "plan"}
+	want := []string{"agy", "--print=scout the repo", "--model", "gemini-3.6-flash-low", "--sandbox", "--mode", "plan"}
 	if !reflect.DeepEqual(spec.Argv, want) {
 		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
 	}

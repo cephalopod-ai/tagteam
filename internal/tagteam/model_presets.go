@@ -1,15 +1,30 @@
 package tagteam
 
 const (
+	agyGemini36FlashLow    = "gemini-3.6-flash-low"
+	agyGemini36FlashMedium = "gemini-3.6-flash-medium"
+	agyGemini36FlashHigh   = "gemini-3.6-flash-high"
+
 	defaultSupervisorTarget       = "claude:claude-opus-4-8"
 	defaultSupervisorFallback     = "codex:gpt-5.6-sol"
 	defaultWorkerTarget           = "codex:gpt-5.6-terra"
-	defaultWorkerFallback         = "agy:Gemini 3.5 Flash (Medium)"
+	defaultWorkerFallback         = "agy:" + agyGemini36FlashMedium
 	defaultRelayCoderTarget       = defaultWorkerTarget
 	defaultRelayScoutTarget       = "openai-compatible:gemma4:latest"
 	defaultAdversarialCoderTarget = "codex:gpt-5.6-terra"
 	defaultAdversaryTarget        = defaultSupervisorTarget
 )
+
+// AgyGemini36FlashModelChoices returns the Agy Gemini 3.6 Flash tiers that
+// Tagteam exposes in interactive model selection. Target parsing remains
+// open-ended so user-configured or newer Agy models continue to work.
+func AgyGemini36FlashModelChoices() []string {
+	return []string{
+		agyGemini36FlashLow,
+		agyGemini36FlashMedium,
+		agyGemini36FlashHigh,
+	}
+}
 
 type modeRoleTargets struct {
 	Editor   string

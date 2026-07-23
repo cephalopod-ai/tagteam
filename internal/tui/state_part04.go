@@ -310,6 +310,9 @@ func collectTargetChoices(cfg tagteam.Config) []string {
 		choices = append(choices, raw)
 	}
 
+	for _, model := range tagteam.AgyGemini36FlashModelChoices() {
+		add(withModel("agy", model))
+	}
 	add(cfg.Defaults.Worker)
 	add(cfg.Defaults.Supervisor)
 	add(cfg.Defaults.Coder)

@@ -135,7 +135,7 @@ func DefaultConfig() Config {
 				DefaultModel: "qwen3-coder",
 			},
 			Agy: AgyConfig{
-				DefaultModel: "Gemini 3.5 Flash (Medium)",
+				DefaultModel: agyGemini36FlashMedium,
 				ExtraArgs:    []string{},
 			},
 			Gosling: GoslingConfig{

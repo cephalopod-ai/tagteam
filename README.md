@@ -332,7 +332,7 @@ cd my-project
 tagteam "add a --json flag to the export command and cover it with a test"
 ```
 
-With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `agy:Gemini 3.5 Flash (Medium)`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
+With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `agy:gemini-3.6-flash-medium`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
 
 Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
 
@@ -344,7 +344,7 @@ For a Claude-free supervisor run, choose explicit worker/supervisor adapters, ro
 
 ```bash
 tagteam \
-  --worker 'agy:Gemini 3.5 Flash (Medium)' \
+  --worker agy:gemini-3.6-flash-medium \
   --supervisor codex:gpt-5.6-sol \
   -r 3 \
   -t "go test ./..." \
@@ -388,7 +388,7 @@ The built-in relay profile uses a local Ollama Gemma scout through its OpenAI-co
 [profiles.relay]
 mode = "relay"
 scout = "openai-compatible:gemma4:latest"
-coder = "agy:Gemini 3.5 Flash (Medium)"
+coder = "agy:gemini-3.6-flash-medium"
 supervisor = "codex:gpt-5.6-sol"
 scout_mode = "recon"
 scout_retrieval = false
@@ -405,7 +405,7 @@ tagteam \
   --scout openai-compatible:gemma4:latest \
   --scout-mode recon \
   --post-scout-mode polish \
-  --coder 'agy:Gemini 3.5 Flash (Medium)' \
+  --coder agy:gemini-3.6-flash-medium \
   --supervisor codex:gpt-5.6-sol \
   "refactor billing flow"
 ```
@@ -418,7 +418,7 @@ If Claude Code is already busy, use a non-Claude relay assignment rather than wa
 TAGTEAM_OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:11434/v1 \
 tagteam --relay --no-scout-retrieval \
   --scout openai-compatible:gemma4:latest \
-  --coder 'agy:Gemini 3.5 Flash (Medium)' \
+  --coder agy:gemini-3.6-flash-medium \
   --supervisor codex:gpt-5.6-sol \
   -t 'git diff --check' \
   "make a scoped documentation change"
@@ -489,7 +489,14 @@ Use Agy with its configured default Gemini model:
 tagteam --worker agy --supervisor codex:gpt-5.6-sol "clean up the CLI help"
 ```
 
-The built-in `agy` default model is `Gemini 3.5 Flash (Medium)`; override it with `agy:<model>`.
+The built-in `agy` default model is `gemini-3.6-flash-medium`. The Team builder and `/model` picker include `agy:gemini-3.6-flash-low`, `agy:gemini-3.6-flash-medium`, and `agy:gemini-3.6-flash-high`; override any role with another installed Agy model using `agy:<model>`.
+
+Set the default Agy tier for bare `agy` targets in configuration:
+
+```toml
+[adapters.agy]
+default_model = "gemini-3.6-flash-medium"
+```
 
 ### OpenAI-compatible reviewers
 
@@ -883,7 +890,7 @@ Core keyboard affordances:
 - `m` opens the Team builder, where each role states whether it writes code or acts read-only
 - `/` opens a mode-aware command palette; `/model ` first selects a role and then its model, while `/profile `, `/mode `, `/codex-effort `, and `/claude-effort ` show valid values
 - `/team` opens the same Team builder; direct role-first commands such as `/model supervisor codex:gpt-5.6-sol` are also accepted
-- direct commands remain available, including `/supervisor codex:gpt-5.6-sol`, `/scout agy:Gemini 3.5 Flash (Medium)`, `/allow-path internal/,README.md`, `/timeout 15m`, `/watchdog-timeout 5m`, `/lint go vet ./...`, `/watch latest`, and `/scout-retrieval off`
+- direct commands remain available, including `/supervisor codex:gpt-5.6-sol`, `/scout agy:gemini-3.6-flash-low`, `/allow-path internal/,README.md`, `/timeout 15m`, `/watchdog-timeout 5m`, `/lint go vet ./...`, `/watch latest`, and `/scout-retrieval off`
 - `s` opens execution Settings
 - `u` opens recent runs
 - `r` refreshes

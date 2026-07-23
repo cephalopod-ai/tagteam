@@ -17,7 +17,7 @@ func fixtureModel() *model {
 		focus:   focusCompose,
 		compose: composeState{
 			Mode:            tagteam.ModeSupervisor,
-			EditorTarget:    "agy:Gemini 3.5 Flash (High)",
+			EditorTarget:    "agy:gemini-3.6-flash-high",
 			ReviewerTarget:  "claude:opus",
 			Prompt:          "add OAuth login",
 			AllowedPaths:    []string{"internal/"},
@@ -45,7 +45,7 @@ func fixtureModel() *model {
 			RoundsCompleted: 0,
 			RoundsRequested: 2,
 			RoleStatuses: map[string]tagteam.RoleStatus{
-				"worker":     {Role: "worker", Status: "completed", Adapter: "agy", Model: "Gemini 3.5 Flash (High)"},
+				"worker":     {Role: "worker", Status: "completed", Adapter: "agy", Model: "gemini-3.6-flash-high"},
 				"supervisor": {Role: "supervisor", Status: "running", Adapter: "claude", Model: "opus"},
 			},
 			LiveProgress:     &tagteam.LiveProgress{Role: tagteam.RoleSupervisor, Status: "running", Elapsed: "1m10s", NoProgressFor: "12s", FilesChanged: 2, Additions: 14, Deletions: 3},
@@ -83,7 +83,7 @@ func TestRenderDashboardIncludesCorePanels(t *testing.T) {
 	out := renderDashboard(fixtureModel())
 	for _, want := range []string{
 		"tagteam  repo",
-		"supervisor  worker agy:Gemini 3.5 Flash (High)",
+		"supervisor  worker agy:gemini-3.6-flash-high",
 		"watching run-2 [run]",
 		"supervisor running · idle 12s",
 		"> add OAuth login",
@@ -177,7 +177,7 @@ func TestRenderDashboardTeamOverlayExplainsRoleAuthority(t *testing.T) {
 	for _, want := range []string{
 		"Team · supervisor",
 		"Build the team:",
-		"worker [writes code]: agy:Gemini 3.5 Flash (High)",
+		"worker [writes code]: agy:gemini-3.6-flash-high",
 		"supervisor [plans + reviews · read-only]: claude:opus",
 		"codex effort:",
 		"claude effort:",
@@ -309,7 +309,7 @@ func TestRenderDashboardNarrowRelayHeaderKeepsEveryRoleVisible(t *testing.T) {
 	m.compose.Mode = tagteam.ModeRelay
 	m.compose.EditorTarget = "claude:claude-sonnet-5"
 	m.compose.ReviewerTarget = "codex:gpt-5.6-sol"
-	m.compose.ScoutTarget = "agy:Gemini 3.5 Flash (Medium)"
+	m.compose.ScoutTarget = "agy:gemini-3.6-flash-medium"
 	out := renderDashboard(m)
 	for _, want := range []string{m.compose.EditorTarget, m.compose.ReviewerTarget, m.compose.ScoutTarget} {
 		if !strings.Contains(out, want) {
