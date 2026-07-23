@@ -270,7 +270,7 @@ func slashCommands() []slashCommand {
 		{Name: "/allow-path <paths>", Description: "Set comma-separated repo-relative write scope"},
 		{Name: "/rounds <n>", Description: "Set the run round limit"},
 		{Name: "/timeout <duration>", Description: "Set the per-invocation timeout"},
-		{Name: "/watchdog-timeout <duration>", Description: "Set the no-progress cancellation timeout"},
+		{Name: "/watchdog-timeout <duration>", Description: "Set the no-progress soft telemetry threshold"},
 		{Name: "/test <cmd>", Description: "Set the test command"},
 		{Name: "/lint <cmd>", Description: "Set the lint command"},
 		{Name: "/no-test on|off", Description: "Enable or disable tests"},

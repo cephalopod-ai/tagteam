@@ -892,7 +892,7 @@ Core keyboard affordances:
 - `m` opens the Team builder, where each role states whether it writes code or acts read-only
 - `/` opens a mode-aware command palette; `/model ` first selects a role and then its model, while `/profile `, `/mode `, `/codex-effort `, and `/claude-effort ` show valid values
 - `/team` opens the same Team builder; direct role-first commands such as `/model supervisor codex:gpt-5.6-sol` are also accepted
-- direct commands remain available, including `/supervisor codex:gpt-5.6-sol`, `/scout agy:gemini-3.6-flash-low`, `/allow-path internal/,README.md`, `/timeout 15m`, `/watchdog-timeout 5m`, `/lint go vet ./...`, `/watch latest`, and `/scout-retrieval off`
+- direct commands remain available, including `/supervisor codex:gpt-5.6-sol`, `/scout agy:gemini-3.6-flash-low`, `/allow-path internal/,README.md`, `/timeout 15m`, `/watchdog-timeout 5m`, `/lint go vet ./...`, `/watch latest`, and `/scout-retrieval off`. The watchdog is a soft telemetry threshold: it marks a still-running invocation as awaiting telemetry rather than cancelling it. `--timeout` remains the per-invocation limit and runs have a 60-minute total wall-time cap by default.
 - `s` opens execution Settings
 - `u` opens recent runs
 - `r` refreshes

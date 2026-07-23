@@ -99,22 +99,23 @@ func BuildRunSnapshot(workdir, runDir string) (RunSnapshot, error) {
 
 	// active.json is kept current by the same run-lifecycle defer on every
 	// entrypoint, including ones (like solo runs) that do not rewrite
-	// state.json on every error path -- so once it names this run, its
-	// Status/Mode are a fresher signal than a possibly-stale state.json and
-	// must win over it. final.json below is the authoritative terminal
-	// record and wins over both once it exists.
+	// state.json on every error path. A matching running pointer also means a
+	// prior failed final.json belongs to an earlier attempt and must not mask
+	// the resumed run's live state.
+	activeRunning := false
 	if active, err := readActiveRun(workdir); err == nil && active.RunID == snapshot.RunID {
 		if active.Mode != "" {
 			snapshot.Mode = active.Mode
 		}
 		snapshot.Status = active.Status
+		activeRunning = active.Status == "running"
 		if active.UpdatedAt.After(snapshot.UpdatedAt) {
 			snapshot.UpdatedAt = active.UpdatedAt
 		}
 	}
 
 	var finalReview *Review
-	if final, err := readFinal(filepath.Join(runDir, "final.json")); err == nil && final.RunID != "" {
+	if final, err := readFinal(filepath.Join(runDir, "final.json")); err == nil && final.RunID != "" && !activeRunning {
 		if snapshot.Mode == "" {
 			snapshot.Mode = final.Mode
 		}

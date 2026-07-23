@@ -135,11 +135,6 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			directCtx = ctx
 		}
 		directTimeout := req.Timeout
-		watchdogDeadline := time.Time{}
-		if req.WatchdogTimeout > 0 && (directTimeout <= 0 || req.WatchdogTimeout < directTimeout) {
-			directTimeout = req.WatchdogTimeout
-			watchdogDeadline = started.Add(req.WatchdogTimeout)
-		}
 		directCancel := func() {}
 		if directTimeout > 0 {
 			directCtx, directCancel = context.WithTimeout(directCtx, directTimeout)
@@ -149,15 +144,16 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		// The host-owned context above is authoritative for both invocation and
 		// watchdog deadlines; avoid adding a second nested timer in the adapter.
 		req.Timeout = 0
-		_, _ = writeLiveProgress(directCtx, req, progressRole, phase, started, "running")
 		directProgressStatus := "completed"
 		defer func() {
 			status := directProgressStatus
-			if runErr != nil && status != "stalled" {
+			if runErr != nil {
 				status = "failed"
 			}
 			_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, started, status)
 		}()
+		stopProgress := startSoftProgressMonitor(directCtx, req, progressRole, phase, started, nil)
+		defer stopProgress()
 		if err := rebindRequestControlResume(&req); err != nil {
 			return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
@@ -183,11 +179,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 				}
 				record.ValidationErrorPath = validationPath
 			}
-			if !watchdogDeadline.IsZero() && errors.Is(directCtx.Err(), context.DeadlineExceeded) && !time.Now().Before(watchdogDeadline) {
-				directProgressStatus = "stalled"
-				err = &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("%w: %v", errInvocationStalled, err)}
-				record.CancellationCause = string(ReasonStalled)
-			} else if directCtx.Err() != nil {
+			if directCtx.Err() != nil {
 				record.CancellationCause = directCtx.Err().Error()
 			}
 			if record.StderrPath != "" {
@@ -372,97 +364,23 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	req.ProgressStderr = stderr
 	req.ProgressLastActivity = &lastActivity
 	logRequestProgress(req, "%s process starting output=%s", phase, spec.Output)
-	initialProgress, _ := writeLiveProgress(runCtx, req, progressRole, phase, started, "running")
-	lastFingerprint := fmt.Sprintf("%s:%d:%d:%s", initialProgress.DiffHash, initialProgress.StdoutBytes, initialProgress.StderrBytes, outputArtifactFingerprint(req.OutputPath))
-	watchdogTimeout := req.WatchdogTimeout
-	if watchdogTimeout <= 0 {
-		watchdogTimeout = 5 * time.Minute
-	}
-	if effectiveWatchdog := time.Duration(float64(req.Timeout) * 0.8); effectiveWatchdog > 0 && effectiveWatchdog < watchdogTimeout {
-		watchdogTimeout = effectiveWatchdog
-	}
-	tickInterval := 30 * time.Second
-	if watchdogTimeout/4 < tickInterval {
-		tickInterval = watchdogTimeout / 4
-	}
-	if tickInterval < time.Second {
-		tickInterval = time.Second
-	}
-	stalled := make(chan struct{}, 1)
-	done := make(chan struct{})
-	watchdogStopped := make(chan struct{})
-	go func() {
-		defer close(watchdogStopped)
-		ticker := time.NewTicker(tickInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				_ = stdout.Sync()
-				_ = stderr.Sync()
-				progress, err := writeLiveProgress(runCtx, req, progressRole, phase, started, "running")
-				fingerprint := fmt.Sprintf("%s:%d:%d:%s", progress.DiffHash, progress.StdoutBytes, progress.StderrBytes, outputArtifactFingerprint(req.OutputPath))
-				if fingerprint != lastFingerprint {
-					lastFingerprint = fingerprint
-					lastActivity = time.Now()
-					progress, err = writeLiveProgress(runCtx, req, progressRole, phase, started, "running")
-				}
-				if !req.Quiet {
-					if err != nil {
-						logRequestProgress(req, "%s still running elapsed=%s progress_error=%q", phase, shortDuration(time.Since(started)), err.Error())
-					} else {
-						logRequestProgress(
-							req,
-							"%s still running elapsed=%s idle=%s files=%d +%d -%d progress=%s",
-							phase,
-							shortDuration(time.Since(started)),
-							progress.NoProgressFor,
-							progress.FilesChanged,
-							progress.Additions,
-							progress.Deletions,
-							filepath.Join(req.RunDir, liveProgressArtifact),
-						)
-					}
-				}
-				if time.Since(lastActivity) >= watchdogTimeout {
-					select {
-					case stalled <- struct{}{}:
-					default:
-					}
-					_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, started, "stalled")
-					cancel()
-					return
-				}
-			case <-done:
-				return
-			}
-		}
-	}()
+	stopProgress := startSoftProgressMonitor(runCtx, req, progressRole, phase, started, func() {
+		_ = stdout.Sync()
+		_ = stderr.Sync()
+	})
+	defer stopProgress()
 	if err := rebindRequestControlResume(&req); err != nil {
-		close(done)
-		<-watchdogStopped
 		return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
 	if err := cmd.Run(); err != nil {
-		close(done)
-		<-watchdogStopped
+		stopProgress()
 		finishInvocationStreams(&record, stdout, stderr)
 		if stdout.Exceeded() || stderr.Exceeded() {
 			limitErr := &ExitError{Code: ExitAdapterFailure, Err: outputLimitError(adapter.ID(), maxOutputBytes(req))}
 			finishDeliveryRecord(req, recordPath, record, "failed", limitErr)
 			return Result{}, limitErr
 		}
-		wasStalled := false
-		select {
-		case <-stalled:
-			wasStalled = true
-		default:
-		}
-		progressStatus := "failed"
-		if wasStalled {
-			progressStatus = "stalled"
-		}
-		_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, started, progressStatus)
+		_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, started, "failed")
 		var reportedEnvelopeErr error
 		if adapter.ID() == "claude" && len(stdout.Bytes()) > 0 {
 			if _, parseErr := adapter.ParseResult(role, stdout.Bytes()); parseErr != nil && strings.Contains(parseErr.Error(), "claude reported ") {
@@ -487,17 +405,11 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 				recordTimeoutObservation(req.RunDir, calibration, time.Since(started))
 			}
 		}
-		var cause error = fmt.Errorf("%s failed: %s", adapter.ID(), msg)
-		if wasStalled {
-			record.CancellationCause = string(ReasonStalled)
-			cause = fmt.Errorf("%w: %s", errInvocationStalled, cause)
-		}
-		runErr := &ExitError{Code: ExitAdapterFailure, Err: cause}
+		runErr := &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("%s failed: %s", adapter.ID(), msg)}
 		finishDeliveryRecord(req, recordPath, record, "failed", runErr)
 		return Result{}, runErr
 	}
-	close(done)
-	<-watchdogStopped
+	stopProgress()
 	finishInvocationStreams(&record, stdout, stderr)
 	_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, started, "completed")
 	logRequestProgress(req, "%s process completed elapsed=%s", phase, shortDuration(time.Since(started)))

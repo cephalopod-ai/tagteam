@@ -322,9 +322,12 @@ func (a *App) repairJSONWithWorker(ctx context.Context, opts RunOptions, registr
 		}
 		return nil, 0, true, err
 	}
-	repaired := bytes.TrimSpace(result.Raw)
+	// Adapters such as Grok retain the provider envelope in Raw while placing
+	// the actual model response in Text. Prefer Text so a valid repaired JSON
+	// document is not replaced by the provider's own envelope.
+	repaired := []byte(strings.TrimSpace(result.Text))
 	if len(repaired) == 0 {
-		repaired = []byte(strings.TrimSpace(result.Text))
+		repaired = bytes.TrimSpace(result.Raw)
 	}
 	if runDir, artifactBase, err = rebindRepairArtifactBase(ctx, runDir, artifactBase); err != nil {
 		return nil, result.CostUSD, true, err
