@@ -630,6 +630,22 @@ func TestPreflightAllowDirtyCreatesCheckpointBranch(t *testing.T) {
 	}
 }
 
+func TestPreflightAllowDirtyRejectsWhitespaceInvalidCheckpoint(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "baseline\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "changed\n\n")
+
+	_, _, err := preflight(RunOptions{Workdir: repo, AllowDirty: true}, "2026-07-23T000000Z")
+	if err == nil || !strings.Contains(err.Error(), "validate dirty-worktree checkpoint") {
+		t.Fatalf("preflight() error = %v, want checkpoint validation failure", err)
+	}
+}
+
 func TestDeterministicDiffIgnoresTagteamRunDirButIncludesUntrackedFiles(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
