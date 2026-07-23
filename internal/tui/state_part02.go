@@ -263,9 +263,15 @@ func (m *model) targetSuggestions(command, selected, description string, kind ta
 }
 
 func (m *model) targetChoiceValues(selected string, kind targetKind) []string {
-	values := append([]string{}, m.targetChoices...)
-	if selected != "" && !contains(values, selected) {
-		values = append([]string{selected}, values...)
+	values := make([]string, 0, len(m.targetChoices)+1)
+	if selected != "" {
+		// Enter should preserve the current role target when a picker first opens.
+		values = append(values, selected)
+	}
+	for _, value := range m.targetChoices {
+		if value != selected {
+			values = append(values, value)
+		}
 	}
 	out := make([]string, 0, len(values))
 	for _, value := range values {
