@@ -554,6 +554,9 @@ func gitCreateCheckpointBranch(workdir, branch, runID string) (string, error) {
 		if _, err := runCommand(context.Background(), workdir, "git", "commit", "-m", message); err != nil {
 			return "", &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("commit dirty-worktree checkpoint: %w", err)}
 		}
+		if _, err := runCommand(context.Background(), workdir, "git", "diff", "--check", "HEAD^", "HEAD"); err != nil {
+			return "", &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("validate dirty-worktree checkpoint: %w", err)}
+		}
 	}
 	head, err := ensureGitRepo(workdir)
 	if err != nil {
