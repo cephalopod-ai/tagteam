@@ -63,6 +63,9 @@ func TestDefaultConfig_SupervisorDefaults(t *testing.T) {
 	if cfg.Adapters.Codex.ReasoningEffort != "high" || cfg.Adapters.Claude.Effort != "high" {
 		t.Fatalf("effort defaults = codex=%q claude=%q", cfg.Adapters.Codex.ReasoningEffort, cfg.Adapters.Claude.Effort)
 	}
+	if cfg.Adapters.Agy.DefaultModel != agyGemini36FlashMedium {
+		t.Fatalf("agy default model = %q", cfg.Adapters.Agy.DefaultModel)
+	}
 	if cfg.Defaults.LossPolicy.Scout != LossPolicyDegrade || cfg.Defaults.LossPolicy.Supervisor != LossPolicyBlock {
 		t.Fatalf("loss policy = %#v", cfg.Defaults.LossPolicy)
 	}
@@ -89,7 +92,7 @@ func TestResolveOptions_HardeningConfigFields(t *testing.T) {
 	}
 	cfg.Defaults.Fallbacks = RoleFallbacks{
 		Supervisor: []string{"claude:sonnet", "claude:sonnet", "codex:gpt-5.4"},
-		Scout:      []string{"agy:gemini-3.5-flash-low", "openai-compatible:gpt-oss"},
+		Scout:      []string{"agy:gemini-3.6-flash-low", "openai-compatible:gpt-oss"},
 	}
 	opts, err := ResolveOptions(cfg, nil, FlagInputs{Timeout: 15 * time.Minute}, nil, "ship it")
 	if err != nil {
@@ -107,7 +110,7 @@ func TestResolveOptions_HardeningConfigFields(t *testing.T) {
 	if got := strings.Join(opts.Fallbacks.Supervisor, ","); got != "claude:sonnet,codex:gpt-5.4" {
 		t.Fatalf("supervisor fallbacks = %q", got)
 	}
-	if got := strings.Join(opts.Fallbacks.Scout, ","); got != "agy:gemini-3.5-flash-low,openai-compatible:gpt-oss" {
+	if got := strings.Join(opts.Fallbacks.Scout, ","); got != "agy:gemini-3.6-flash-low,openai-compatible:gpt-oss" {
 		t.Fatalf("scout fallbacks = %q", got)
 	}
 }

@@ -23,7 +23,7 @@ func TestBuildRunOptionsUsesComposeModeTargets(t *testing.T) {
 	m.compose.Prompt = "ship it"
 	m.compose.EditorTarget = "codex:gpt-5.5"
 	m.compose.ReviewerTarget = "claude:sonnet"
-	m.compose.ScoutTarget = "agy:gemini-3.5-flash-low"
+	m.compose.ScoutTarget = "agy:gemini-3.6-flash-low"
 	m.compose.ScoutMode = "recon"
 	m.compose.PostScoutMode = "polish"
 	m.compose.Rounds = 3
@@ -41,7 +41,7 @@ func TestBuildRunOptionsUsesComposeModeTargets(t *testing.T) {
 	if got := roleTargetString(opts.Adversary); got != "claude:sonnet" {
 		t.Fatalf("reviewer = %q", got)
 	}
-	if got := roleTargetString(opts.Scout); got != "agy:gemini-3.5-flash-low" {
+	if got := roleTargetString(opts.Scout); got != "agy:gemini-3.6-flash-low" {
 		t.Fatalf("scout = %q", got)
 	}
 	if opts.Rounds != 3 {
@@ -127,6 +127,39 @@ func TestTargetChoicesIncludeRelaySpecificCoder(t *testing.T) {
 		}
 	}
 	t.Fatalf("target choices do not include relay coder %q", want)
+}
+
+func TestTargetChoicesIncludeAgyGemini36FlashTiers(t *testing.T) {
+	choices := collectTargetChoices(tagteam.DefaultConfig())
+	for _, model := range tagteam.AgyGemini36FlashModelChoices() {
+		want := "agy:" + model
+		if !contains(choices, want) {
+			t.Fatalf("target choices do not include %q: %#v", want, choices)
+		}
+	}
+}
+
+func TestModelPickerIncludesAgyGemini36FlashTiers(t *testing.T) {
+	m, err := newModel(RunOptions{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("newModel() error = %v", err)
+	}
+	m.commandMode = true
+	m.commandBuffer = "model worker "
+	matches := m.matchingSlashCommands()
+	for _, model := range tagteam.AgyGemini36FlashModelChoices() {
+		want := "/model worker agy:" + model
+		found := false
+		for _, match := range matches {
+			if match.Name == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("model picker does not include %q: %#v", want, matches)
+		}
+	}
 }
 
 func TestSettingsModeCycleSuppliesMissingScoutTarget(t *testing.T) {
@@ -391,8 +424,8 @@ func TestRoleFirstModelCommandAssignsSelectedRole(t *testing.T) {
 	}
 
 	m.applyCommand(nil, "/mode relay")
-	m.applyCommand(nil, "/model scout agy:Gemini 3.5 Flash (Medium)")
-	if m.compose.ScoutTarget != "agy:Gemini 3.5 Flash (Medium)" {
+	m.applyCommand(nil, "/model scout agy:gemini-3.6-flash-medium")
+	if m.compose.ScoutTarget != "agy:gemini-3.6-flash-medium" {
 		t.Fatalf("scout target = %q", m.compose.ScoutTarget)
 	}
 }
@@ -594,7 +627,7 @@ func TestDisplayedSlashCommandsAreRecognized(t *testing.T) {
 		"/coder codex:gpt-5.5",
 		"/supervisor claude:opus",
 		"/reviewer claude:opus",
-		"/scout agy:gemini-3.5-flash-low",
+		"/scout agy:gemini-3.6-flash-low",
 		"/scout-mode recon",
 		"/post-scout-mode polish",
 		"/strict-scout on",

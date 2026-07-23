@@ -16,7 +16,7 @@ func controlLaunchFixture(t *testing.T, repo string) ControlLaunchSpec {
 		Prompt:        "repair the parser",
 		Team: ControlTeamSpec{
 			Mode:       ModeSupervisor,
-			Worker:     &ControlRoleTarget{Adapter: "agy", Model: "gemini-3.5-flash"},
+			Worker:     &ControlRoleTarget{Adapter: "agy", Model: "gemini-3.6-flash-medium"},
 			Supervisor: &ControlRoleTarget{Adapter: "codex", Model: "gpt-5.6-sol"},
 		},
 		AllowedPaths: []string{"./internal/", "README.md"},
