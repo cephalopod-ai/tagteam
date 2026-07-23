@@ -735,6 +735,45 @@ func writeOutputContractArtifacts(req Request, role Role, result Result, raw []b
 	return rawPath, nil
 }
 
+// writeNormalizedOutput keeps the primary role artifact safe for later role
+// prompts. Vendor envelopes belong only in the redacted diagnostic sidecar.
+func writeNormalizedOutput(req Request, role Role, result Result) error {
+	if req.OutputPath == "" {
+		return nil
+	}
+	if err := guardControlResumeWritePath(req.controlResumeGate, req.OutputPath); err != nil {
+		return &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	switch role {
+	case RoleCoder:
+		if result.Worker != nil {
+			return writeJSONWithNewline(req.OutputPath, result.Worker)
+		}
+	case RoleAdversary:
+		if result.Review != nil {
+			return writeJSONWithNewline(req.OutputPath, result.Review)
+		}
+	case RoleScout:
+		if result.Scout != nil {
+			return writeJSONWithNewline(req.OutputPath, result.Scout)
+		}
+	}
+	return writeRedactedBytes(req.OutputPath, []byte(result.Text), req.EnvOverlay)
+}
+
+// writeRecoveryOutput retains sanitized invalid output only when the existing
+// JSON-repair path needs it. Successful role artifacts always use normalized
+// contract data through writeNormalizedOutput.
+func writeRecoveryOutput(req Request, raw []byte) error {
+	if req.OutputPath == "" {
+		return nil
+	}
+	if err := guardControlResumeWritePath(req.controlResumeGate, req.OutputPath); err != nil {
+		return &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	return writeRedactedBytes(req.OutputPath, raw, req.EnvOverlay)
+}
+
 func writeValidationErrorArtifact(req Request, cause error) (string, error) {
 	if cause == nil || req.OutputPath == "" {
 		return "", nil

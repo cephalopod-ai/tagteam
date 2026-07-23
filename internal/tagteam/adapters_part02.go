@@ -374,3 +374,32 @@ func (a *GrokAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 	}
 	return result, nil
 }
+
+// sanitizeAdapterArtifact removes provider-only reasoning fields before an
+// envelope is retained in a run artifact. The normalized text and structured
+// result remain available through ParseResult.
+func sanitizeAdapterArtifact(adapterID string, raw []byte) []byte {
+	if adapterID != "grok" {
+		return raw
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return raw
+	}
+	changed := false
+	for key := range envelope {
+		switch strings.ToLower(key) {
+		case "analysis", "reasoning", "thought":
+			delete(envelope, key)
+			changed = true
+		}
+	}
+	if !changed {
+		return raw
+	}
+	sanitized, err := json.Marshal(envelope)
+	if err != nil {
+		return raw
+	}
+	return sanitized
+}
