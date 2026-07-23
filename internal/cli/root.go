@@ -484,6 +484,13 @@ func renderRunSnapshot(cmd *cobra.Command, snapshot tagteam.RunSnapshot, asJSON 
 	if snapshot.BlockingReason != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "blocking_reason=%s\n", snapshot.BlockingReason)
 	}
+	for _, finding := range snapshot.QualityGateBlockers {
+		fmt.Fprintf(cmd.OutOrStdout(), "quality_gate_blocker=%s severity=%s gate=%s message=%s", finding.ID, finding.Severity, finding.Gate, finding.Message)
+		if finding.Path != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), " path=%s", finding.Path)
+		}
+		fmt.Fprintln(cmd.OutOrStdout())
+	}
 	if snapshot.RunDir != "" {
 		fmt.Fprintln(cmd.OutOrStdout(), snapshot.RunDir)
 	}

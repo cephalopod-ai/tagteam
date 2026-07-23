@@ -261,3 +261,18 @@ func TestRenderRunSnapshotIncludesHostActivity(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderRunSnapshotIncludesQualityGateBlockers(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	renderRunSnapshot(cmd, tagteam.RunSnapshot{QualityGateBlockers: []tagteam.GateFinding{{
+		ID:       "CHURN-LINES",
+		Severity: "major",
+		Gate:     "churn",
+		Message:  "diff changes 5815 lines; threshold is 5000",
+	}}}, false)
+	if got := out.String(); !strings.Contains(got, "quality_gate_blocker=CHURN-LINES severity=major gate=churn message=diff changes 5815 lines; threshold is 5000") {
+		t.Fatalf("quality gate blocker missing from status output:\n%s", got)
+	}
+}

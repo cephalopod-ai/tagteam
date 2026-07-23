@@ -677,6 +677,16 @@ func (m *model) detailLines() []string {
 	if s.BlockingReason != "" {
 		lines = append(lines, fmt.Sprintf("Blocking reason: %s", s.BlockingReason))
 	}
+	if len(s.QualityGateBlockers) > 0 {
+		lines = append(lines, "Quality gate blockers:")
+		for _, finding := range s.QualityGateBlockers {
+			line := fmt.Sprintf("  [%s] %s: %s", finding.Severity, finding.ID, finding.Message)
+			if finding.Path != "" {
+				line += " (" + finding.Path + ")"
+			}
+			lines = append(lines, line)
+		}
+	}
 	lines = append(lines, "", "Roles:")
 	roles := s.RoleStatuses
 	if live := s.LiveProgress; live != nil && live.Status == "waiting" {
