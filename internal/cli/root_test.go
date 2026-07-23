@@ -79,6 +79,16 @@ func TestRunCommandAndModelFlagUseExistingRunSurface(t *testing.T) {
 	}
 }
 
+func TestRenderDoctorStatusIncludesGrok(t *testing.T) {
+	var out bytes.Buffer
+	renderDoctorStatus(&out, map[string]tagteam.VersionInfo{
+		"grok": {Found: true, Runnable: true, Version: "0.2.93", Auth: "ok", Hint: "grok login"},
+	})
+	if !strings.Contains(out.String(), "grok\tfound=true\tversion=0.2.93\tauth=ok\thint=grok login") {
+		t.Fatalf("doctor output does not report grok:\n%s", out.String())
+	}
+}
+
 func TestTestFlagAcceptsIndependentParallelCommands(t *testing.T) {
 	cmd := NewRootCommand()
 	testFlag := cmd.PersistentFlags().Lookup("test")

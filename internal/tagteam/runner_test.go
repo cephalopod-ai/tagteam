@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -155,6 +156,49 @@ func TestOrchestrationPolicy_RelaySimplifiesOnce(t *testing.T) {
 	}
 	if !decision.TransitionLimitConsumed {
 		t.Fatal("expected transition limit consumed")
+	}
+}
+
+func TestRelaySimplificationConstraintPreservesCallerOwnedScoutTopology(t *testing.T) {
+	tests := []struct {
+		name string
+		opts RunOptions
+		want string
+	}{
+		{
+			name: "explicit scout target",
+			opts: RunOptions{ScoutExplicit: true},
+			want: "explicit scout target preserves relay topology",
+		},
+		{
+			name: "strict scout failure policy",
+			opts: RunOptions{ScoutFailurePolicy: "fail"},
+			want: "strict scout policy preserves relay topology",
+		},
+		{
+			name: "blocking scout loss policy",
+			opts: RunOptions{LossPolicy: RoleLossPolicies{Scout: LossPolicyBlock}},
+			want: "strict scout policy preserves relay topology",
+		},
+		{
+			name: "unconstrained relay",
+			opts: RunOptions{ScoutFailurePolicy: "continue"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := relaySimplificationConstraint(test.opts); got != test.want {
+				t.Fatalf("relay simplification constraint = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestDoctorAdapterIDsIncludeEveryReportedProvider(t *testing.T) {
+	want := []string{"codex", "codex-oss", "claude", "agy", "gosling", "grok", "openai-compatible"}
+	got := DoctorAdapterIDs()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("doctor adapter IDs = %#v, want %#v", got, want)
 	}
 }
 

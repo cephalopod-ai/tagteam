@@ -85,6 +85,20 @@ func applyRelaySimplificationPolicy(decision *OrchestrationDecision, advisory Or
 	return ModeRelay
 }
 
+// relaySimplificationConstraint reports when the caller has made the relay
+// topology part of the run contract. A host advisory may optimize an
+// unconstrained relay run, but it must not silently drop a selected scout or
+// bypass a strict scout policy.
+func relaySimplificationConstraint(opts RunOptions) string {
+	if opts.ScoutExplicit {
+		return "explicit scout target preserves relay topology"
+	}
+	if opts.ScoutFailurePolicy == "fail" || policyBlocks(opts.LossPolicy.Scout) {
+		return "strict scout policy preserves relay topology"
+	}
+	return ""
+}
+
 func applySupervisorEscalationPolicy(decision *OrchestrationDecision, worker, supervisor OrchestrationAdvisory) Mode {
 	decision.Advisories = append(decision.Advisories, worker, supervisor)
 	if worker.Recommendation == "escalate" &&
