@@ -497,14 +497,17 @@ func TestWithRepoInstructions_AppendsBundle(t *testing.T) {
 func TestWithAdapterRepoInstructionsAvoidsNativeDuplicate(t *testing.T) {
 	const prompt = "base prompt"
 	const instructions = "follow repo rules"
-	claude := &ClaudeAdapter{}
-	if got := withAdapterRepoInstructions(claude, prompt, instructions); got != prompt {
-		t.Fatalf("Claude prompt duplicated project instructions: %q", got)
+	for name, adapter := range map[string]Adapter{
+		"claude": &ClaudeAdapter{},
+		"codex":  &CodexAdapter{IDValue: "codex"},
+	} {
+		if got := withAdapterRepoInstructions(adapter, prompt, instructions); got != prompt {
+			t.Fatalf("%s prompt duplicated project instructions: %q", name, got)
+		}
 	}
 	for name, adapter := range map[string]Adapter{
-		"codex": &CodexAdapter{IDValue: "codex"},
-		"grok":  &GrokAdapter{},
-		"agy":   &AgyAdapter{},
+		"grok": &GrokAdapter{},
+		"agy":  &AgyAdapter{},
 	} {
 		got := withAdapterRepoInstructions(adapter, prompt, instructions)
 		if !strings.Contains(got, repoInstructionsPromptHeader) || !strings.Contains(got, instructions) {

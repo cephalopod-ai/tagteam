@@ -532,16 +532,23 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 }
 
 func conciseAdapterError(message, artifactPath string) string {
-	const headBytes = 2048
-	const tailBytes = 1024
 	message = strings.TrimSpace(message)
-	if len(message) <= headBytes+tailBytes {
+	if len(message) <= 512 && !strings.Contains(message, "\n") {
 		return message
 	}
-	omitted := len(message) - headBytes - tailBytes
-	head := strings.ToValidUTF8(message[:headBytes], "")
-	tail := strings.ToValidUTF8(message[len(message)-tailBytes:], "")
-	summary := fmt.Sprintf("%s\n... %d bytes omitted ...\n%s", head, omitted, tail)
+	firstLine := "adapter process failed"
+	for _, line := range strings.Split(message, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			firstLine = line
+			break
+		}
+	}
+	const maxLineBytes = 512
+	if len(firstLine) > maxLineBytes {
+		firstLine = strings.ToValidUTF8(firstLine[:maxLineBytes], "") + "..."
+	}
+	summary := firstLine
 	if artifactPath != "" {
 		summary += "\nfull stderr: " + artifactPath
 	}

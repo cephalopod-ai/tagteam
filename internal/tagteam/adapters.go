@@ -81,7 +81,9 @@ func (a *CodexAdapter) ID() string {
 }
 
 func (a *CodexAdapter) Capabilities() CapabilitySet {
-	return CapabilitySet{SupportsSchema: true}
+	// Codex loads project instruction files from the workdir it receives with
+	// -C, so passing the persisted bundle again needlessly inflates prompts.
+	return CapabilitySet{SupportsSchema: true, LoadsProjectInstructions: true}
 }
 
 func (a *CodexAdapter) Detect(ctx context.Context) (VersionInfo, error) {

@@ -369,13 +369,16 @@ func readJSONFile(t *testing.T, path string, out any) {
 	}
 }
 
-func TestConciseAdapterErrorPreservesHeadTailAndArtifactPath(t *testing.T) {
-	message := "HEAD-MARKER\n" + strings.Repeat("x", 6000) + "\nTAIL-MARKER"
+func TestConciseAdapterErrorBoundsMultilineOutputToFirstDiagnostic(t *testing.T) {
+	message := "HEAD-MARKER\n" + strings.Repeat("untrusted prompt content ", 400) + "\nTAIL-MARKER"
 	got := conciseAdapterError(message, "/tmp/run/stderr.log")
-	for _, want := range []string{"HEAD-MARKER", "TAIL-MARKER", "bytes omitted", "full stderr: /tmp/run/stderr.log"} {
+	for _, want := range []string{"HEAD-MARKER", "full stderr: /tmp/run/stderr.log"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("concise error missing %q: %q", want, got)
 		}
+	}
+	if strings.Contains(got, "untrusted prompt content") || strings.Contains(got, "TAIL-MARKER") {
+		t.Fatalf("concise error leaked multiline body: %q", got)
 	}
 	if len(got) >= len(message) {
 		t.Fatalf("adapter error was not reduced: got=%d original=%d", len(got), len(message))
