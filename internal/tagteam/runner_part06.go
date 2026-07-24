@@ -613,6 +613,11 @@ func preflight(opts RunOptions, runID string) (string, preflightCleanup, error) 
 			return "", nil, err
 		}
 	}
+	// A dry run may inspect a dirty worktree, but it must not create a branch,
+	// stage files, commit, or stash in order to do so.
+	if opts.DryRun {
+		return baseline, nil, nil
+	}
 	if err := ensureRepositoryRuntimeIgnored(opts.Workdir); err != nil {
 		return "", nil, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}

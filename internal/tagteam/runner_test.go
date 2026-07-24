@@ -664,6 +664,42 @@ func TestPreflightAllowDirtyCreatesCheckpointBranch(t *testing.T) {
 	}
 }
 
+func TestPreflightDryRunAllowDirtyDoesNotCheckpoint(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "baseline\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	originalBranch := strings.TrimSpace(runGit(t, repo, "rev-parse", "--abbrev-ref", "HEAD"))
+	originalHead := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "changed\n")
+	mustWriteFile(t, filepath.Join(repo, "untracked.txt"), "untracked\n")
+	originalStatus := runGit(t, repo, "status", "--porcelain")
+
+	baseline, cleanup, err := preflight(RunOptions{Workdir: repo, AllowDirty: true, DryRun: true}, "2026-07-24T000000Z")
+	if err != nil {
+		t.Fatalf("preflight() error = %v", err)
+	}
+	if cleanup != nil {
+		t.Fatal("dry-run preflight must not schedule mutating cleanup")
+	}
+	if baseline != originalHead {
+		t.Fatalf("baseline = %q, want %q", baseline, originalHead)
+	}
+	if branch := strings.TrimSpace(runGit(t, repo, "rev-parse", "--abbrev-ref", "HEAD")); branch != originalBranch {
+		t.Fatalf("dry-run changed branch to %q, want %q", branch, originalBranch)
+	}
+	if head := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD")); head != originalHead {
+		t.Fatalf("dry-run changed HEAD to %q, want %q", head, originalHead)
+	}
+	if status := runGit(t, repo, "status", "--porcelain"); status != originalStatus {
+		t.Fatalf("dry-run changed worktree status to %q, want %q", status, originalStatus)
+	}
+}
+
 func TestPreflightAllowDirtyRejectsWhitespaceInvalidCheckpoint(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
