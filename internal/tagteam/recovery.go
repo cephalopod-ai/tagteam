@@ -99,7 +99,13 @@ Allowed decisions: %s
 
 Choose repair only when the same resumable worker should repair its partial work. Choose continue_with_fallback when another configured worker should preserve and continue the partial work. Choose quarantine when further automated edits are unsafe.
 
-Return JSON only matching the supplied schema.`, failure, diff.PatchPath, diff.ChangedFiles(), diff.Metadata.DiffSHA256, testSummary, strings.Join(actions, ", "))
+Return exactly one JSON object. Do not use Markdown fences or prose. It must include every field in this envelope:
+{
+  "schema_version": 1,
+  "decision": "one of the allowed decisions",
+  "reason": "a concise, evidence-backed explanation",
+  "evidence": ["one or more concrete facts from the failure, diff, or focused tests"]
+}`, failure, diff.PatchPath, diff.ChangedFiles(), diff.Metadata.DiffSHA256, testSummary, strings.Join(actions, ", "))
 }
 
 func (a *App) recoverEditorFailure(
@@ -200,10 +206,12 @@ func (a *App) recoverEditorFailure(
 			Budget:          opts.InvocationBudget,
 			MaxOutputBytes:  opts.MaxOutputBytes,
 		}, opts.DryRun)
-		if decisionErr == nil {
-			if parsed, parseErr := parseRecoveryDecision([]byte(result.Text), allowed); parseErr == nil {
-				decision = parsed
-			}
+		if decisionErr != nil {
+			decision.Reason = "recovery supervisor invocation failed: " + redactSecretsWithOverlay(decisionErr.Error(), opts.EnvOverlay)
+		} else if parsed, parseErr := parseRecoveryDecision([]byte(result.Text), allowed); parseErr == nil {
+			decision = parsed
+		} else {
+			decision.Reason = "recovery supervisor returned invalid decision: " + redactSecretsWithOverlay(parseErr.Error(), opts.EnvOverlay)
 		}
 	}
 	artifact.Decision = decision
