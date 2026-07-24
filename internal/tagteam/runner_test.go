@@ -238,7 +238,7 @@ func TestRolePromptsDoNotLeakConflictingAuthority(t *testing.T) {
 		}
 	}
 
-	scoutPrompt := strings.ToLower(BuildScoutPrompt("/repo", "ship it", "brief", "recon", "pre", "", "", ""))
+	scoutPrompt := strings.ToLower(BuildScoutPrompt("/repo", "ship it", "brief", "recon", "pre", "", "", "", nil))
 	for _, forbidden := range []string{"use \"pass\"", "needs_changes", "blocking findings", "produce blocking findings"} {
 		if strings.Contains(scoutPrompt, forbidden) {
 			t.Fatalf("scout prompt leaked reviewer authority %q:\n%s", forbidden, scoutPrompt)

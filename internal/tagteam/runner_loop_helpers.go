@@ -95,16 +95,16 @@ func (a *App) runEditorWithContractRetry(ctx context.Context, opts RunOptions, e
 	return a.runAdapter(ctx, editor, RoleCoder, req, opts.DryRun)
 }
 
-func buildRoundEditorPrompt(ctx context.Context, opts RunOptions, round int, runDir, baseline, latestDiff string, latestReview Review, initialReview *Review, relay RelayContext, selectedPackage *WorkPackage, workPlan *WorkPlan, brief string, implementSelectedPackage bool) (string, error) {
+func buildRoundEditorPrompt(ctx context.Context, opts RunOptions, round int, runDir, baseline string, baselineTest *TestRun, latestDiff string, latestReview Review, initialReview *Review, relay RelayContext, selectedPackage *WorkPackage, workPlan *WorkPlan, brief string, implementSelectedPackage bool) (string, error) {
 	switch {
 	case round == 1 && initialReview == nil && opts.Mode == ModeRelay:
-		return BuildRelayCoderPrompt(opts.Workdir, opts.Prompt, relay.Brief, relay.Instructions, relay.Scout), nil
+		return appendHostBaselineEvidence(BuildRelayCoderPrompt(opts.Workdir, opts.Prompt, relay.Brief, relay.Instructions, relay.Scout), baselineTest), nil
 	case implementSelectedPackage && opts.Mode == ModeSupervisor && selectedPackage != nil && workPlan != nil:
-		return BuildWorkerPackageImplementPrompt(opts.Workdir, opts.Prompt, *workPlan, *selectedPackage), nil
+		return appendHostBaselineEvidence(BuildWorkerPackageImplementPrompt(opts.Workdir, opts.Prompt, *workPlan, *selectedPackage), baselineTest), nil
 	case round == 1 && initialReview == nil && opts.Mode == ModeSupervisor:
-		return BuildWorkerImplementPrompt(opts.Workdir, opts.Prompt, brief), nil
+		return appendHostBaselineEvidence(BuildWorkerImplementPrompt(opts.Workdir, opts.Prompt, brief), baselineTest), nil
 	case round == 1 && initialReview == nil:
-		return BuildCoderPrompt(opts.Workdir, opts.Prompt), nil
+		return appendHostBaselineEvidence(BuildCoderPrompt(opts.Workdir, opts.Prompt), baselineTest), nil
 	}
 	diff := latestDiff
 	if diff == "" {
@@ -120,13 +120,13 @@ func buildRoundEditorPrompt(ctx context.Context, opts RunOptions, round int, run
 	}
 	switch {
 	case opts.Mode == ModeRelay:
-		return BuildRelayFixPrompt(round, opts.Prompt, diff, relay.Brief, relay.Instructions, relay.Scout, relay.PostScout, review), nil
+		return appendHostBaselineEvidence(BuildRelayFixPrompt(round, opts.Prompt, diff, relay.Brief, relay.Instructions, relay.Scout, relay.PostScout, review), baselineTest), nil
 	case opts.Mode == ModeSupervisor && selectedPackage != nil:
-		return BuildWorkerPackageFixPrompt(round, opts.Prompt, diff, *selectedPackage, review), nil
+		return appendHostBaselineEvidence(BuildWorkerPackageFixPrompt(round, opts.Prompt, diff, *selectedPackage, review), baselineTest), nil
 	case opts.Mode == ModeSupervisor:
-		return BuildWorkerFixPrompt(round, opts.Prompt, diff, review), nil
+		return appendHostBaselineEvidence(BuildWorkerFixPrompt(round, opts.Prompt, diff, review), baselineTest), nil
 	default:
-		return BuildFixPrompt(round, opts.Prompt, diff, review), nil
+		return appendHostBaselineEvidence(BuildFixPrompt(round, opts.Prompt, diff, review), baselineTest), nil
 	}
 }
 
@@ -204,7 +204,7 @@ func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runD
 	logProgress(opts, "round %d post-scout %s started adapter=%s", round, opts.PostScoutMode, scout.ID())
 	postScoutStatus.ScoutRan = true
 	postScoutResult, err := a.runAdapter(ctx, scout, RoleScout, Request{
-		Context: ctx, Prompt: withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, relay.Brief, opts.PostScoutMode, "post", diff, safeTestOutput(testOutput), ""), repoInstructions), EnvOverlay: opts.EnvOverlay,
+		Context: ctx, Prompt: withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, relay.Brief, opts.PostScoutMode, "post", diff, safeTestOutput(testOutput), "", final.BaselineTest), repoInstructions), EnvOverlay: opts.EnvOverlay,
 		Model: opts.Scout.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: postScoutPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout,
 		Phase: fmt.Sprintf("round %d post-scout %s %s", round, opts.PostScoutMode, scout.ID()), Quiet: opts.Quiet, Verbose: opts.Verbose, Budget: opts.InvocationBudget,
 		controlResumeGate: controlResumeGateFrom(ctx),

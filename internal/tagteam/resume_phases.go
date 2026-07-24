@@ -181,7 +181,7 @@ func (a *App) resumeEditor(ctx context.Context, opts RunOptions, state RunState,
 	if err != nil {
 		return Result{}, "", err
 	}
-	prompt, err := buildRoundEditorPrompt(ctx, opts, round, runDir, final.Baseline, "", latestReview, nil, runtime.relay, runtime.selectedPackage, runtime.workPlan, runtime.relay.Brief, round == 1 && latestReview.Verdict == "")
+	prompt, err := buildRoundEditorPrompt(ctx, opts, round, runDir, final.Baseline, final.BaselineTest, "", latestReview, nil, runtime.relay, runtime.selectedPackage, runtime.workPlan, runtime.relay.Brief, round == 1 && latestReview.Verdict == "")
 	if err != nil {
 		return Result{}, "", err
 	}

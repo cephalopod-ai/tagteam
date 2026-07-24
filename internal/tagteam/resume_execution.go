@@ -384,7 +384,7 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 			return &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
 		path := filepath.Join(runDir, "scout-round-1.json")
-		result, err := a.runAdapter(ctx, runtime.scout, RoleScout, Request{Context: ctx, Prompt: withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", ""), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Scout.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: path, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed scout", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
+		result, err := a.runAdapter(ctx, runtime.scout, RoleScout, Request{Context: ctx, Prompt: withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", "", final.BaselineTest), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Scout.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: path, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed scout", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 		if err != nil {
 			return err
 		}
@@ -431,7 +431,7 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 			if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "supervisor-brief.md"); err != nil {
 				return &ExitError{Code: ExitPreflightFailed, Err: err}
 			}
-			result, err := a.runAdapter(ctx, runtime.reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{Context: ctx, Prompt: withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-brief.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed supervisor brief", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
+			result, err := a.runAdapter(ctx, runtime.reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{Context: ctx, Prompt: withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-brief.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed supervisor brief", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 			if err != nil {
 				return err
 			}
@@ -443,7 +443,7 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 		if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "supervisor-instructions.md"); err != nil {
 			return &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
-		result, err := a.runAdapter(ctx, runtime.reviewer, RoleSupervisor, Request{Context: ctx, Prompt: withRepoInstructions(BuildRelaySupervisorInstructionsPrompt(opts.Prompt, runtime.relay.Brief, runtime.relay.Scout), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-instructions.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed relay instructions", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
+		result, err := a.runAdapter(ctx, runtime.reviewer, RoleSupervisor, Request{Context: ctx, Prompt: withRepoInstructions(BuildRelaySupervisorInstructionsPrompt(opts.Prompt, runtime.relay.Brief, runtime.relay.Scout, final.BaselineTest), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-instructions.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed relay instructions", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 		if err != nil {
 			return err
 		}

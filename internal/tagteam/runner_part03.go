@@ -170,7 +170,7 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (final FinalRun, err
 	}
 	editorRequest := Request{
 		Context:               ctx,
-		Prompt:                workerContractPrompt(withRepoInstructions(BuildSoloPrompt(opts.Workdir, opts.Prompt), repoInstructions)),
+		Prompt:                workerContractPrompt(withRepoInstructions(appendHostBaselineEvidence(BuildSoloPrompt(opts.Workdir, opts.Prompt), final.BaselineTest), repoInstructions)),
 		SystemPrompt:          "",
 		EnvOverlay:            opts.EnvOverlay,
 		Model:                 opts.Coder.Model,
