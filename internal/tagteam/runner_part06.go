@@ -349,7 +349,11 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	cmd := exec.CommandContext(runCtx, spec.Argv[0], spec.Argv[1:]...)
 	prepareProcessTree(cmd)
 	cmd.Dir = spec.Dir
-	cmd.Env = mergeCommandEnvForRole(role, req.EnvOverlay, spec.Env)
+	cmd.Env, err = commandEnvForInvocation(role, req, spec.Env)
+	if err != nil {
+		finishDeliveryRecord(req, recordPath, record, "failed", err)
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: err}
+	}
 	if len(spec.Stdin) > 0 {
 		cmd.Stdin = bytes.NewReader(spec.Stdin)
 	}

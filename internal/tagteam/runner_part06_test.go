@@ -12,6 +12,57 @@ import (
 	"time"
 )
 
+func TestCommandEnvForInvocation_IsolatesReadOnlyRoleTempDir(t *testing.T) {
+	runDir := t.TempDir()
+	env, err := commandEnvForInvocation(RoleScout, Request{
+		RunDir:       runDir,
+		InvocationID: "scout-1",
+	}, []string{"TMPDIR=/caller-temp", "TMP=/caller-temp", "TEMP=/caller-temp"})
+	if err != nil {
+		t.Fatalf("commandEnvForInvocation() error = %v", err)
+	}
+	values := commandEnvValues(env)
+	want := filepath.Join(runDir, "tmp", "invocations", "scout-1")
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		if values[key] != want {
+			t.Fatalf("%s = %q, want %q", key, values[key], want)
+		}
+	}
+	info, err := os.Stat(want)
+	if err != nil {
+		t.Fatalf("stat isolated temp dir: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("isolated temp path is not a directory: %s", want)
+	}
+}
+
+func TestCommandEnvForInvocation_IsolatesCoderTempDir(t *testing.T) {
+	runDir := t.TempDir()
+	env, err := commandEnvForInvocation(RoleCoder, Request{
+		RunDir:       runDir,
+		InvocationID: "coder-1",
+	}, []string{"TMPDIR=/caller-temp"})
+	if err != nil {
+		t.Fatalf("commandEnvForInvocation() error = %v", err)
+	}
+	want := filepath.Join(runDir, "tmp", "invocations", "coder-1")
+	if got := commandEnvValues(env)["TMPDIR"]; got != want {
+		t.Fatalf("TMPDIR = %q, want %q", got, want)
+	}
+}
+
+func commandEnvValues(env []string) map[string]string {
+	values := make(map[string]string, len(env))
+	for _, item := range env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	return values
+}
+
 func TestFix_ExplicitSameModeRestoresSavedTargets(t *testing.T) {
 	installFakeClaudeBinary(t)
 

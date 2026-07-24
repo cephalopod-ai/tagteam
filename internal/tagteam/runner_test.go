@@ -244,11 +244,45 @@ func TestRolePromptsDoNotLeakConflictingAuthority(t *testing.T) {
 			t.Fatalf("scout prompt leaked reviewer authority %q:\n%s", forbidden, scoutPrompt)
 		}
 	}
+	for _, required := range []string{"do not run tests", "after implementation instead"} {
+		if !strings.Contains(scoutPrompt, required) {
+			t.Fatalf("scout prompt missing execution boundary %q:\n%s", required, scoutPrompt)
+		}
+	}
 
 	coderPrompt := strings.ToLower(BuildCoderPrompt("/repo", "ship it"))
 	for _, forbidden := range []string{"you are read-only", "do not edit files"} {
 		if strings.Contains(coderPrompt, forbidden) {
 			t.Fatalf("coder prompt leaked read-only instruction %q:\n%s", forbidden, coderPrompt)
+		}
+	}
+}
+
+func TestValidateInvocationBudgetRejectsImpossibleModeCap(t *testing.T) {
+	err := validateInvocationBudget(RunOptions{Mode: ModeRelay, Rounds: 1, MaxRoleInvocations: 1})
+	if err == nil {
+		t.Fatal("expected relay cap validation error")
+	}
+	if got := err.Error(); !strings.Contains(got, "at least 6 planned provider invocations") || !strings.Contains(got, "use 0 for unlimited") {
+		t.Fatalf("error = %q", got)
+	}
+}
+
+func TestValidateInvocationBudgetAcceptsUnlimitedAndModeMinimums(t *testing.T) {
+	cases := []struct {
+		mode   Mode
+		rounds int
+		cap    int
+	}{
+		{ModeSolo, 2, 2},
+		{ModeSupervisor, 1, 3},
+		{ModeRelay, 2, 9},
+		{ModeAdversarial, 2, 4},
+		{ModeRelay, 2, 0},
+	}
+	for _, tc := range cases {
+		if err := validateInvocationBudget(RunOptions{Mode: tc.mode, Rounds: tc.rounds, MaxRoleInvocations: tc.cap}); err != nil {
+			t.Fatalf("validateInvocationBudget(%s, rounds=%d, cap=%d): %v", tc.mode, tc.rounds, tc.cap, err)
 		}
 	}
 }

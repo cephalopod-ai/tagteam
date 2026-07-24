@@ -464,7 +464,10 @@ func BuildScoutPromptWithCodeIntel(workdir, userPrompt, brief, mode, phase, diff
 		testSection = testOutput
 	}
 	return fmt.Sprintf(`You are the scout in a three-agent relay workflow.
-You are read-only. Do not edit files. Do not reveal hidden chain-of-thought;
+You are read-only. Do not edit files. Do not run tests, builds, package
+managers, generators, formatters, or other commands that can create files,
+temporary directories, caches, or artifacts. Report suggested checks for the
+host to run after implementation instead. Do not reveal hidden chain-of-thought;
 capture only public rationale: assumptions, decisions, risks, and checks.
 
 Scout phase: %s
