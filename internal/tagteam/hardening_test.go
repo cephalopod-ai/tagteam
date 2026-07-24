@@ -2,9 +2,11 @@ package tagteam
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -30,6 +32,52 @@ func TestIsolatedTestDirectoriesArePerInvocation(t *testing.T) {
 	}
 	if firstState == secondState || firstTemp == secondTemp {
 		t.Fatalf("test isolation reused directories: %q %q", firstState, secondState)
+	}
+}
+
+func TestShortTestTempAliasSupportsUnixSocketsUnderLongRunPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("short AF_UNIX socket aliases are only needed on Unix")
+	}
+	tempDir := filepath.Join(t.TempDir(), strings.Repeat("run-directory-", 12), "tmp")
+	if err := os.MkdirAll(tempDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias, cleanup, err := shortTestTempAlias(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	expected, err := filepath.EvalSymlinks(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(alias)
+	if err != nil || resolved != expected {
+		t.Fatalf("alias target = %q, %v; want %q", resolved, err, expected)
+	}
+	listener, err := net.Listen("unix", filepath.Join(alias, "worker.sock"))
+	if err != nil {
+		t.Fatalf("short temporary alias did not support AF_UNIX socket: %v", err)
+	}
+	defer listener.Close()
+}
+
+func TestRunTestCommandExportsShortTemporaryAlias(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("short AF_UNIX socket aliases are only needed on Unix")
+	}
+	workdir := t.TempDir()
+	outputPath := filepath.Join(t.TempDir(), strings.Repeat("run-directory-", 12), "baseline-test.txt")
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	testRun, err := runTestCommand(context.Background(), workdir, `test -L "$TMPDIR"`, 5*time.Second, outputPath, false, nil, 0, "")
+	if err != nil || !testRun.Passed {
+		t.Fatalf("runTestCommand() = %#v, %v", testRun, err)
+	}
+	if !strings.Contains(testRun.TempDir, "test-isolation") {
+		t.Fatalf("canonical test temp directory = %q", testRun.TempDir)
 	}
 }
 

@@ -669,12 +669,17 @@ func runTestCommand(ctx context.Context, workdir, testCmd string, timeout time.D
 		}
 		return TestRun{}, isolationErr
 	}
+	commandTempDir, cleanupTempAlias, aliasErr := shortTestTempAlias(tempDir)
+	if aliasErr != nil {
+		return TestRun{}, aliasErr
+	}
+	defer cleanupTempAlias()
 	cmd.Env = mergeCommandEnv(envOverlay, []string{
 		"TAGTEAM_STATE_ROOT=" + stateRoot,
 		"XDG_STATE_HOME=" + stateRoot,
-		"TMPDIR=" + tempDir,
-		"TMP=" + tempDir,
-		"TEMP=" + tempDir,
+		"TMPDIR=" + commandTempDir,
+		"TMP=" + commandTempDir,
+		"TEMP=" + commandTempDir,
 	})
 	var out boundedBuffer
 	out.limit = maxBytes
