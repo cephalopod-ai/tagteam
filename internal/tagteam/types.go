@@ -242,10 +242,13 @@ type Request struct {
 	Verbose               bool
 	Budget                *InvocationBudget
 	RequireWorkerContract bool
-	InvocationID          string
-	ProgressStdout        *invocationStream
-	ProgressStderr        *invocationStream
-	ProgressLastActivity  *time.Time
+	// AllowedScope is the host-derived intersection of operator and package
+	// limits. It is checked while an editor is still running.
+	AllowedScope         []string
+	InvocationID         string
+	ProgressStdout       *invocationStream
+	ProgressStderr       *invocationStream
+	ProgressLastActivity *time.Time
 	// controlResumeGate is set only for MCP ResumeControl adapter requests.
 	// When non-nil, shared mutation helpers re-resolve the runs-root boundary
 	// immediately before host writes and dispatch. Nil for normal CLI resume.

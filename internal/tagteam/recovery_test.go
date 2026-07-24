@@ -87,3 +87,46 @@ func TestRecoverEditorFailureUsesConfiguredFallbackWithoutPartialDiff(t *testing
 		t.Fatalf("zero-delta recovery artifact = %#v", artifact)
 	}
 }
+
+func TestRecoverEditorFailureQuarantinesLiveScopeViolation(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "before\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+	baseline := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runDir := t.TempDir()
+	before, err := captureWorktreeSnapshot(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "partial\n")
+
+	opts := RunOptions{
+		Workdir: repo,
+		Mode:    ModeSupervisor,
+		LossPolicy: RoleLossPolicies{
+			Worker: LossPolicyReplaceThenBlock,
+		},
+		Fallbacks: RoleFallbacks{Worker: []string{"fallback:model"}},
+	}
+	final := FinalRun{RunID: "scope-violation", RunDir: runDir, Workdir: repo, Mode: ModeSupervisor}
+	_, _, _, err = NewApp(DefaultConfig()).recoverEditorFailure(
+		context.Background(), opts, 1, runDir, baseline, "", "", Request{Workdir: repo, RunDir: runDir},
+		RoleTarget{Adapter: "primary", Model: "model"}, fakeAdapter{}, nil,
+		map[string]Adapter{}, &LiveScopeViolationError{Paths: []string{"outside.md"}}, before, &final,
+	)
+	if err == nil || final.Status != RunStatusQuarantined {
+		t.Fatalf("final=%#v err=%v, want quarantined scope violation", final, err)
+	}
+	var artifact RecoveryArtifact
+	readJSONFile(t, filepath.Join(runDir, "recovery-round-1.json"), &artifact)
+	if artifact.Status != "quarantined" || artifact.Decision.Decision != "quarantine" {
+		t.Fatalf("recovery artifact = %#v", artifact)
+	}
+	if strings.Contains(artifact.Decision.Reason, "supervisor unavailable") {
+		t.Fatalf("scope violation should not invoke a recovery supervisor: %#v", artifact.Decision)
+	}
+}

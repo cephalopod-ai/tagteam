@@ -199,18 +199,6 @@ func validateWorkPlan(plan *WorkPlan, requestedPackage string, maxPackages int) 
 	return nil
 }
 
-func validateWorkPlanBudget(plan WorkPlan, budgetSeconds int64) error {
-	if budgetSeconds <= 0 {
-		return nil
-	}
-	for _, pkg := range plan.Packages {
-		if int64(pkg.EstimatedSeconds) > budgetSeconds {
-			return fmt.Errorf("package %s estimated_seconds=%d exceeds calibrated package budget=%d", pkg.ID, pkg.EstimatedSeconds, budgetSeconds)
-		}
-	}
-	return nil
-}
-
 func nextWorkPackage(plan WorkPlan, currentID string) (WorkPackage, bool) {
 	for i, pkg := range plan.Packages {
 		if strings.TrimSpace(pkg.ID) == strings.TrimSpace(currentID) && i+1 < len(plan.Packages) {

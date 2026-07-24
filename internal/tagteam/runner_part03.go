@@ -186,6 +186,7 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (final FinalRun, err
 		Verbose:               opts.Verbose,
 		Budget:                opts.InvocationBudget,
 		RequireWorkerContract: true,
+		AllowedScope:          allowedScopeForRound(opts, nil),
 	}
 	editorResult, err := a.runEditorWithContractRetry(ctx, opts, editor, editorRequest, beforeEditor)
 	if err != nil {

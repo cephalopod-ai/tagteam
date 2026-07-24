@@ -302,7 +302,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				if err := writeFileDurable(planSchemaPath, []byte(WorkPlanSchema), 0o644, true); err != nil {
 					return final, err
 				}
-				planPrompt := withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package), repoInstructions)
+				planPrompt := withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package, workPlanBudgetSeconds(opts.Timeout)), repoInstructions)
 				if !reviewer.Capabilities().SupportsSchema {
 					planPrompt += "\n\nJSON schema:\n" + WorkPlanSchema
 				}
@@ -348,7 +348,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 					planCost += planResult.CostUSD
 				}
 			}
-			if err := validateWorkPlanBudget(plan, int64(opts.Timeout.Seconds()*0.8)); err != nil {
+			if err := validateWorkPlanBudget(plan, workPlanBudgetSeconds(opts.Timeout), opts.AutoNextPackage); err != nil {
 				return final, &ExitError{Code: ExitAdapterFailure, Err: err}
 			}
 			pkg, ok := plan.Selected()
@@ -670,6 +670,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			Verbose:               opts.Verbose,
 			Budget:                opts.InvocationBudget,
 			RequireWorkerContract: true,
+			AllowedScope:          allowedScopeForRound(opts, selectedPackage),
 		}
 		editorResult, err := a.runEditorWithContractRetry(ctx, opts, editor, editorRequest, beforeEditor)
 		if err != nil {

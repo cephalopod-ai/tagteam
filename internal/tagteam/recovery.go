@@ -159,14 +159,18 @@ func (a *App) recoverEditorFailure(
 		test, _ := runConfiguredTestCommands(ctx, opts, testPath)
 		artifact.Test = &test
 	}
+	scopeViolation := isLiveScopeViolation(failure)
 	allowed := map[string]bool{"quarantine": true}
-	if originalAdapter.Capabilities().SupportsResume && strings.TrimSpace(sessionID) != "" {
+	if !scopeViolation && originalAdapter.Capabilities().SupportsResume && strings.TrimSpace(sessionID) != "" {
 		allowed["repair"] = true
 	}
-	if policyAttemptsReplacement(opts.LossPolicy.Worker) && len(fallbackTargetsForRole(opts, roleLabelsEditor(opts.Mode), originalTarget)) > 0 {
+	if !scopeViolation && policyAttemptsReplacement(opts.LossPolicy.Worker) && len(fallbackTargetsForRole(opts, roleLabelsEditor(opts.Mode), originalTarget)) > 0 {
 		allowed["continue_with_fallback"] = true
 	}
 	decision := RecoveryDecision{SchemaVersion: ArtifactSchemaVersion, Decision: "quarantine", Reason: "recovery supervisor unavailable or invalid", Evidence: []string{failure.Error()}}
+	if scopeViolation {
+		decision.Reason = "out-of-scope editor write requires operator review"
+	}
 	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "recovery-decision-schema.json", fmt.Sprintf("recovery-decision-round-%d.json", round)); err != nil {
 		return Result{}, originalTarget, originalAdapter, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
@@ -178,7 +182,7 @@ func (a *App) recoverEditorFailure(
 	if err := writeFileDurable(schemaPath, []byte(RecoveryDecisionSchema+"\n"), 0o644, false); err != nil {
 		return Result{}, originalTarget, originalAdapter, mandatoryPersistenceError("recovery decision schema", err)
 	}
-	if reviewer != nil {
+	if reviewer != nil && !scopeViolation {
 		result, decisionErr := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
 			Context:         ctx,
 			Prompt:          recoveryPrompt(failure, diff, artifact.Test, allowed),

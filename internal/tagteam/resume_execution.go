@@ -113,6 +113,9 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 			return final, err
 		}
 		phase = PhaseImplementing
+		// Planning adapters are read-only. A resumed plan can retain an old diff
+		// hash, so start implementation from the verified live worktree instead.
+		state = resumeStateAfterPlanning(state, currentDiffHash)
 	}
 
 	if opts.Mode == ModeSolo {
@@ -125,6 +128,16 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 	}
 	runCompleted = true
 	return final, err
+}
+
+func resumeStateAfterPlanning(state RunState, currentDiffHash string) RunState {
+	state.Phase = string(PhaseImplementing)
+	state.DiffHash = currentDiffHash
+	state.InvocationID = ""
+	state.Role = ""
+	state.Adapter = ""
+	state.Model = ""
+	return state
 }
 
 func prepareResumedFinal(saved FinalRun, opts RunOptions, meta Meta, state RunState, runDir string) FinalRun {
@@ -450,7 +463,7 @@ func (a *App) resumeWorkPlan(ctx context.Context, opts RunOptions, runDir string
 	if err := writeFileDurable(schemaPath, []byte(WorkPlanSchema), 0o644, true); err != nil {
 		return WorkPlan{}, err
 	}
-	prompt := withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package), runtime.repoInstructions)
+	prompt := withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package, workPlanBudgetSeconds(opts.Timeout)), runtime.repoInstructions)
 	result, err := a.runAdapter(ctx, runtime.reviewer, RoleSupervisor, Request{Context: ctx, Prompt: prompt, EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: path, SchemaPath: schemaPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed work plan", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 	if err != nil {
 		return WorkPlan{}, err
@@ -459,7 +472,7 @@ func (a *App) resumeWorkPlan(ctx context.Context, opts RunOptions, runDir string
 	if err != nil {
 		return WorkPlan{}, err
 	}
-	if err := validateWorkPlanBudget(plan, int64(opts.Timeout.Seconds()*0.8)); err != nil {
+	if err := validateWorkPlanBudget(plan, workPlanBudgetSeconds(opts.Timeout), opts.AutoNextPackage); err != nil {
 		return WorkPlan{}, err
 	}
 	if runDir, err = rebindControlResumeRunDir(gate, runDir, nil, "supervisor-work-plan.json"); err != nil {

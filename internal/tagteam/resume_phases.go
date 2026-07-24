@@ -193,7 +193,7 @@ func (a *App) resumeEditor(ctx context.Context, opts RunOptions, state RunState,
 	outputPath := resumeEditorOutputPath(runDir, runtime.editorLabel, round)
 	workerSchemaPath = filepath.Join(runDir, "worker-result-schema.json")
 	setRoleStatus(final, runtime.editorLabel, final.Coder, "running", "", "")
-	editorRequest := Request{Context: ctx, Prompt: prompt, SystemPrompt: editorSystemPromptForMode(opts.Mode), EnvOverlay: opts.EnvOverlay, Model: final.Coder.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: outputPath, SchemaPath: workerSchemaPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: fmt.Sprintf("resumed round %d %s", round, runtime.editorLabel), ProgressRole: Role(runtime.editorLabel), Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, RequireWorkerContract: true, controlResumeGate: gate}
+	editorRequest := Request{Context: ctx, Prompt: prompt, SystemPrompt: editorSystemPromptForMode(opts.Mode), EnvOverlay: opts.EnvOverlay, Model: final.Coder.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: outputPath, SchemaPath: workerSchemaPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: fmt.Sprintf("resumed round %d %s", round, runtime.editorLabel), ProgressRole: Role(runtime.editorLabel), Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, RequireWorkerContract: true, AllowedScope: allowedScopeForRound(opts, runtime.selectedPackage), controlResumeGate: gate}
 	if partial {
 		before = worktreeSnapshot{}
 		if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {
@@ -202,7 +202,7 @@ func (a *App) resumeEditor(ctx context.Context, opts RunOptions, state RunState,
 		editorRequest.RunDir = runDir
 		editorRequest.OutputPath = resumeEditorOutputPath(runDir, runtime.editorLabel, round)
 		editorRequest.SchemaPath = filepath.Join(runDir, "worker-result-schema.json")
-		recovered, selectedTarget, selectedAdapter, recoveryErr := a.recoverEditorFailure(ctx, opts, round, runDir, final.Baseline, editorRequest.SchemaPath, "", editorRequest, final.Coder, runtime.editor, runtime.reviewer, runtime.registry, fmt.Errorf("invocation %s was interrupted with an uncheckpointed diff", state.InvocationID), before, final)
+		recovered, selectedTarget, selectedAdapter, recoveryErr := a.recoverEditorFailure(ctx, opts, round, runDir, final.Baseline, editorRequest.SchemaPath, "", editorRequest, final.Coder, runtime.editor, runtime.reviewer, runtime.registry, interruptedEditorFailure(state, normalizeRunPhase(state.Phase)), before, final)
 		if recoveryErr != nil {
 			return Result{}, "", recoveryErr
 		}
@@ -236,6 +236,13 @@ func (a *App) resumeEditor(ctx context.Context, opts RunOptions, state RunState,
 		return recovered, filepath.Join(runDir, fmt.Sprintf("worker-recovery-round-%d.json", round)), nil
 	}
 	return result, outputPath, nil
+}
+
+func interruptedEditorFailure(state RunState, phase RunPhase) error {
+	if invocationID := strings.TrimSpace(state.InvocationID); invocationID != "" {
+		return fmt.Errorf("invocation %s was interrupted with an uncheckpointed diff", invocationID)
+	}
+	return fmt.Errorf("uncheckpointed worktree diff found while resuming %s; no active invocation was recorded", phase)
 }
 
 func resumeCaptureRound(ctx context.Context, opts RunOptions, baseline, runDir, runID string, round int, selectedPackage *WorkPackage, runTests bool, final *FinalRun, gate *controlResumePathGate) (DiffArtifact, string, error) {

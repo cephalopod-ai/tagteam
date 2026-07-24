@@ -134,6 +134,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		if directCtx == nil {
 			directCtx = ctx
 		}
+		scopeCtx, scopeCancel := context.WithCancel(directCtx)
+		defer scopeCancel()
+		directCtx = scopeCtx
 		directTimeout := req.Timeout
 		directCancel := func() {}
 		if directTimeout > 0 {
@@ -154,10 +157,15 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		}()
 		stopProgress := startSoftProgressMonitor(directCtx, req, progressRole, phase, started, nil)
 		defer stopProgress()
+		stopScopeGuard := startLiveScopeGuard(directCtx, req, before, scopeCancel)
+		defer stopScopeGuard()
 		if err := rebindRequestControlResume(&req); err != nil {
 			return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
 		result, err := direct.RunDirect(role, req)
+		if scopeErr := stopScopeGuard(); scopeErr != nil {
+			err = scopeErr
+		}
 		if err != nil {
 			var validationErr *directValidationError
 			if errors.As(err, &validationErr) {
@@ -309,6 +317,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	if runCtx == nil {
 		runCtx = ctx
 	}
+	scopeCtx, scopeCancel := context.WithCancel(runCtx)
+	defer scopeCancel()
+	runCtx = scopeCtx
 	progressRole := role
 	if req.ProgressRole != "" {
 		progressRole = req.ProgressRole
@@ -369,12 +380,18 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		_ = stderr.Sync()
 	})
 	defer stopProgress()
+	stopScopeGuard := startLiveScopeGuard(runCtx, req, before, scopeCancel)
+	defer stopScopeGuard()
 	if err := rebindRequestControlResume(&req); err != nil {
 		return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
 	if err := cmd.Run(); err != nil {
 		stopProgress()
 		finishInvocationStreams(&record, stdout, stderr)
+		if scopeErr := stopScopeGuard(); scopeErr != nil {
+			finishDeliveryRecord(req, recordPath, record, "failed", scopeErr)
+			return Result{}, scopeErr
+		}
 		if stdout.Exceeded() || stderr.Exceeded() {
 			limitErr := &ExitError{Code: ExitAdapterFailure, Err: outputLimitError(adapter.ID(), maxOutputBytes(req))}
 			finishDeliveryRecord(req, recordPath, record, "failed", limitErr)
@@ -411,6 +428,10 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	}
 	stopProgress()
 	finishInvocationStreams(&record, stdout, stderr)
+	if scopeErr := stopScopeGuard(); scopeErr != nil {
+		finishDeliveryRecord(req, recordPath, record, "failed", scopeErr)
+		return Result{}, scopeErr
+	}
 	_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, started, "completed")
 	logRequestProgress(req, "%s process completed elapsed=%s", phase, shortDuration(time.Since(started)))
 	if stdout.Exceeded() || stderr.Exceeded() {

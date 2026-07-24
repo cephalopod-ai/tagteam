@@ -253,13 +253,71 @@ func gateFindingID(gate, path string) string {
 }
 
 func allowedScopeForRound(opts RunOptions, selected *WorkPackage) []string {
-	if selected != nil && len(selected.AllowedScope) > 0 {
-		return selected.AllowedScope
+	operatorScope := normalizeAllowedScope(opts.AllowedPaths)
+	packageScope := []string(nil)
+	if selected != nil {
+		packageScope = normalizeAllowedScope(selected.AllowedScope)
 	}
-	if len(opts.AllowedPaths) > 0 {
-		return opts.AllowedPaths
+	if len(operatorScope) > 0 && len(packageScope) > 0 {
+		return intersectAllowedScopes(operatorScope, packageScope)
+	}
+	if len(operatorScope) > 0 {
+		return operatorScope
+	}
+	if len(packageScope) > 0 {
+		return packageScope
 	}
 	// Reviewed legacy flows without a work package remain compatible, but the
 	// transfer gate treats this broad scope as unbounded and requires review.
 	return []string{"."}
+}
+
+// intersectAllowedScopes prevents a model-authored package plan from
+// broadening an operator-provided --allow-path boundary.
+func intersectAllowedScopes(left, right []string) []string {
+	result := map[string]bool{}
+	for _, a := range normalizeAllowedScope(left) {
+		for _, b := range normalizeAllowedScope(right) {
+			if overlap, ok := intersectAllowedScopePath(a, b); ok {
+				result[overlap] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(result))
+	for item := range result {
+		out = append(out, item)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func intersectAllowedScopePath(a, b string) (string, bool) {
+	if a == "." {
+		return b, true
+	}
+	if b == "." {
+		return a, true
+	}
+	aDir := strings.HasSuffix(a, "/")
+	bDir := strings.HasSuffix(b, "/")
+	switch {
+	case !aDir && !bDir:
+		return a, a == b
+	case aDir && bDir:
+		if strings.HasPrefix(a, b) {
+			return a, true
+		}
+		if strings.HasPrefix(b, a) {
+			return b, true
+		}
+	case aDir:
+		if strings.HasPrefix(b, a) {
+			return b, true
+		}
+	case bDir:
+		if strings.HasPrefix(a, b) {
+			return a, true
+		}
+	}
+	return "", false
 }

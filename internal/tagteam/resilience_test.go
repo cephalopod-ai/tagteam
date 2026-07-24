@@ -234,6 +234,32 @@ func TestResumeRoutesInterruptedPartialDiffThroughRecovery(t *testing.T) {
 	}
 }
 
+func TestResumeStateAfterPlanningUsesVerifiedWorktree(t *testing.T) {
+	state := RunState{
+		Phase:        string(PhasePlanning),
+		DiffHash:     "stale-diff",
+		InvocationID: "planning-invocation",
+		Role:         string(RoleSupervisor),
+		Adapter:      "claude",
+		Model:        "sonnet",
+	}
+
+	got := resumeStateAfterPlanning(state, "verified-diff")
+	if got.Phase != string(PhaseImplementing) || got.DiffHash != "verified-diff" {
+		t.Fatalf("resume state did not begin implementation from verified worktree: %#v", got)
+	}
+	if got.InvocationID != "" || got.Role != "" || got.Adapter != "" || got.Model != "" {
+		t.Fatalf("planning invocation leaked into editor recovery state: %#v", got)
+	}
+}
+
+func TestInterruptedEditorFailureUsesPhaseWithoutInvocation(t *testing.T) {
+	err := interruptedEditorFailure(RunState{}, PhaseImplementing)
+	if got := err.Error(); got != "uncheckpointed worktree diff found while resuming implementing; no active invocation was recorded" {
+		t.Fatalf("error = %q", got)
+	}
+}
+
 func createResumeFixtureRepo(t *testing.T) (string, string) {
 	t.Helper()
 	repo := t.TempDir()

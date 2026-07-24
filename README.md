@@ -269,6 +269,12 @@ ending in `/` (`docs/` or `./docs/`), and `.` for the whole repository. Absolute
 paths, parent traversal, globs, blanks, backslashes, and normalized duplicates
 are rejected before an adapter starts.
 
+An operator-provided `--allow-path` is a hard ceiling: a supervisor work package
+may narrow it but cannot broaden it. While an editor runs, Tagteam polls the
+invocation-local Git delta; its first out-of-scope write cancels that editor,
+preserves the partial diff, and quarantines the run for operator review rather
+than handing the unsafe diff to a fallback agent.
+
 CLI exit codes and persisted `reason_code` / `blocking_reason` values are the
 stable machine-readable contract. OS, Git, network, and vendor CLI details may
 vary and are preserved as diagnostic context rather than normalized into
@@ -337,7 +343,7 @@ tagteam "add a --json flag to the export command and cover it with a test"
 
 With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `agy:gemini-3.6-flash-medium`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
 
-Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
+Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. Package estimates are capped at 80% of the per-invocation timeout; deferred packages do not block a normal one-package run, while `--auto-next-package` requires every planned package to fit that cap. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
 
 ```bash
 tagteam --slice --max-packages 5 --package P1 "add OAuth login"
