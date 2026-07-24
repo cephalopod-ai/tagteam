@@ -13,8 +13,8 @@ import (
 // fakeClaudeScript returns a shell script that emulates the parts of the
 // `claude` CLI tagteam depends on: --version for Detect, and, for -p
 // invocations, a coder-style "ok" result unless the prompt identifies an
-// adversarial review. Read-only Claude roles use plan mode, which is shared
-// with planning and reporting and therefore cannot identify review calls.
+// review prompt. Read-only Claude roles use plan mode, which is shared with
+// planning and reporting and therefore cannot identify review calls by argv.
 const fakeClaudeScript = `#!/bin/sh
 if [ "$1" = "--version" ]; then
   echo "1.0.0"
@@ -66,6 +66,8 @@ esac
 is_review=0
 case "$match" in
   *"You are the adversarial reviewer"*) is_review=1 ;;
+  *"You are the supervisor reviewing the worker's diff"*) is_review=1 ;;
+  *"You are the supervisor reviewing the coder's diff"*) is_review=1 ;;
 esac
 if [ "$is_review" = "1" ]; then
   printf '%s' '{"result":"{\"schema_version\":2,\"verdict\":\"needs_changes\",\"summary\":\"needs fixes\",\"findings\":[{\"severity\":\"major\",\"file\":\"main.go\",\"line\":1,\"issue\":\"bug\",\"fix\":\"fix it\"}],\"test_suggestions\":[],\"data_loss_checks\":{\"malformed_input_preservation\":{\"status\":\"not_applicable\",\"evidence\":\"not applicable\"},\"annotation_history_retention\":{\"status\":\"not_applicable\",\"evidence\":\"not applicable\"},\"ambiguous_identity_handling\":{\"status\":\"not_applicable\",\"evidence\":\"not applicable\"},\"read_only_non_mutation\":{\"status\":\"pass\",\"evidence\":\"read-only reviewer\"}},\"prior_finding_dispositions\":[]}","session_id":"","total_cost_usd":0}'

@@ -79,6 +79,7 @@ type ProfileConfig struct {
 	Lint                    string           `toml:"lint"`
 	TestIdentityRegex       string           `toml:"test_identity_regex"`
 	Churn                   ChurnThresholds  `toml:"churn"`
+	GitSafety               string           `toml:"git_safety"`
 }
 
 type ChurnThresholds struct {

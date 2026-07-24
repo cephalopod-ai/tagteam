@@ -59,7 +59,7 @@ Highlights in `v1.1.0`:
 
 - **New default team.** Supervisor and relay flows now default to Claude Opus 4.8 for read-only supervision, GPT-5.6 Terra for implementation, and local Ollama `gemma4:latest` for relay scouting. Codex Sol is the bounded implementation fallback; Agy/Gemini is restricted to scout work.
 - **Evidence-based Claude roles.** Claude is supported as a read-only supervisor or adversary. Worker/coder assignments are rejected because substantive Sonnet and Opus implementation runs did not reliably complete Tagteam's edit/output lifecycle; Claude scout assignments remain disabled pending a dedicated trial.
-- **Safer dirty-worktree execution.** `--allow-dirty` checkpoints existing work on a new `tagteam/<run-id>` branch, producing a clean baseline instead of treating an uncontrolled dirty tree as the run baseline.
+- **Synced, isolated runs by default.** Default `git_safety = "sync"` checkpoints dirty work on a new `tagteam/<run-id>` branch, fast-forwards only the checked-out source branch when its upstream is ahead, then runs from the isolated branch. It never pushes, merges unrelated branches, or resolves conflicts automatically.
 - **Clearer Claude failures.** Structured Claude error envelopes are preserved even when the Claude process exits nonzero, so errors such as `error_max_structured_output_retries` remain visible and configured fallback ladders can respond to the real cause.
 - **Interactive TUI continuity.** Supervisor, relay, solo, and adversarial workflows remain available without leaving the TUI; solo supports focused implementation or planning, while adversarial mode supports independent audits.
 - **Better live-state observability.** In-progress runs publish external `active.json`, richer phase/progress state, and a shared run snapshot surface that powers both the TUI and status-style views.
@@ -255,7 +255,8 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - Claude serialization is scoped to a state root, not the whole machine. Tagteam processes configured with different `--state-root` values use different locks and can still overlap; use one shared state root for concurrent Claude-backed runs. The lock also cannot see Claude processes started outside Tagteam. `tagteam doctor` confirms binary availability but cannot detect either form of contention.
 - Unix/macOS Claude locking is runtime-tested with real multi-process contention. The Windows PID-file fallback is compile-checked but not runtime-tested in CI; ownership-record write failures and same-process concurrent invocations remain residual risks there. Prefer one Claude-backed Tagteam run at a time on Windows until that path has equivalent runtime coverage.
 - Do not launch two Tagteam runs against the same worktree. Run-state locking and integrity checks assume one active writer per worktree; use separate Git worktrees when runs need to proceed concurrently, even when their Claude invocations would otherwise serialize.
-- `--allow-dirty` is isolation, not an integrity bypass: Tagteam creates a `tagteam/<run-id>` branch, commits the pre-existing tracked and untracked changes as a local checkpoint, validates that checkpoint with `git diff --check`, and uses that clean commit as the run baseline. The source branch remains unchanged. Invalid whitespace fails preflight with a checkpoint-validation error; fix it before rerunning. The checkpoint requires a usable local Git author configuration and is intentionally preserved for recovery and review.
+- `git_safety = "sync"` is the default preflight policy. It requires an attached branch, captures a dirty worktree in a local commit on `tagteam/<run-id>`, fetches the configured upstream, and fast-forwards only the original checked-out branch when possible. The checkpoint is rebased onto that updated branch before agents start. Tagteam never pushes, creates a merge commit, merges arbitrary local branches, or resolves a conflict. A divergent source branch fails before agent work; a checkpoint rebase conflict is aborted, the source branch is restored cleanly, and the checkpoint branch remains available for manual resolution. Repositories without an upstream still receive the local checkpoint/run branch. Set `git_safety = "branch"` to retain the legacy new-branch-only behavior, `allow-dirty` for legacy checkpointing without upstream synchronization, `autostash` to restore a stash after the run, or `clean` to reject a dirty worktree. `TAGTEAM_GIT_SAFETY` overrides trusted config.
+- `--allow-dirty` is isolation, not an integrity bypass: it selects the legacy `allow-dirty` policy, creating a `tagteam/<run-id>` branch, committing the pre-existing tracked and untracked changes as a local checkpoint, validating that checkpoint with `git diff --check`, and using that clean commit as the run baseline. The source branch remains unchanged. Invalid whitespace fails preflight with a checkpoint-validation error; fix it before rerunning. The checkpoint requires a usable local Git author configuration and is intentionally preserved for recovery and review.
 - `--autostash` records the created stash by immutable Git object ID and restores
   that exact object even if another process pushes a newer stash. A successful
   apply retains the stash as a recovery point because Git only drops entries by
@@ -678,12 +679,13 @@ tagteam init
 | `max_role_invocations` | optional hard cap on adapter calls in one run; `--max-role-invocations` overrides it |
 | `json_repair` | explicit JSON contract repair mode: `off` (default) or `worker`; `--repair-json-with-worker` enables the selected worker as a read-only parser for invalid JSON artifacts |
 | `state_root`, `watchdog_timeout` | authoritative external artifact root and no-progress timeout |
-| `lint`, `test`, `test_identity_regex`, `git_safety` | transfer lint, focused tests, optional failure-identity regex, and git safety settings |
+| `lint`, `test`, `test_identity_regex` | transfer lint, focused tests, and optional failure-identity regex |
+| `git_safety` | Git preflight policy: `sync` (default checkpoint + fetch + fast-forward + isolated run branch), `branch` (legacy isolated branch only), `allow-dirty` (legacy checkpoint only), `autostash`, or `clean`. Sync never pushes, auto-merges divergence, or resolves conflicts. `TAGTEAM_GIT_SAFETY` overrides trusted config. |
 | `churn` | configurable `max_files`, `max_changed_lines`, `max_fixture_files`, `whitespace_ratio`, and `minimum_semantic_ratio` gates |
 
 </details>
 
-Profiles may override `mode`, `state_root`, `watchdog_timeout`, `scout`, `scout_mode`, `scout_retrieval`, `code_intel_command`, `scout_failure_policy`, `scout_context_policy`, `loss_policy`, `fallbacks`, `fallbacks_by_target`, `json_repair`, `post_scout_mode`, `worker`, `supervisor`, `coder`, `adversary`, `rounds`, `test`, `lint`, `test_identity_regex`, and `churn`. A profile that sets `coder`/`adversary` but omits `mode` resolves as an adversarial-mode profile, so profiles written before `mode` existed keep working unchanged:
+Profiles may override `mode`, `state_root`, `watchdog_timeout`, `scout`, `scout_mode`, `scout_retrieval`, `code_intel_command`, `scout_failure_policy`, `scout_context_policy`, `loss_policy`, `fallbacks`, `fallbacks_by_target`, `json_repair`, `post_scout_mode`, `worker`, `supervisor`, `coder`, `adversary`, `rounds`, `test`, `lint`, `test_identity_regex`, `git_safety`, and `churn`. A profile that sets `coder`/`adversary` but omits `mode` resolves as an adversarial-mode profile, so profiles written before `mode` existed keep working unchanged:
 
 ```toml
 [defaults]
@@ -699,6 +701,7 @@ supervisor_slicing = true
 max_packages = 5
 rounds = 2
 json_repair = "off"
+git_safety = "sync"
 
 [profiles.relay.loss_policy]
 scout = "replace_then_degrade"

@@ -643,6 +643,14 @@ func preflight(opts RunOptions, runID string) (string, preflightCleanup, error) 
 	if opts.SkipDirtyCheck {
 		return baseline, nil, nil
 	}
+	if opts.GitSafety == "sync" {
+		logProgress(opts, "syncing current branch and creating isolated run branch")
+		baseline, err := gitPrepareSyncedRun(opts.Workdir, runID)
+		if err != nil {
+			return "", nil, err
+		}
+		return baseline, nil, nil
+	}
 	if opts.GitSafety == "branch" {
 		if err := gitCreateBranch(opts.Workdir, "tagteam/"+runID); err != nil {
 			return "", nil, err

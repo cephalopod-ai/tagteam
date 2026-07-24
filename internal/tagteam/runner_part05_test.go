@@ -378,6 +378,10 @@ if [ -n "$output" ]; then printf '%s' "$payload" > "$output"; else printf '%s' "
 	if !fixOpts.ModeExplicit || !fixOpts.CoderExplicit || !fixOpts.AdversaryExplicit {
 		t.Fatalf("expected profile selection to mark mode/targets explicit: %#v", fixOpts)
 	}
+	if fixOpts.GitSafety != "sync" {
+		t.Fatalf("fix should resolve the default sync policy, got %q", fixOpts.GitSafety)
+	}
+	branchBeforeFix := strings.TrimSpace(runGit(t, repo, "branch", "--show-current"))
 
 	fixed, err := app.Fix(context.Background(), fixOpts)
 	if err == nil {
@@ -391,6 +395,9 @@ if [ -n "$output" ]; then printf '%s' "$payload" > "$output"; else printf '%s' "
 	}
 	if fixed.Adversary.Adapter != "claude" || fixed.Adversary.Model != "haiku" {
 		t.Fatalf("fix should have kept the profile-resolved adversary target, got %#v", fixed.Adversary)
+	}
+	if branchAfterFix := strings.TrimSpace(runGit(t, repo, "branch", "--show-current")); branchAfterFix != branchBeforeFix {
+		t.Fatalf("fix changed branch from %q to %q despite its saved dirty baseline", branchBeforeFix, branchAfterFix)
 	}
 }
 
