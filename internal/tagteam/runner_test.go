@@ -3,6 +3,7 @@ package tagteam
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -509,6 +510,71 @@ func TestWithAdapterRepoInstructionsAvoidsNativeDuplicate(t *testing.T) {
 		if !strings.Contains(got, repoInstructionsPromptHeader) || !strings.Contains(got, instructions) {
 			t.Fatalf("%s prompt omitted explicit project instructions: %q", name, got)
 		}
+	}
+}
+
+func TestRunSupervisorWithFallbackPersistsSelection(t *testing.T) {
+	runDir := t.TempDir()
+	primary := RoleTarget{Adapter: "primary", Model: "primary-model"}
+	fallback := RoleTarget{Adapter: "fallback", Model: "fallback-model"}
+	opts := RunOptions{
+		Adversary: primary,
+		LossPolicy: RoleLossPolicies{
+			Supervisor: LossPolicyReplaceThenBlock,
+		},
+		FallbacksByTarget: map[string][]string{
+			roleTargetString(primary): {roleTargetString(fallback)},
+		},
+	}
+	primaryAdapter := fakeAdapter{id: primary.Adapter}
+	fallbackAdapter := fakeAdapter{id: fallback.Adapter}
+	var reviewer Adapter = primaryAdapter
+	meta := Meta{
+		Adapters: map[string]string{"supervisor": primary.Adapter},
+		Models:   map[string]string{"supervisor": primary.Model},
+	}
+	final := FinalRun{
+		Adversary: primary,
+		Adapters:  map[string]string{"supervisor": primary.Adapter},
+		Models:    map[string]string{"supervisor": primary.Model},
+	}
+	var attempts []string
+	result, err := (&App{}).runSupervisorWithFallback(context.Background(), &opts, map[string]Adapter{
+		primary.Adapter:  primaryAdapter,
+		fallback.Adapter: fallbackAdapter,
+	}, runDir, "supervisor", &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+		attempts = append(attempts, roleTargetString(target))
+		if target == primary {
+			return Result{}, errors.New("primary supervisor timed out")
+		}
+		return Result{Text: "fallback brief"}, nil
+	})
+	if err != nil {
+		t.Fatalf("runSupervisorWithFallback() error = %v", err)
+	}
+	if result.Text != "fallback brief" {
+		t.Fatalf("result = %#v", result)
+	}
+	if got, want := attempts, []string{roleTargetString(primary), roleTargetString(fallback)}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("attempts = %#v, want %#v", got, want)
+	}
+	if opts.Adversary != fallback || final.Adversary != fallback || reviewer.ID() != fallback.Adapter {
+		t.Fatalf("selected fallback was not retained opts=%#v final=%#v reviewer=%s", opts.Adversary, final.Adversary, reviewer.ID())
+	}
+	if meta.Adapters["supervisor"] != fallback.Adapter || meta.Models["supervisor"] != fallback.Model {
+		t.Fatalf("meta selection = %#v / %#v", meta.Adapters, meta.Models)
+	}
+	if final.Adapters["supervisor"] != fallback.Adapter || final.Models["supervisor"] != fallback.Model || !final.Degraded {
+		t.Fatalf("final fallback state = %#v", final)
+	}
+	status := final.RoleStatuses["supervisor"]
+	if status.Status != "completed" || status.Selected != roleTargetString(fallback) || !reflect.DeepEqual(status.Attempts, attempts) {
+		t.Fatalf("supervisor status = %#v", status)
+	}
+	var persisted Meta
+	readJSONFile(t, filepath.Join(runDir, "meta.json"), &persisted)
+	if persisted.Adapters["supervisor"] != fallback.Adapter || persisted.Models["supervisor"] != fallback.Model {
+		t.Fatalf("persisted selection = %#v / %#v", persisted.Adapters, persisted.Models)
 	}
 }
 

@@ -154,6 +154,8 @@ type ClaudeAdapter struct {
 	ExtraArgs         []string
 }
 
+const claudeReadOnlyTools = "Read,Glob,Grep,Bash"
+
 func (a *ClaudeAdapter) ID() string {
 	return "claude"
 }
@@ -205,8 +207,8 @@ func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 		}
 	case RoleAdversary:
 		argv = append(argv,
-			"--permission-mode", "dontAsk",
-			"--allowedTools", "Read,Glob,Grep",
+			"--permission-mode", "plan",
+			"--allowedTools", claudeReadOnlyTools,
 		)
 		if req.SchemaPath != "" {
 			schemaBytes, err := osReadFile(req.SchemaPath)
@@ -217,8 +219,8 @@ func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 		}
 	case RoleSupervisor, RoleReporter, RoleScout:
 		argv = append(argv,
-			"--permission-mode", "dontAsk",
-			"--allowedTools", "Read,Glob,Grep",
+			"--permission-mode", "plan",
+			"--allowedTools", claudeReadOnlyTools,
 		)
 		if role == RoleSupervisor && req.SchemaPath != "" {
 			schemaBytes, err := osReadFile(req.SchemaPath)

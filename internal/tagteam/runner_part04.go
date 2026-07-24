@@ -309,26 +309,28 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				if err := writeFileDurable(planSchemaPath, []byte(WorkPlanSchema), 0o644, true); err != nil {
 					return final, err
 				}
-				planPrompt := withAdapterRepoInstructions(reviewer, BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package, workPlanBudgetSeconds(opts.Timeout)), repoInstructions)
-				if !reviewer.Capabilities().SupportsSchema {
-					planPrompt += "\n\nJSON schema:\n" + WorkPlanSchema
-				}
-				planResult, err := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
-					Context:         ctx,
-					Prompt:          planPrompt,
-					EnvOverlay:      opts.EnvOverlay,
-					Model:           opts.Adversary.Model,
-					Workdir:         opts.Workdir,
-					RunDir:          runDir,
-					OutputPath:      planOutputPath,
-					SchemaPath:      planSchemaPath,
-					Timeout:         opts.Timeout,
-					WatchdogTimeout: opts.WatchdogTimeout,
-					Phase:           fmt.Sprintf("supervisor slicing %s", reviewer.ID()),
-					Quiet:           opts.Quiet,
-					Verbose:         opts.Verbose,
-					Budget:          opts.InvocationBudget,
-				}, false)
+				planResult, err := a.runSupervisorWithFallback(ctx, &opts, registry, runDir, reviewerLabel, &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+					planPrompt := withAdapterRepoInstructions(adapter, BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package, workPlanBudgetSeconds(opts.Timeout)), repoInstructions)
+					if !adapter.Capabilities().SupportsSchema {
+						planPrompt += "\n\nJSON schema:\n" + WorkPlanSchema
+					}
+					return a.runAdapter(ctx, adapter, RoleSupervisor, Request{
+						Context:         ctx,
+						Prompt:          planPrompt,
+						EnvOverlay:      opts.EnvOverlay,
+						Model:           target.Model,
+						Workdir:         opts.Workdir,
+						RunDir:          runDir,
+						OutputPath:      planOutputPath,
+						SchemaPath:      planSchemaPath,
+						Timeout:         opts.Timeout,
+						WatchdogTimeout: opts.WatchdogTimeout,
+						Phase:           fmt.Sprintf("supervisor slicing %s", adapter.ID()),
+						Quiet:           opts.Quiet,
+						Verbose:         opts.Verbose,
+						Budget:          opts.InvocationBudget,
+					}, false)
+				})
 				if err != nil {
 					if repairedPlan, repairCost, ok, rerr := a.tryWorkPlanRepair(ctx, opts, registry, runDir, planOutputPath, nil, true, err, &final, reviewerLabel); rerr != nil {
 						return final, rerr
@@ -387,21 +389,23 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		} else {
 			logProgress(opts, "supervisor brief started adapter=%s", reviewer.ID())
 			briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
-			briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
-				Context:         ctx,
-				Prompt:          withAdapterRepoInstructions(reviewer, BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
-				EnvOverlay:      opts.EnvOverlay,
-				Model:           opts.Adversary.Model,
-				Workdir:         opts.Workdir,
-				RunDir:          runDir,
-				OutputPath:      briefOutputPath,
-				Timeout:         opts.Timeout,
-				WatchdogTimeout: opts.WatchdogTimeout,
-				Phase:           fmt.Sprintf("supervisor brief %s", reviewer.ID()),
-				Quiet:           opts.Quiet,
-				Verbose:         opts.Verbose,
-				Budget:          opts.InvocationBudget,
-			}, opts.DryRun)
+			briefResult, err := a.runSupervisorWithFallback(ctx, &opts, registry, runDir, reviewerLabel, &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+				return a.runAdapter(ctx, adapter, supervisorBriefRole(opts.SupervisorCanEdit), Request{
+					Context:         ctx,
+					Prompt:          withAdapterRepoInstructions(adapter, BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
+					EnvOverlay:      opts.EnvOverlay,
+					Model:           target.Model,
+					Workdir:         opts.Workdir,
+					RunDir:          runDir,
+					OutputPath:      briefOutputPath,
+					Timeout:         opts.Timeout,
+					WatchdogTimeout: opts.WatchdogTimeout,
+					Phase:           fmt.Sprintf("supervisor brief %s", adapter.ID()),
+					Quiet:           opts.Quiet,
+					Verbose:         opts.Verbose,
+					Budget:          opts.InvocationBudget,
+				}, opts.DryRun)
+			})
 			if err != nil {
 				return final, err
 			}
@@ -568,21 +572,23 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 
 		logProgress(opts, "supervisor brief started adapter=%s", reviewer.ID())
 		briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
-		briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
-			Context:         ctx,
-			Prompt:          withAdapterRepoInstructions(reviewer, BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
-			EnvOverlay:      opts.EnvOverlay,
-			Model:           opts.Adversary.Model,
-			Workdir:         opts.Workdir,
-			RunDir:          runDir,
-			OutputPath:      briefOutputPath,
-			Timeout:         opts.Timeout,
-			WatchdogTimeout: opts.WatchdogTimeout,
-			Phase:           fmt.Sprintf("supervisor brief %s", reviewer.ID()),
-			Quiet:           opts.Quiet,
-			Verbose:         opts.Verbose,
-			Budget:          opts.InvocationBudget,
-		}, opts.DryRun)
+		briefResult, err := a.runSupervisorWithFallback(ctx, &opts, registry, runDir, reviewerLabel, &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+			return a.runAdapter(ctx, adapter, supervisorBriefRole(opts.SupervisorCanEdit), Request{
+				Context:         ctx,
+				Prompt:          withAdapterRepoInstructions(adapter, BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
+				EnvOverlay:      opts.EnvOverlay,
+				Model:           target.Model,
+				Workdir:         opts.Workdir,
+				RunDir:          runDir,
+				OutputPath:      briefOutputPath,
+				Timeout:         opts.Timeout,
+				WatchdogTimeout: opts.WatchdogTimeout,
+				Phase:           fmt.Sprintf("supervisor brief %s", adapter.ID()),
+				Quiet:           opts.Quiet,
+				Verbose:         opts.Verbose,
+				Budget:          opts.InvocationBudget,
+			}, opts.DryRun)
+		})
 		if err != nil {
 			return final, err
 		}
@@ -593,21 +599,23 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 
 		instructionsPath := filepath.Join(runDir, "supervisor-instructions.md")
 		logProgress(opts, "supervisor relay instructions started adapter=%s", reviewer.ID())
-		instructionsResult, err := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
-			Context:         ctx,
-			Prompt:          withAdapterRepoInstructions(reviewer, BuildRelaySupervisorInstructionsPrompt(opts.Prompt, brief, relay.Scout, final.BaselineTest), repoInstructions),
-			EnvOverlay:      opts.EnvOverlay,
-			Model:           opts.Adversary.Model,
-			Workdir:         opts.Workdir,
-			RunDir:          runDir,
-			OutputPath:      instructionsPath,
-			Timeout:         opts.Timeout,
-			WatchdogTimeout: opts.WatchdogTimeout,
-			Phase:           fmt.Sprintf("relay supervisor instructions %s", reviewer.ID()),
-			Quiet:           opts.Quiet,
-			Verbose:         opts.Verbose,
-			Budget:          opts.InvocationBudget,
-		}, opts.DryRun)
+		instructionsResult, err := a.runSupervisorWithFallback(ctx, &opts, registry, runDir, reviewerLabel, &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+			return a.runAdapter(ctx, adapter, RoleSupervisor, Request{
+				Context:         ctx,
+				Prompt:          withAdapterRepoInstructions(adapter, BuildRelaySupervisorInstructionsPrompt(opts.Prompt, brief, relay.Scout, final.BaselineTest), repoInstructions),
+				EnvOverlay:      opts.EnvOverlay,
+				Model:           target.Model,
+				Workdir:         opts.Workdir,
+				RunDir:          runDir,
+				OutputPath:      instructionsPath,
+				Timeout:         opts.Timeout,
+				WatchdogTimeout: opts.WatchdogTimeout,
+				Phase:           fmt.Sprintf("relay supervisor instructions %s", adapter.ID()),
+				Quiet:           opts.Quiet,
+				Verbose:         opts.Verbose,
+				Budget:          opts.InvocationBudget,
+			}, opts.DryRun)
+		})
 		if err != nil {
 			return final, err
 		}

@@ -8,6 +8,83 @@ import (
 	"time"
 )
 
+// runSupervisorWithFallback applies the configured supervisor replacement
+// policy to planning calls as well as post-edit reviews. A supervisor can be
+// runnable at preflight yet fail or time out while preparing its first brief.
+func (a *App) runSupervisorWithFallback(
+	ctx context.Context,
+	opts *RunOptions,
+	registry map[string]Adapter,
+	runDir, reviewerLabel string,
+	reviewer *Adapter,
+	meta *Meta,
+	final *FinalRun,
+	invoke func(RoleTarget, Adapter) (Result, error),
+) (Result, error) {
+	primary := opts.Adversary
+	result, err := invoke(primary, *reviewer)
+	if err == nil || !policyAttemptsReplacement(lossPolicyForRole(*opts, reviewerLabel)) {
+		return result, err
+	}
+
+	attempts := []string{roleTargetString(primary)}
+	for _, raw := range fallbackTargetsForRole(*opts, reviewerLabel, primary) {
+		target, parseErr := ParseRoleTarget(raw)
+		if parseErr != nil {
+			continue
+		}
+		attempts = append(attempts, roleTargetString(target))
+		candidate, ok := registry[target.Adapter]
+		if !ok {
+			continue
+		}
+		if detectErr := checkAdapters(ctx, candidate); detectErr != nil {
+			continue
+		}
+		logProgress(*opts, "%s failed; trying fallback target=%s error=%q", reviewerLabel, roleTargetString(target), err.Error())
+		fallbackResult, fallbackErr := invoke(target, candidate)
+		if fallbackErr != nil {
+			err = fallbackErr
+			continue
+		}
+
+		opts.Adversary = target
+		*reviewer = candidate
+		final.Adversary = target
+		if final.Adapters == nil {
+			final.Adapters = map[string]string{}
+		}
+		if final.Models == nil {
+			final.Models = map[string]string{}
+		}
+		final.Adapters[reviewerLabel] = target.Adapter
+		final.Models[reviewerLabel] = target.Model
+		setFinalRoleTarget(final, reviewerLabel, target)
+		setFinalDegraded(final, ReasonFallbackUsed, fmt.Sprintf("%s fallback selected after primary failure", reviewerLabel))
+		appendRoleLoss(final, reviewerLabel, lossPolicyForRole(*opts, reviewerLabel), "replace", "fallback_selected_after_failure", ReasonFallbackUsed, fmt.Sprintf("%s -> %s", roleTargetString(primary), roleTargetString(target)))
+		setRoleStatus(final, reviewerLabel, target, "completed", ReasonFallbackUsed, "fallback selected after primary failure")
+		status := final.RoleStatuses[reviewerLabel]
+		status.Attempts = attempts
+		status.Selected = roleTargetString(target)
+		final.RoleStatuses[reviewerLabel] = status
+		if meta != nil {
+			if meta.Adapters == nil {
+				meta.Adapters = map[string]string{}
+			}
+			if meta.Models == nil {
+				meta.Models = map[string]string{}
+			}
+			meta.Adapters[reviewerLabel] = target.Adapter
+			meta.Models[reviewerLabel] = target.Model
+			if err := writeJSON(filepath.Join(runDir, "meta.json"), *meta); err != nil {
+				return Result{}, err
+			}
+		}
+		return fallbackResult, nil
+	}
+	return Result{}, err
+}
+
 func runIDForOptions(opts RunOptions) (string, error) {
 	runID := opts.RunID
 	if runID == "" {

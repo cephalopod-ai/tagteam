@@ -89,7 +89,7 @@ func TestCodexBuildCmdReporterIsReadOnly(t *testing.T) {
 	}
 }
 
-func TestClaudeBuildCmdReadOnlyRolesHaveNoBashTool(t *testing.T) {
+func TestClaudeBuildCmdReadOnlyRolesUsePlanMode(t *testing.T) {
 	adapter := &ClaudeAdapter{}
 	for _, role := range []Role{RoleAdversary, RoleSupervisor, RoleReporter, RoleScout} {
 		spec, err := adapter.BuildCmd(role, Request{Prompt: "review", Workdir: t.TempDir()})
@@ -97,8 +97,11 @@ func TestClaudeBuildCmdReadOnlyRolesHaveNoBashTool(t *testing.T) {
 			t.Fatal(err)
 		}
 		joined := strings.Join(spec.Argv, " ")
-		if strings.Contains(joined, "Bash") || !strings.Contains(joined, "Read,Glob,Grep") {
-			t.Fatalf("%s argv grants executable tools: %q", role, joined)
+		if !strings.Contains(joined, "--permission-mode plan") || !strings.Contains(joined, "--allowedTools "+claudeReadOnlyTools) {
+			t.Fatalf("%s argv does not grant read-only inspection tools in plan mode: %q", role, joined)
+		}
+		if strings.Contains(joined, "acceptEdits") || strings.Contains(joined, "--permission-mode dontAsk") {
+			t.Fatalf("%s argv does not enforce Claude plan mode: %q", role, joined)
 		}
 	}
 }
@@ -147,7 +150,7 @@ func TestClaudeBuildCmdSupervisor(t *testing.T) {
 	if !strings.Contains(argv, "--model claude-sonnet-5 --effort high") {
 		t.Fatalf("expected model and effort, got argv = %v", spec.Argv)
 	}
-	if !strings.Contains(argv, "--permission-mode dontAsk") {
+	if !strings.Contains(argv, "--permission-mode plan") {
 		t.Fatalf("expected read-only permission mode, got argv = %v", spec.Argv)
 	}
 	if strings.Contains(argv, "--json-schema") {
@@ -171,7 +174,7 @@ func TestClaudeBuildCmdSupervisorWorkPlanUsesSchema(t *testing.T) {
 		t.Fatalf("BuildCmd() error = %v", err)
 	}
 	argv := strings.Join(spec.Argv, " ")
-	if !strings.Contains(argv, "--permission-mode dontAsk") {
+	if !strings.Contains(argv, "--permission-mode plan") {
 		t.Fatalf("expected read-only permission mode, got argv = %v", spec.Argv)
 	}
 	if !strings.Contains(argv, "--json-schema") {
@@ -192,7 +195,7 @@ func TestClaudeBuildCmdReporterDoesNotUseSchema(t *testing.T) {
 		t.Fatalf("BuildCmd() error = %v", err)
 	}
 	argv := strings.Join(spec.Argv, " ")
-	if !strings.Contains(argv, "--permission-mode dontAsk") {
+	if !strings.Contains(argv, "--permission-mode plan") {
 		t.Fatalf("expected read-only permission mode, got argv = %v", spec.Argv)
 	}
 	if strings.Contains(argv, "--json-schema") {
