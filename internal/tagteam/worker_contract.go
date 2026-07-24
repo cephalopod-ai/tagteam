@@ -151,18 +151,48 @@ func captureWorktreeSnapshot(ctx context.Context, workdir string) (worktreeSnaps
 			continue
 		}
 		absolute := filepath.Join(workdir, filepath.FromSlash(path))
-		data, readErr := os.ReadFile(absolute)
-		if readErr != nil {
-			if os.IsNotExist(readErr) {
-				snapshot[path] = "deleted:" + status
-				continue
-			}
-			return nil, readErr
+		fingerprint, include, snapshotErr := snapshotWorktreeEntry(absolute, status)
+		if snapshotErr != nil {
+			return nil, snapshotErr
 		}
-		sum := sha256.Sum256(data)
-		snapshot[path] = status + ":" + hex.EncodeToString(sum[:])
+		if include {
+			snapshot[path] = fingerprint
+		}
 	}
 	return snapshot, nil
+}
+
+// snapshotWorktreeEntry hashes only entries Git can version. In particular,
+// pytest's current-result symlink can target a directory, which must be
+// fingerprinted as a symlink rather than followed with os.ReadFile.
+func snapshotWorktreeEntry(path, status string) (fingerprint string, include bool, err error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "deleted:" + status, true, nil
+		}
+		return "", false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", false, err
+		}
+		sum := sha256.Sum256([]byte(target))
+		return "symlink:" + status + ":" + hex.EncodeToString(sum[:]), true, nil
+	}
+	if info.IsDir() || !info.Mode().IsRegular() {
+		return "", false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "deleted:" + status, true, nil
+		}
+		return "", false, err
+	}
+	sum := sha256.Sum256(data)
+	return status + ":" + hex.EncodeToString(sum[:]), true, nil
 }
 
 func worktreeDelta(before, after worktreeSnapshot) []string {

@@ -84,6 +84,11 @@ func captureIntegritySnapshot(req Request) (integritySnapshot, error) {
 	}
 	if req.RunDir != "" {
 		if err := snapshot.captureTree(req.RunDir, func(path string) bool {
+			// Invocation-scoped temp files may legitimately contain names such as
+			// .dory/state.json. They are not host control artifacts.
+			if pathWithin(filepath.Join(req.RunDir, "tmp"), filepath.Clean(path)) {
+				return false
+			}
 			if req.OutputPath != "" && (path == req.OutputPath || strings.HasPrefix(path, req.OutputPath+".")) {
 				return false
 			}

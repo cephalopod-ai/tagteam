@@ -49,6 +49,60 @@ func mergeCommandEnvForRole(role Role, overlay map[string]string, extra []string
 	return mergeRestrictedCommandEnv(overlay, extra)
 }
 
+// commandEnvForInvocation prevents provider commands and their validation
+// tools from placing incidental temporary artifacts in the repository
+// worktree. Intentional project edits use their explicit repository paths and
+// do not require the caller's ambient temporary directory.
+func commandEnvForInvocation(role Role, req Request, extra []string) ([]string, error) {
+	env := mergeCommandEnvForRole(role, req.EnvOverlay, extra)
+	if strings.TrimSpace(req.RunDir) == "" {
+		return env, nil
+	}
+	invocationID := strings.TrimSpace(req.InvocationID)
+	if invocationID == "" {
+		invocationID = string(role)
+	}
+	tempDir := filepath.Join(req.RunDir, "tmp", "invocations", invocationID)
+	if err := os.MkdirAll(tempDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create isolated temporary directory for %s: %w", role, err)
+	}
+	return overrideCommandEnv(env, map[string]string{
+		"TMPDIR": tempDir,
+		"TMP":    tempDir,
+		"TEMP":   tempDir,
+	}), nil
+}
+
+func overrideCommandEnv(env []string, overrides map[string]string) []string {
+	result := make([]string, 0, len(env)+len(overrides))
+	seen := make(map[string]bool, len(overrides))
+	for _, item := range env {
+		key, _, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		if value, replace := overrides[key]; replace {
+			if !seen[key] {
+				result = append(result, key+"="+value)
+				seen[key] = true
+			}
+			continue
+		}
+		result = append(result, item)
+	}
+	keys := make([]string, 0, len(overrides))
+	for key := range overrides {
+		if !seen[key] {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		result = append(result, key+"="+overrides[key])
+	}
+	return result
+}
+
 func roleAllowsParentEnv(role Role) bool {
 	switch role {
 	case RoleCoder:
@@ -295,7 +349,11 @@ func deterministicDiffOutputs(ctx context.Context, workdir, baseline, indexPath 
 		if err := os.WriteFile(pathspecPath, pathspec, 0o644); err != nil {
 			return nil, nil, nil, nil, err
 		}
-		if _, err := runGitCommandBytes(ctx, workdir, env, "add", "--pathspec-from-file="+pathspecPath, "--pathspec-file-nul"); err != nil {
+		// Additional paths include ordinary untracked files plus additions that
+		// were explicitly staged in the real index. The latter can be ignored
+		// session/governance artifacts staged with `git add -f`; preserve them in
+		// this disposable review index without discovering any other ignored files.
+		if _, err := runGitCommandBytes(ctx, workdir, env, "add", "-f", "--pathspec-from-file="+pathspecPath, "--pathspec-file-nul"); err != nil {
 			return nil, nil, nil, nil, err
 		}
 	}

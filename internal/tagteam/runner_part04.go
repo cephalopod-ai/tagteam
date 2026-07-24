@@ -302,7 +302,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				if err := writeFileDurable(planSchemaPath, []byte(WorkPlanSchema), 0o644, true); err != nil {
 					return final, err
 				}
-				planPrompt := withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package), repoInstructions)
+				planPrompt := withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package, workPlanBudgetSeconds(opts.Timeout)), repoInstructions)
 				if !reviewer.Capabilities().SupportsSchema {
 					planPrompt += "\n\nJSON schema:\n" + WorkPlanSchema
 				}
@@ -348,7 +348,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 					planCost += planResult.CostUSD
 				}
 			}
-			if err := validateWorkPlanBudget(plan, int64(opts.Timeout.Seconds()*0.8)); err != nil {
+			if err := validateWorkPlanBudget(plan, workPlanBudgetSeconds(opts.Timeout), opts.AutoNextPackage); err != nil {
 				return final, &ExitError{Code: ExitAdapterFailure, Err: err}
 			}
 			pkg, ok := plan.Selected()
@@ -382,7 +382,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
 			briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
 				Context:         ctx,
-				Prompt:          withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), repoInstructions),
+				Prompt:          withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
 				EnvOverlay:      opts.EnvOverlay,
 				Model:           opts.Adversary.Model,
 				Workdir:         opts.Workdir,
@@ -432,7 +432,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		if sc := CompactSymlinkTopologyForPrompt(symlinkTopology); sc != "" {
 			retrievalContext = strings.TrimSpace(sc + "\n" + retrievalContext)
 		}
-		scoutPrompt := withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext), repoInstructions)
+		scoutPrompt := withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext, final.BaselineTest), repoInstructions)
 		if opts.ScoutMode == "recon" {
 			contextBudgetPath := filepath.Join(runDir, "scout-context-round-1.json")
 			limit := scoutContextLimitForAdapter(a.Config, opts.Scout.Adapter)
@@ -446,7 +446,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				if (compactedRetrieval != "" && len(compactedRetrieval) < len(retrievalContext)) || (compactedCodeIntel != "" && len(compactedCodeIntel) < len(codeIntelContext)) {
 					retrievalContext = compactedRetrieval
 					codeIntelContext = compactedCodeIntel
-					scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext), repoInstructions)
+					scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext, final.BaselineTest), repoInstructions)
 					contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
 					contextBudget.Adapter = opts.Scout.Adapter
 					contextBudget.Model = opts.Scout.Model
@@ -457,7 +457,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				logProgress(opts, "scout context exceeds configured limit; disabling derived context estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
 				retrievalContext = ""
 				codeIntelContext = ""
-				scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", "", ""), repoInstructions)
+				scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", "", "", final.BaselineTest), repoInstructions)
 				contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
 				contextBudget.Adapter = opts.Scout.Adapter
 				contextBudget.Model = opts.Scout.Model
@@ -563,7 +563,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
 		briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
 			Context:         ctx,
-			Prompt:          withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), repoInstructions),
+			Prompt:          withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
 			EnvOverlay:      opts.EnvOverlay,
 			Model:           opts.Adversary.Model,
 			Workdir:         opts.Workdir,
@@ -588,7 +588,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		logProgress(opts, "supervisor relay instructions started adapter=%s", reviewer.ID())
 		instructionsResult, err := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
 			Context:         ctx,
-			Prompt:          withRepoInstructions(BuildRelaySupervisorInstructionsPrompt(opts.Prompt, brief, relay.Scout), repoInstructions),
+			Prompt:          withRepoInstructions(BuildRelaySupervisorInstructionsPrompt(opts.Prompt, brief, relay.Scout, final.BaselineTest), repoInstructions),
 			EnvOverlay:      opts.EnvOverlay,
 			Model:           opts.Adversary.Model,
 			Workdir:         opts.Workdir,
@@ -633,7 +633,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		}); stateErr != nil {
 			return final, mandatoryPersistenceError("round implementation state", stateErr)
 		}
-		editorPrompt, err := buildRoundEditorPrompt(ctx, opts, round, runDir, baseline, latestDiff, latestReview, initialReview, relay, selectedPackage, workPlan, brief, implementSelectedPackage)
+		editorPrompt, err := buildRoundEditorPrompt(ctx, opts, round, runDir, baseline, final.BaselineTest, latestDiff, latestReview, initialReview, relay, selectedPackage, workPlan, brief, implementSelectedPackage)
 		if err != nil {
 			return final, err
 		}
@@ -670,6 +670,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			Verbose:               opts.Verbose,
 			Budget:                opts.InvocationBudget,
 			RequireWorkerContract: true,
+			AllowedScope:          allowedScopeForRound(opts, selectedPackage),
 		}
 		editorResult, err := a.runEditorWithContractRetry(ctx, opts, editor, editorRequest, beforeEditor)
 		if err != nil {

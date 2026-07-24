@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -159,6 +160,9 @@ func BuildRunSnapshot(workdir, runDir string) (RunSnapshot, error) {
 	if ledger, err := loadFindingsLedger(runDir); err == nil {
 		snapshot.OpenMajorCount = summarizeFindings(filepath.Join(runDir, findingsLedgerFilename), ledger).OpenBlockerOrMajor
 	}
+	if gates, ok := latestQualityGateResult(runDir); ok {
+		snapshot.QualityGateBlockers = blockingQualityGateFindings(gates)
+	}
 
 	if snapshot.LatestDiffPath != "" && !snapshotArtifactPathAllowed(runDir, snapshot.LatestDiffPath) {
 		snapshot.LatestDiffPath = ""
@@ -273,4 +277,57 @@ func latestTestOutputPath(runDir string) string {
 		}
 	}
 	return best
+}
+
+// latestQualityGateResult returns the most recent readable quality-gate
+// artifact. A malformed newer artifact must not hide a valid prior gate from
+// the status surface, so unreadable artifacts are skipped.
+func latestQualityGateResult(runDir string) (QualityGateResult, bool) {
+	entries, err := os.ReadDir(runDir)
+	if err != nil {
+		return QualityGateResult{}, false
+	}
+	type candidate struct {
+		round int
+		path  string
+	}
+	candidates := make([]candidate, 0)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "quality-gates-round-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		roundText := strings.TrimSuffix(strings.TrimPrefix(name, "quality-gates-round-"), ".json")
+		round, err := strconv.Atoi(roundText)
+		if err != nil || round < 1 {
+			continue
+		}
+		candidates = append(candidates, candidate{round: round, path: filepath.Join(runDir, name)})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].round > candidates[j].round })
+	for _, candidate := range candidates {
+		data, err := os.ReadFile(candidate.path)
+		if err != nil {
+			continue
+		}
+		var gates QualityGateResult
+		if err := json.Unmarshal(data, &gates); err != nil {
+			continue
+		}
+		return gates, true
+	}
+	return QualityGateResult{}, false
+}
+
+func blockingQualityGateFindings(gates QualityGateResult) []GateFinding {
+	blockers := make([]GateFinding, 0, len(gates.Findings))
+	for _, finding := range gates.Findings {
+		if finding.Severity == "blocker" || finding.Severity == "major" {
+			blockers = append(blockers, finding)
+		}
+	}
+	return blockers
 }

@@ -132,6 +132,7 @@ tagteam plan [RUN_ID]
 tagteam transcript [RUN_ID]
 tagteam findings [--all]
 tagteam findings defer RUN_ID FINDING_ID --reason "..."
+tagteam findings resolve RUN_ID FINDING_ID --evidence "commit and verification"
 tagteam transfer RUN_ID --test "..." --lint "..."
 tagteam tui [RUN_ID]
 tagteam mcp
@@ -171,7 +172,7 @@ Tagteam's existing mutation gate.
 > [!IMPORTANT]
 > The selected `--workdir` (the current directory, if unset) must itself be a Git repo with at least one commit — `tagteam` runs `git rev-parse --verify HEAD` there during preflight and uses that commit as the diff baseline for every round. A folder that only *contains* repos (e.g. a workspace directory with several projects as subfolders) does not qualify; point `--workdir` at the actual repo, not a parent above it. Failing this check exits with `workdir is not a git repo or has no HEAD`.
 
-Configured baseline tests run before any model invocation. A shell exit status of `127` is treated as a deterministic preflight error because the configured test command could not start; correct the command or its environment before retrying.
+Configured baseline tests run before any model invocation. Tagteam passes a bounded, untrusted summary of that current-state evidence to scouts, supervisors, and workers; they must verify any proposed change that conflicts with it rather than treating a prior brief or metadata as authoritative. A shell exit status of `127` is treated as a deterministic preflight error because the configured test command could not start; correct the command or its environment before retrying.
 
 Supported adapters in this repo today:
 
@@ -268,6 +269,12 @@ ending in `/` (`docs/` or `./docs/`), and `.` for the whole repository. Absolute
 paths, parent traversal, globs, blanks, backslashes, and normalized duplicates
 are rejected before an adapter starts.
 
+An operator-provided `--allow-path` is a hard ceiling: a supervisor work package
+may narrow it but cannot broaden it. While an editor runs, Tagteam polls the
+invocation-local Git delta; its first out-of-scope write cancels that editor,
+preserves the partial diff, and quarantines the run for operator review rather
+than handing the unsafe diff to a fallback agent.
+
 CLI exit codes and persisted `reason_code` / `blocking_reason` values are the
 stable machine-readable contract. OS, Git, network, and vendor CLI details may
 vary and are preserved as diagnostic context rather than normalized into
@@ -336,7 +343,7 @@ tagteam "add a --json flag to the export command and cover it with a test"
 
 With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `agy:gemini-3.6-flash-medium`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
 
-Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
+Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. Package estimates are capped at 80% of the per-invocation timeout; deferred packages do not block a normal one-package run, while `--auto-next-package` requires every planned package to fit that cap. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
 
 ```bash
 tagteam --slice --max-packages 5 --package P1 "add OAuth login"
@@ -770,6 +777,12 @@ Completed implementation and test phases are not repeated. Timeouts, stalls,
 cancellation, and invalid worker output preserve streams and partial diffs;
 changed work enters a supervisor recovery decision (`repair`,
 `continue_with_fallback`, or `quarantine`) instead of being discarded.
+A resumed round replaces that round's quality-gate snapshot and reconciles
+superseded open quality-gate findings against the fresh complete evaluation.
+Review findings remain open until the reviewer explicitly disposes of them.
+Resume retains the saved mode, but an explicit compatible role flag such as
+`--supervisor`, `--reviewer`, `--worker`, `--coder`, or `--scout` replaces that
+role for the recovery attempt.
 
 <details>
 <summary><strong>Typical contents</strong></summary>
@@ -817,7 +830,7 @@ Diff artifacts are captured through a temporary Git index, not the real staging 
 
 Every live implementation response must match the worker-result JSON contract and name exactly the files changed during that invocation. Reviewer schema v2 requires evidence for malformed-input preservation, annotation/history retention, ambiguous identity handling, and read-only non-mutation. Scope, churn, regression, and unresolved independent-review findings remain blocking even when tests are green.
 
-Transfer is never automatic. Use `tagteam transfer RUN_ID --test '...' --lint '...' [--to PATH]`; Tagteam rechecks the patch hash, repository identity, target baseline/cleanliness, bounded scope, lint, focused tests, regression identities, findings ledger, and final review before applying the patch without staging or committing. Run `tagteam findings` to list unresolved findings across all persisted runs (`--all` includes disposition history). Approve an explicit risk deferral with `tagteam findings defer RUN_ID FINDING_ID --reason '...'`.
+Transfer is never automatic. Use `tagteam transfer RUN_ID --test '...' --lint '...' [--to PATH]`; Tagteam rechecks the patch hash, repository identity, target baseline/cleanliness, bounded scope, lint, focused tests, regression identities, findings ledger, and final review before applying the patch without staging or committing. Run `tagteam findings` to list unresolved findings across all persisted runs (`--all` includes disposition history). Approve an explicit risk deferral with `tagteam findings defer RUN_ID FINDING_ID --reason '...'`. Close a fixed nonblocking review note only with durable evidence, for example `tagteam findings resolve RUN_ID FINDING_ID --evidence 'commit abc123; pytest tests/ passed'`; it cannot clear a quality gate, blocker, or major finding.
 
 <details>
 <summary><strong><code>blocking_reason</code> vocabulary</strong></summary>
