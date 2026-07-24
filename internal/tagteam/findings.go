@@ -194,8 +194,10 @@ func updateFindingsLedger(runDir string, round int, review *Review, gates *Quali
 		}
 	}
 	if gates != nil {
+		currentGateIDs := make(map[string]struct{}, len(gates.Findings))
 		for _, finding := range gates.Findings {
 			id := stableGateFindingID(finding)
+			currentGateIDs[id] = struct{}{}
 			entry := entries[id]
 			entry.ID = id
 			entry.Source = "quality_gate"
@@ -208,6 +210,23 @@ func updateFindingsLedger(runDir string, round int, review *Review, gates *Quali
 			if entry.FirstRound == 0 {
 				entry.FirstRound = round
 			}
+			entry.UpdatedAt = now
+			entries[id] = entry
+		}
+		// A quality-gate result is a complete evaluation of the current diff,
+		// unlike a review response. Reconcile only prior open gate findings that
+		// are absent from this result; review findings still require an explicit
+		// reviewer disposition before they can close.
+		for id, entry := range entries {
+			if entry.Source != "quality_gate" || entry.Status != "open" {
+				continue
+			}
+			if _, present := currentGateIDs[id]; present {
+				continue
+			}
+			entry.Status = "resolved"
+			entry.Evidence = fmt.Sprintf("not present in complete quality-gate evaluation for round %d", round)
+			entry.LastRound = round
 			entry.UpdatedAt = now
 			entries[id] = entry
 		}

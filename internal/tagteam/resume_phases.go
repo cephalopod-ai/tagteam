@@ -254,7 +254,7 @@ func resumeCaptureRound(ctx context.Context, opts RunOptions, baseline, runDir, 
 	final.LatestDiffSHA256 = diff.Metadata.DiffSHA256
 	final.ChangedFiles = diff.ChangedFiles()
 	gateResult := evaluateQualityGates(ctx, opts, baseline, round, diff, allowedScopeForRound(opts, selectedPackage))
-	final.QualityGates = append(final.QualityGates, gateResult)
+	final.QualityGates = replaceQualityGateForRound(final.QualityGates, gateResult)
 	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, fmt.Sprintf("quality-gates-round-%d.json", round), "state.json"); err != nil {
 		return DiffArtifact{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}
 	}

@@ -26,6 +26,28 @@ type QualityGateResult struct {
 	CheckedAt     time.Time     `json:"checked_at"`
 }
 
+// replaceQualityGateForRound keeps final.json aligned with the one persisted
+// quality-gate artifact for each round. Resume can re-evaluate an interrupted
+// round after the operator supplies a corrected explicit scope.
+func replaceQualityGateForRound(results []QualityGateResult, next QualityGateResult) []QualityGateResult {
+	updated := make([]QualityGateResult, 0, len(results))
+	replaced := false
+	for _, result := range results {
+		if result.Round != next.Round {
+			updated = append(updated, result)
+			continue
+		}
+		if !replaced {
+			updated = append(updated, next)
+			replaced = true
+		}
+	}
+	if !replaced {
+		updated = append(updated, next)
+	}
+	return updated
+}
+
 func evaluateQualityGates(ctx context.Context, opts RunOptions, baseline string, round int, diff DiffArtifact, allowedScope []string) QualityGateResult {
 	result := QualityGateResult{
 		SchemaVersion: ArtifactSchemaVersion,

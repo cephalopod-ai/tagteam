@@ -770,6 +770,12 @@ Completed implementation and test phases are not repeated. Timeouts, stalls,
 cancellation, and invalid worker output preserve streams and partial diffs;
 changed work enters a supervisor recovery decision (`repair`,
 `continue_with_fallback`, or `quarantine`) instead of being discarded.
+A resumed round replaces that round's quality-gate snapshot and reconciles
+superseded open quality-gate findings against the fresh complete evaluation.
+Review findings remain open until the reviewer explicitly disposes of them.
+Resume retains the saved mode, but an explicit compatible role flag such as
+`--supervisor`, `--reviewer`, `--worker`, `--coder`, or `--scout` replaces that
+role for the recovery attempt.
 
 <details>
 <summary><strong>Typical contents</strong></summary>

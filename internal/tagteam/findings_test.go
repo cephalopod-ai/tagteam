@@ -40,6 +40,54 @@ func TestFindingsLedgerKeepsOmittedMajorOpenUntilDisposition(t *testing.T) {
 	}
 }
 
+func TestFindingsLedgerReconcilesAbsentQualityGateFinding(t *testing.T) {
+	runDir := t.TempDir()
+	blocked := QualityGateResult{
+		SchemaVersion: ArtifactSchemaVersion,
+		Round:         1,
+		Findings: []GateFinding{{
+			ID:       "SCOPE-EXAMPLE",
+			Gate:     "scope",
+			Severity: "major",
+			Message:  "changed path is outside the explicit allowlist",
+			Path:     "governance/logs/file_size_report.json",
+		}},
+	}
+	first, err := updateFindingsLedger(runDir, 1, nil, &blocked)
+	if err != nil || first.OpenBlockerOrMajor != 1 {
+		t.Fatalf("initial summary=%#v err=%v", first, err)
+	}
+
+	clean := QualityGateResult{SchemaVersion: ArtifactSchemaVersion, Round: 1, Findings: []GateFinding{}}
+	second, err := updateFindingsLedger(runDir, 1, nil, &clean)
+	if err != nil || second.OpenBlockerOrMajor != 0 {
+		t.Fatalf("reconciled summary=%#v err=%v", second, err)
+	}
+	ledger, err := loadFindingsLedger(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.Entries) != 1 || ledger.Entries[0].Status != "resolved" {
+		t.Fatalf("ledger=%#v", ledger)
+	}
+	if ledger.Entries[0].Evidence != "not present in complete quality-gate evaluation for round 1" {
+		t.Fatalf("resolution evidence=%q", ledger.Entries[0].Evidence)
+	}
+}
+
+func TestReplaceQualityGateForRoundReplacesResumedRound(t *testing.T) {
+	old := QualityGateResult{Round: 1, Blocking: true}
+	current := QualityGateResult{Round: 1, Blocking: false}
+	results := replaceQualityGateForRound([]QualityGateResult{old, old}, current)
+	if len(results) != 1 || results[0].Blocking {
+		t.Fatalf("same-round replacement=%#v", results)
+	}
+	results = replaceQualityGateForRound(results, QualityGateResult{Round: 2})
+	if len(results) != 2 || results[1].Round != 2 {
+		t.Fatalf("new-round append=%#v", results)
+	}
+}
+
 func TestDeferFindingRequiresOperatorReason(t *testing.T) {
 	runDir := t.TempDir()
 	review := currentReviewForTest()
