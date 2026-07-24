@@ -198,6 +198,77 @@ func TestRunSolo_MidRunFailureSnapshotReportsFailedNotRunning(t *testing.T) {
 	}
 }
 
+func TestRunSoloCancellationPersistsCancelledTerminalRun(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "adapter-started")
+	installFakeBinaries(t, map[string]string{"claude": `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "1.0.0"
+  exit 0
+fi
+printf x >> "$CANCEL_MARKER"
+sleep 30
+`})
+	t.Setenv("CANCEL_MARKER", marker)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan struct {
+		final FinalRun
+		err   error
+	}, 1)
+	go func() {
+		final, err := NewApp(DefaultConfig()).Run(ctx, RunOptions{
+			Prompt:  "add a feature",
+			Workdir: repo,
+			Mode:    ModeSolo,
+			Coder:   RoleTarget{Adapter: "claude"},
+			Rounds:  1,
+			Timeout: 10 * time.Second,
+		})
+		result <- struct {
+			final FinalRun
+			err   error
+		}{final, err}
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for !fileExists(marker) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !fileExists(marker) {
+		cancel()
+		t.Fatal("adapter did not start before cancellation")
+	}
+	cancel()
+
+	select {
+	case got := <-result:
+		if got.err == nil {
+			t.Fatal("cancelled run unexpectedly succeeded")
+		}
+		if got.final.Status != RunStatusCancelled || got.final.Verdict != "cancelled" || got.final.BlockingReason != string(ReasonCancelled) {
+			t.Fatalf("cancelled final = %#v", got.final)
+		}
+		if markerBytes, err := os.ReadFile(marker); err != nil || string(markerBytes) != "x" {
+			t.Fatalf("adapter invocations = %q err=%v, want one", markerBytes, err)
+		}
+		var state RunState
+		readJSONFile(t, filepath.Join(got.final.RunDir, "state.json"), &state)
+		if state.Status != string(RunStatusCancelled) || state.BlockingReason != string(ReasonCancelled) {
+			t.Fatalf("cancelled state = %#v", state)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled run did not finish promptly")
+	}
+}
+
 func TestRunLoop_FailureAfterRunDirCreationDoesNotLeaveActiveRunning(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")

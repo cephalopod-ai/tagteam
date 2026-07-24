@@ -131,9 +131,11 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		if final.FinishedAt.IsZero() {
 			final.FinishedAt = time.Now().UTC()
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		cancelled := errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled)
+		if cancelled {
 			final.Status = RunStatusCancelled
 			final.BlockingReason = string(ReasonCancelled)
+			final.Verdict = "cancelled"
 			if artifact, captureErr := captureDiffArtifact(context.Background(), opts.Workdir, baseline, runDir, max(1, final.RoundsCompleted+1)); captureErr == nil {
 				final.LatestDiffPath = artifact.PatchPath
 				final.LatestDiffSHA256 = artifact.Metadata.DiffSHA256
@@ -144,7 +146,12 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			final.Status = RunStatusQuarantined
 			final.BlockingReason = string(ReasonQuarantined)
 		}
-		setFinalBlocking(&final, classifyRoleFailure(currentRole, err), err.Error())
+		reason := classifyRoleFailure(currentRole, err)
+		if cancelled {
+			reason = ReasonCancelled
+			setRoleStatus(&final, currentRole, RoleTarget{Adapter: final.Adapters[currentRole], Model: final.Models[currentRole]}, string(RunStatusCancelled), reason, err.Error())
+		}
+		setFinalBlocking(&final, reason, err.Error())
 		applyInvocationBudget(&final, budget)
 		finalizeRunState(&final)
 		state := runStateForFinal(final, opts.Mode, terminalPhaseForFailure(runDir, final.Phase), "")

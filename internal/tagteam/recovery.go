@@ -121,6 +121,9 @@ func (a *App) recoverEditorFailure(
 	before worktreeSnapshot,
 	final *FinalRun,
 ) (Result, RoleTarget, Adapter, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, originalTarget, originalAdapter, err
+	}
 	gate := controlResumeGateFrom(ctx)
 	var err error
 	if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {

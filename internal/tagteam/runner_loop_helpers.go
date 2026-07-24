@@ -32,6 +32,9 @@ func (a *App) recoverRoundEditorFailure(
 	final *FinalRun,
 	cause error,
 ) (Result, RoleTarget, Adapter, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, opts.Coder, editor, err
+	}
 	setRoleStatus(final, editorLabel, opts.Coder, "failed", classifyRoleFailure(editorLabel, cause), cause.Error())
 	if IsIntegrityViolation(cause) {
 		final.Status = RunStatusQuarantined
@@ -58,6 +61,9 @@ func (a *App) recoverRoundEditorFailure(
 
 func (a *App) runEditorWithContractRetry(ctx context.Context, opts RunOptions, editor Adapter, req Request, before worktreeSnapshot) (Result, error) {
 	result, err := a.runAdapter(ctx, editor, RoleCoder, req, opts.DryRun)
+	if cancelErr := ctx.Err(); cancelErr != nil {
+		return result, cancelErr
+	}
 	if err == nil || !IsOutputContractError(err) || opts.DryRun {
 		return result, err
 	}

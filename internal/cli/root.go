@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
@@ -226,7 +225,7 @@ func runDefault(cmd *cobra.Command, flags *flagState, prompt string) error {
 		return err
 	}
 	app := tagteam.NewApp(cfg)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := commandSignalContext(context.Background())
 	defer stop()
 	final, err := app.Run(ctx, opts)
 	final = withErrorExitCode(final, err)
@@ -255,7 +254,7 @@ func newReviewCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			app := tagteam.NewApp(cfg)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, stop := commandSignalContext(context.Background())
 			defer stop()
 			final, err := app.Review(ctx, opts, "")
 			final = withErrorExitCode(final, err)
@@ -280,7 +279,7 @@ func newFixCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			app := tagteam.NewApp(cfg)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, stop := commandSignalContext(context.Background())
 			defer stop()
 			final, err := app.Fix(ctx, opts)
 			final = withErrorExitCode(final, err)
@@ -317,7 +316,7 @@ func newResumeCommand(shared *flagState) *cobra.Command {
 				return &tagteam.ExitError{Code: tagteam.ExitInvalidArguments, Err: fmt.Errorf("no run id supplied and no active/latest run found")}
 			}
 			app := tagteam.NewApp(cfg)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, stop := commandSignalContext(context.Background())
 			defer stop()
 			final, runErr := app.Resume(ctx, opts, runID)
 			final = withErrorExitCode(final, runErr)
@@ -437,7 +436,7 @@ func newTransferCommand(shared *flagState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, stop := commandSignalContext(context.Background())
 			defer stop()
 			record, err := tagteam.TransferRun(ctx, opts, args[0], target)
 			if shared.JSON {
@@ -598,7 +597,7 @@ func newDoctorCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			app := tagteam.NewApp(cfg)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, stop := commandSignalContext(context.Background())
 			defer stop()
 			status, err := app.Doctor(ctx, opts)
 			renderDoctorStatus(cmd.OutOrStdout(), status)

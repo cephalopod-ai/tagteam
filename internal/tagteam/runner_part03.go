@@ -127,16 +127,22 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (final FinalRun, err
 		final.Verdict = "error"
 		final.Summary = redactSecretsWithOverlay(err.Error(), opts.EnvOverlay)
 		final.FinishedAt = time.Now().UTC()
-		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		cancelled := errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled)
+		if cancelled {
 			final.Status = RunStatusCancelled
 			final.BlockingReason = string(ReasonCancelled)
+			final.Verdict = "cancelled"
 		}
 		if IsIntegrityViolation(err) {
 			final.Status = RunStatusQuarantined
 			final.BlockingReason = string(ReasonQuarantined)
 		}
-		setRoleStatus(&final, editorLabel, opts.Coder, "failed", classifyRoleFailure(editorLabel, err), err.Error())
-		setFinalBlocking(&final, classifyRoleFailure(editorLabel, err), err.Error())
+		roleStatus, roleReason := "failed", classifyRoleFailure(editorLabel, err)
+		if cancelled {
+			roleStatus, roleReason = string(RunStatusCancelled), ReasonCancelled
+		}
+		setRoleStatus(&final, editorLabel, opts.Coder, roleStatus, roleReason, err.Error())
+		setFinalBlocking(&final, roleReason, err.Error())
 		applyInvocationBudget(&final, budget)
 		finalizeRunState(&final)
 		state := runStateForFinal(final, opts.Mode, "solo", "")
@@ -190,6 +196,9 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (final FinalRun, err
 	}
 	editorResult, err := a.runEditorWithContractRetry(ctx, opts, editor, editorRequest, beforeEditor)
 	if err != nil {
+		if cancelErr := ctx.Err(); cancelErr != nil {
+			return final, cancelErr
+		}
 		reason := classifyRoleFailure(editorLabel, err)
 		setRoleStatus(&final, editorLabel, opts.Coder, "failed", reason, err.Error())
 		if IsIntegrityViolation(err) {
