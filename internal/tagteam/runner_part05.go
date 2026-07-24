@@ -620,11 +620,15 @@ func startDeliveryRecord(adapter Adapter, role Role, req *Request, dryRun bool, 
 		return DeliveryRecord{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
 	started := time.Now().UTC()
-	name := fmt.Sprintf("%s-%s-%s", started.Format("20060102T150405.000000000Z"), sanitizeArtifactName(string(role)), sanitizeArtifactName(adapter.ID()))
+	deliveryRole := role
+	if req.ProgressRole != "" {
+		deliveryRole = req.ProgressRole
+	}
+	name := fmt.Sprintf("%s-%s-%s", started.Format("20060102T150405.000000000Z"), sanitizeArtifactName(string(deliveryRole)), sanitizeArtifactName(adapter.ID()))
 	record := DeliveryRecord{
 		SchemaVersion: ArtifactSchemaVersion,
 		InvocationID:  name,
-		Role:          role,
+		Role:          deliveryRole,
 		Adapter:       adapter.ID(),
 		Phase:         req.Phase,
 		SchemaPath:    req.SchemaPath,

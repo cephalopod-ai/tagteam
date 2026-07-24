@@ -186,6 +186,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 					return Result{}, artifactErr
 				}
 				record.ValidationErrorPath = validationPath
+				err = conciseAdapterResultError(adapter.ID(), err, validationPath, req.EnvOverlay)
 			}
 			if directCtx.Err() != nil {
 				record.CancellationCause = directCtx.Err().Error()
@@ -199,7 +200,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 				record.StderrBytes = int64(len(err.Error()) + 1)
 			}
 			finishDeliveryRecord(req, recordPath, record, "failed", err)
-			return Result{}, err
+			return result, err
 		}
 		raw := result.Raw
 		if len(raw) == 0 {
@@ -227,8 +228,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			}
 			record.ValidationErrorPath = validationPath
 			_, _ = writeOutputContractArtifacts(req, role, result, artifactRaw)
-			finishDeliveryRecord(req, recordPath, record, "failed", err)
-			return Result{}, err
+			resultErr := conciseAdapterResultError(adapter.ID(), err, validationPath, req.EnvOverlay)
+			finishDeliveryRecord(req, recordPath, record, "failed", resultErr)
+			return result, resultErr
 		}
 		if role == RoleAdversary && result.Review != nil {
 			if err := result.Review.ValidateCurrent(); err != nil {
@@ -239,8 +241,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 					return Result{}, artifactErr
 				}
 				record.ValidationErrorPath = validationPath
-				finishDeliveryRecord(req, recordPath, record, "failed", contractErr)
-				return Result{}, contractErr
+				resultErr := conciseAdapterResultError(adapter.ID(), contractErr, validationPath, req.EnvOverlay)
+				finishDeliveryRecord(req, recordPath, record, "failed", resultErr)
+				return result, resultErr
 			}
 		}
 		normalizeReview(result.Review)
@@ -484,8 +487,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			return Result{}, artifactErr
 		}
 		record.ValidationErrorPath = validationPath
-		finishDeliveryRecord(req, recordPath, record, "failed", err)
-		return Result{}, err
+		resultErr := conciseAdapterResultError(adapter.ID(), err, validationPath, req.EnvOverlay)
+		finishDeliveryRecord(req, recordPath, record, "failed", resultErr)
+		return Result{Raw: raw, Text: strings.TrimSpace(string(raw))}, resultErr
 	}
 	if err := validateWorkerResultForRequest(ctx, req, &result, before); err != nil {
 		validationPath, artifactErr := writeValidationErrorArtifact(req, err)
@@ -495,8 +499,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		}
 		record.ValidationErrorPath = validationPath
 		_, _ = writeOutputContractArtifacts(req, role, result, artifactRaw)
-		finishDeliveryRecord(req, recordPath, record, "failed", err)
-		return Result{}, err
+		resultErr := conciseAdapterResultError(adapter.ID(), err, validationPath, req.EnvOverlay)
+		finishDeliveryRecord(req, recordPath, record, "failed", resultErr)
+		return result, resultErr
 	}
 	if role == RoleAdversary && result.Review != nil {
 		if err := result.Review.ValidateCurrent(); err != nil {
@@ -507,8 +512,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 				return Result{}, artifactErr
 			}
 			record.ValidationErrorPath = validationPath
-			finishDeliveryRecord(req, recordPath, record, "failed", contractErr)
-			return Result{}, contractErr
+			resultErr := conciseAdapterResultError(adapter.ID(), contractErr, validationPath, req.EnvOverlay)
+			finishDeliveryRecord(req, recordPath, record, "failed", resultErr)
+			return result, resultErr
 		}
 	}
 	normalizeReview(result.Review)
@@ -536,18 +542,7 @@ func conciseAdapterError(message, artifactPath string) string {
 	if len(message) <= 512 && !strings.Contains(message, "\n") {
 		return message
 	}
-	firstLine := "adapter process failed"
-	for _, line := range strings.Split(message, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			firstLine = line
-			break
-		}
-	}
-	const maxLineBytes = 512
-	if len(firstLine) > maxLineBytes {
-		firstLine = strings.ToValidUTF8(firstLine[:maxLineBytes], "") + "..."
-	}
+	firstLine := firstAdapterDiagnosticLine(message, "adapter process failed")
 	summary := firstLine
 	if artifactPath != "" {
 		summary += "\nfull stderr: " + artifactPath
