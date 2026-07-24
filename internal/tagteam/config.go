@@ -74,7 +74,9 @@ func DefaultConfig() Config {
 				WhitespaceRatio:      0.60,
 				MinimumSemanticRatio: 0.20,
 			},
-			GitSafety: "sync",
+			// Integrate commits the selected worktree's dirty state, synchronizes
+			// its tracked branch, and then creates the isolated Tagteam run branch.
+			GitSafety: "integrate",
 		},
 		Profiles: map[string]ProfileConfig{
 			"fast": {

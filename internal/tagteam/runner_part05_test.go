@@ -378,8 +378,8 @@ if [ -n "$output" ]; then printf '%s' "$payload" > "$output"; else printf '%s' "
 	if !fixOpts.ModeExplicit || !fixOpts.CoderExplicit || !fixOpts.AdversaryExplicit {
 		t.Fatalf("expected profile selection to mark mode/targets explicit: %#v", fixOpts)
 	}
-	if fixOpts.GitSafety != "sync" {
-		t.Fatalf("fix should resolve the default sync policy, got %q", fixOpts.GitSafety)
+	if fixOpts.GitSafety != "integrate" {
+		t.Fatalf("fix should resolve the default integrate policy, got %q", fixOpts.GitSafety)
 	}
 	branchBeforeFix := strings.TrimSpace(runGit(t, repo, "branch", "--show-current"))
 

@@ -73,6 +73,100 @@ func TestPreflightSyncCheckpointsDirtyWorktreeAndFastForwardsSource(t *testing.T
 	}
 }
 
+func TestPreflightIntegrateCommitsDirtyWorktreeAndSynchronizesSource(t *testing.T) {
+	repo, peer, sourceBranch := syncFixture(t)
+	upstreamHead := commitPeerChange(t, peer, "upstream.txt")
+	mustWriteFile(t, filepath.Join(repo, "local.txt"), "local work\n")
+
+	baseline, cleanup, err := preflight(RunOptions{Workdir: repo, GitSafety: "integrate"}, "integrate-dirty")
+	if err != nil {
+		t.Fatalf("preflight() error = %v", err)
+	}
+	if cleanup != nil {
+		t.Fatal("integrate preflight must not schedule cleanup after committing the source branch")
+	}
+	if branch := strings.TrimSpace(runGit(t, repo, "branch", "--show-current")); branch != "tagteam/integrate-dirty" {
+		t.Fatalf("branch = %q", branch)
+	}
+	if head := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD")); baseline != head {
+		t.Fatalf("baseline = %q, want current HEAD %q", baseline, head)
+	}
+	sourceHead := strings.TrimSpace(runGit(t, repo, "rev-parse", sourceBranch))
+	if sourceHead != baseline {
+		t.Fatalf("source branch = %q, want run baseline %q", sourceHead, baseline)
+	}
+	runGit(t, repo, "merge-base", "--is-ancestor", upstreamHead, sourceBranch)
+	if status := strings.TrimSpace(runGit(t, repo, "status", "--porcelain")); status != "" {
+		t.Fatalf("worktree remains dirty after integrate preflight: %q", status)
+	}
+	if got := strings.TrimSpace(runGit(t, repo, "show", sourceBranch+":local.txt")); got != "local work" {
+		t.Fatalf("source branch omitted local work: %q", got)
+	}
+	if got := strings.TrimSpace(runGit(t, repo, "show", sourceBranch+":upstream.txt")); got != "from peer" {
+		t.Fatalf("source branch omitted upstream work: %q", got)
+	}
+	if branch := strings.TrimSpace(runGit(t, repo, "branch", "--list", "tagteam/preflight/integrate-dirty")); branch != "" {
+		t.Fatalf("temporary preflight branch still exists: %q", branch)
+	}
+}
+
+func TestPreflightIntegrateMergesDivergentTrackedBranch(t *testing.T) {
+	repo, peer, sourceBranch := syncFixture(t)
+	mustWriteFile(t, filepath.Join(repo, "local-commit.txt"), "local commit\n")
+	runGit(t, repo, "add", "local-commit.txt")
+	runGit(t, repo, "commit", "-m", "local commit")
+	upstreamHead := commitPeerChange(t, peer, "upstream.txt")
+	mustWriteFile(t, filepath.Join(repo, "dirty.txt"), "checkpoint me\n")
+
+	baseline, _, err := preflight(RunOptions{Workdir: repo, GitSafety: "integrate"}, "integrate-diverged")
+	if err != nil {
+		t.Fatalf("preflight() error = %v", err)
+	}
+	if sourceHead := strings.TrimSpace(runGit(t, repo, "rev-parse", sourceBranch)); sourceHead != baseline {
+		t.Fatalf("source branch = %q, want run baseline %q", sourceHead, baseline)
+	}
+	runGit(t, repo, "merge-base", "--is-ancestor", upstreamHead, sourceBranch)
+	if got := strings.TrimSpace(runGit(t, repo, "show", sourceBranch+":local-commit.txt")); got != "local commit" {
+		t.Fatalf("source branch omitted local commit: %q", got)
+	}
+	if got := strings.TrimSpace(runGit(t, repo, "show", sourceBranch+":dirty.txt")); got != "checkpoint me" {
+		t.Fatalf("source branch omitted dirty checkpoint: %q", got)
+	}
+	parents := strings.Fields(runGit(t, repo, "rev-list", "--parents", "-n", "1", sourceBranch))
+	if len(parents) != 3 {
+		t.Fatalf("integrated source head parents = %#v, want merge commit", parents)
+	}
+}
+
+func TestPreflightIntegrateAbortsConflictAndPreservesCheckpoint(t *testing.T) {
+	repo, peer, sourceBranch := syncFixture(t)
+	mustWriteFile(t, filepath.Join(peer, "README.md"), "upstream version\n")
+	runGit(t, peer, "add", "README.md")
+	runGit(t, peer, "commit", "-m", "upstream README")
+	runGit(t, peer, "push")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "local version\n")
+
+	_, _, err := preflight(RunOptions{Workdir: repo, GitSafety: "integrate"}, "integrate-conflict")
+	if err == nil || !strings.Contains(err.Error(), "checkpoint \"tagteam/preflight/integrate-conflict\" was preserved") {
+		t.Fatalf("preflight() error = %v, want preserved-checkpoint conflict", err)
+	}
+	if branch := strings.TrimSpace(runGit(t, repo, "branch", "--show-current")); branch != sourceBranch {
+		t.Fatalf("branch = %q, want source branch %q after failure", branch, sourceBranch)
+	}
+	if status := strings.TrimSpace(runGit(t, repo, "status", "--porcelain")); status != "" {
+		t.Fatalf("source worktree remains dirty after conflict: %q", status)
+	}
+	if got := strings.TrimSpace(runGit(t, repo, "show", sourceBranch+":README.md")); got != "baseline" {
+		t.Fatalf("source branch changed after failed integration: %q", got)
+	}
+	if got := strings.TrimSpace(runGit(t, repo, "show", "tagteam/preflight/integrate-conflict:README.md")); got != "local version" {
+		t.Fatalf("checkpoint did not preserve local content: %q", got)
+	}
+	if unmerged, inspectErr := gitHasUnmergedPaths(repo); inspectErr != nil || unmerged {
+		t.Fatalf("candidate conflict was not fully aborted: unmerged=%v err=%v", unmerged, inspectErr)
+	}
+}
+
 func TestPreflightSyncRejectsDivergentSourceAndPreservesCheckpoint(t *testing.T) {
 	repo, peer, sourceBranch := syncFixture(t)
 	mustWriteFile(t, filepath.Join(repo, "local-commit.txt"), "local commit\n")
@@ -153,8 +247,8 @@ func TestResolveOptions_DefaultAndProfileGitSafety(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveOptions() default error = %v", err)
 	}
-	if defaults.GitSafety != "sync" {
-		t.Fatalf("default git safety = %q, want sync", defaults.GitSafety)
+	if defaults.GitSafety != "integrate" {
+		t.Fatalf("default git safety = %q, want integrate", defaults.GitSafety)
 	}
 	profile, err := ResolveOptions(cfg, nil, FlagInputs{Profile: "branch-only", Timeout: 15 * time.Minute}, map[string]bool{}, "ship it")
 	if err != nil {

@@ -469,7 +469,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	if changed["autostash"] {
 		gitSafety = "autostash"
 	}
-	if gitSafety != "clean" && gitSafety != "autostash" && gitSafety != "branch" && gitSafety != "allow-dirty" && gitSafety != "sync" {
+	if gitSafety != "clean" && gitSafety != "autostash" && gitSafety != "branch" && gitSafety != "allow-dirty" && gitSafety != "sync" && gitSafety != "integrate" {
 		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("invalid git_safety %q", gitSafety)}
 	}
 	if testIdentityRegex != "" {
