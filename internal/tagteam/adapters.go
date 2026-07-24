@@ -402,6 +402,9 @@ func (a *AgyAdapter) Detect(ctx context.Context) (VersionInfo, error) {
 }
 
 func (a *AgyAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
+	if role != RoleScout {
+		return nil, unsupportedAgyRoleError(role)
+	}
 	model := req.Model
 	if model == "" {
 		model = a.DefaultModel
@@ -416,18 +419,11 @@ func (a *AgyAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	if req.Timeout > 0 {
 		argv = append(argv, "--print-timeout", req.Timeout.String())
 	}
-	switch role {
-	case RoleCoder:
-		argv = append(argv, "--dangerously-skip-permissions")
-	case RoleAdversary, RoleSupervisor, RoleReporter, RoleScout:
-		// Agy's sandbox still permits workspace mutations in some CLI
-		// configurations. Plan mode is the adapter-level read-only guard for
-		// supervisory and scout roles; TagTeam's integrity checks remain the
-		// second line of defense.
-		argv = append(argv, "--sandbox", "--mode", "plan")
-	default:
-		return nil, fmt.Errorf("unsupported role %q", role)
-	}
+	// Agy's sandbox still permits workspace mutations in some CLI
+	// configurations. Plan mode is the adapter-level read-only guard for the
+	// only permitted Gemini role; Tagteam's integrity checks remain the second
+	// line of defense.
+	argv = append(argv, "--sandbox", "--mode", "plan")
 	argv = append(argv, a.ExtraArgs...)
 	return &CommandSpec{Argv: argv, Dir: req.Workdir, Output: req.OutputPath}, nil
 }

@@ -317,6 +317,8 @@ Rules:
 - Keep packages small enough to review as separate patches.
 - Put the safest or most foundational package first.
 - Do not combine a deferred closeout or unrelated follow-up into the selected package.%s
+- When the request asks to implement, repair, add, remove, or modify something, the selected package must perform a requested change. Do not select a read-only triage, inspection, or planning package first.
+- A read-only selected package is allowed only when the request itself is explicitly planning-, audit-, review-, or investigation-only.
 - Do not include hidden chain-of-thought; use concise public rationale only.
 - Do not ask the worker to implement packages other than selected_package.`, workdir, userPrompt, maxPackages, packageInstruction, budgetInstruction)
 }

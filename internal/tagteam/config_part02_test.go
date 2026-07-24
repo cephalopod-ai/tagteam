@@ -99,14 +99,14 @@ func TestResolveOptions_RelayLegacyFlagsOverrideCoderAndSupervisor(t *testing.T)
 	cfg := DefaultConfig()
 	opts, err := ResolveOptions(cfg, nil, FlagInputs{
 		Mode:      "relay",
-		Coder:     "agy:worker-model",
+		Coder:     "codex:worker-model",
 		Adversary: "claude:opus",
 		Timeout:   15 * time.Minute,
 	}, map[string]bool{"mode": true, "mc": true, "ma": true}, "ship it")
 	if err != nil {
 		t.Fatalf("ResolveOptions() error = %v", err)
 	}
-	if opts.Coder.Adapter != "agy" || opts.Coder.Model != "worker-model" {
+	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "worker-model" {
 		t.Fatalf("-mc should override relay coder: %#v", opts.Coder)
 	}
 	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "opus" {
@@ -214,7 +214,7 @@ func TestResolveOptions_ProfileWorkerSupervisorForcesSupervisorMode(t *testing.T
 	cfg := DefaultConfig()
 	cfg.Defaults.Mode = string(ModeAdversarial)
 	cfg.Profiles["supervised"] = ProfileConfig{
-		Worker:     "agy:gemini-3.6-flash-high",
+		Worker:     "codex:gpt-5.6-luna",
 		Supervisor: "claude:opus",
 	}
 	opts, err := ResolveOptions(cfg, nil, FlagInputs{
@@ -227,7 +227,7 @@ func TestResolveOptions_ProfileWorkerSupervisorForcesSupervisorMode(t *testing.T
 	if opts.Mode != ModeSupervisor {
 		t.Fatalf("mode = %q, want supervisor", opts.Mode)
 	}
-	if opts.Coder.Adapter != "agy" {
+	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "gpt-5.6-luna" {
 		t.Fatalf("worker target = %#v", opts.Coder)
 	}
 	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "opus" {
@@ -572,7 +572,7 @@ func TestLoadConfig_ExplicitSupervisorModeWinsOverLegacyDefaultRoles(t *testing.
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	repoConfig := []byte("[defaults]\nmode = \"supervisor\"\ncoder = \"codex:gpt-5\"\nadversary = \"claude:sonnet\"\nworker = \"agy:gemini-3.6-flash-high\"\nsupervisor = \"claude:opus\"\n")
+	repoConfig := []byte("[defaults]\nmode = \"supervisor\"\ncoder = \"codex:gpt-5\"\nadversary = \"claude:sonnet\"\nworker = \"codex:gpt-5.6-luna\"\nsupervisor = \"claude:opus\"\n")
 	if err := os.WriteFile(filepath.Join(repo, ".tagteam.toml"), repoConfig, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +587,7 @@ func TestLoadConfig_ExplicitSupervisorModeWinsOverLegacyDefaultRoles(t *testing.
 	if opts.Mode != ModeSupervisor {
 		t.Fatalf("mode = %q, want supervisor", opts.Mode)
 	}
-	if opts.Coder.Adapter != "agy" {
+	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "gpt-5.6-luna" {
 		t.Fatalf("worker target = %#v", opts.Coder)
 	}
 	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "opus" {

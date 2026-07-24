@@ -276,21 +276,28 @@ func (m *model) targetChoiceValues(selected string, kind targetKind) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
 		adapter := strings.SplitN(value, ":", 2)[0]
-		if targetAllowedInPicker(adapter, kind) {
+		if m.targetAllowedInPicker(adapter, kind) {
 			out = append(out, value)
 		}
 	}
 	return out
 }
 
-func targetAllowedInPicker(adapter string, kind targetKind) bool {
+func (m *model) targetAllowedInPicker(adapter string, kind targetKind) bool {
+	return tagteam.ValidateRoleTarget(m.roleForTargetKind(kind), tagteam.RoleTarget{Adapter: adapter}) == nil
+}
+
+func (m *model) roleForTargetKind(kind targetKind) tagteam.Role {
 	switch kind {
 	case targetEditor:
-		return adapter != "openai-compatible" && adapter != "oai"
-	case targetReviewer, targetScout:
-		return adapter != "gosling"
+		return tagteam.RoleCoder
+	case targetReviewer:
+		if m.compose.Mode == tagteam.ModeAdversarial {
+			return tagteam.RoleAdversary
+		}
+		return tagteam.RoleSupervisor
 	default:
-		return true
+		return tagteam.RoleScout
 	}
 }
 

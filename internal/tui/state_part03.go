@@ -65,7 +65,7 @@ func (m *model) applyCommand(ctx context.Context, raw string) (action loopAction
 	case "model":
 		roleName, target := splitCommand(rest)
 		if role := m.teamRole(roleName); role != nil {
-			value, err := validateTargetWord("model "+role.Name, target)
+			value, err := m.validateTargetForKind("model "+role.Name, target, role.Kind)
 			if err != nil {
 				m.statusMessage = err.Error()
 				return
@@ -78,14 +78,14 @@ func (m *model) applyCommand(ctx context.Context, raw string) (action loopAction
 			m.statusMessage = fmt.Sprintf("role %s is not part of %s mode; type /model then Space to see active roles", roleName, m.compose.Mode)
 			return
 		}
-		value, err := validateTargetWord("model", rest)
+		value, err := m.validateTargetForKind("model", rest, targetEditor)
 		if err != nil {
 			m.statusMessage = err.Error()
 			return
 		}
 		m.compose.EditorTarget = value
 	case "editor":
-		value, err := validateTargetWord("model", rest)
+		value, err := m.validateTargetForKind("model", rest, targetEditor)
 		if err != nil {
 			m.statusMessage = err.Error()
 			return
@@ -96,7 +96,7 @@ func (m *model) applyCommand(ctx context.Context, raw string) (action loopAction
 			m.statusMessage = err.Error()
 			return
 		}
-		value, err := validateTargetWord("worker", rest)
+		value, err := m.validateTargetForKind("worker", rest, targetEditor)
 		if err != nil {
 			m.statusMessage = err.Error()
 			return
@@ -107,7 +107,7 @@ func (m *model) applyCommand(ctx context.Context, raw string) (action loopAction
 			m.statusMessage = err.Error()
 			return
 		}
-		value, err := validateTargetWord("coder", rest)
+		value, err := m.validateTargetForKind("coder", rest, targetEditor)
 		if err != nil {
 			m.statusMessage = err.Error()
 			return
@@ -118,7 +118,7 @@ func (m *model) applyCommand(ctx context.Context, raw string) (action loopAction
 			m.statusMessage = err.Error()
 			return
 		}
-		value, err := validateTargetWord("supervisor", rest)
+		value, err := m.validateTargetForKind("supervisor", rest, targetReviewer)
 		if err != nil {
 			m.statusMessage = err.Error()
 			return
@@ -129,7 +129,7 @@ func (m *model) applyCommand(ctx context.Context, raw string) (action loopAction
 			m.statusMessage = err.Error()
 			return
 		}
-		value, err := validateTargetWord("reviewer", rest)
+		value, err := m.validateTargetForKind("reviewer", rest, targetReviewer)
 		if err != nil {
 			m.statusMessage = err.Error()
 			return
@@ -140,7 +140,7 @@ func (m *model) applyCommand(ctx context.Context, raw string) (action loopAction
 			m.statusMessage = err.Error()
 			return
 		}
-		value, err := validateTargetWord("scout", rest)
+		value, err := m.validateTargetForKind("scout", rest, targetScout)
 		if err != nil {
 			m.statusMessage = err.Error()
 			return

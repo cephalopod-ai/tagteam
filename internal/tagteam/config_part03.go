@@ -673,6 +673,12 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		EnvOverlay:                cloneStringMap(cfg.EnvOverlay),
 		ConfigSources:             sources,
 	}
+	if err := validateRunRoles(opts); err != nil {
+		return RunOptions{}, err
+	}
+	if err := validateRunFallbacks(opts); err != nil {
+		return RunOptions{}, err
+	}
 	if err := validateClaudeRoleAssignments(opts); err != nil {
 		return RunOptions{}, err
 	}

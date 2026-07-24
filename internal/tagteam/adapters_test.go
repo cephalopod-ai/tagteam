@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestCodexBuildCmd(t *testing.T) {
@@ -313,82 +312,15 @@ func TestClaudeParseResultWrapsContractErrors(t *testing.T) {
 	}
 }
 
-func TestAgyBuildCmdCoder(t *testing.T) {
-	adapter := &AgyAdapter{DefaultModel: "gemini-3.6-flash-medium", ExtraArgs: []string{"--project", "demo"}}
-	spec, err := adapter.BuildCmd(RoleCoder, Request{
-		Prompt:  "make it work",
-		Workdir: "/repo",
-		Timeout: 15 * time.Second,
-	})
-	if err != nil {
-		t.Fatalf("BuildCmd() error = %v", err)
-	}
-	want := []string{
-		"agy", "--print=make it work",
-		"--model", "gemini-3.6-flash-medium",
-		"--print-timeout", "15s",
-		"--dangerously-skip-permissions",
-		"--project", "demo",
-	}
-	if !reflect.DeepEqual(spec.Argv, want) {
-		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
-	}
-	if len(spec.Stdin) != 0 {
-		t.Fatalf("stdin = %q, want empty", string(spec.Stdin))
-	}
-}
-
-func TestAgyBuildCmdAdversary(t *testing.T) {
-	adapter := &AgyAdapter{DefaultModel: "gemini-3.6-flash-high"}
-	spec, err := adapter.BuildCmd(RoleAdversary, Request{
-		Prompt:  "review",
-		Workdir: "/repo",
-	})
-	if err != nil {
-		t.Fatalf("BuildCmd() error = %v", err)
-	}
-	want := []string{"agy", "--print=review", "--model", "gemini-3.6-flash-high", "--sandbox", "--mode", "plan"}
-	if !reflect.DeepEqual(spec.Argv, want) {
-		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
-	}
-	if len(spec.Stdin) != 0 {
-		t.Fatalf("stdin = %q, want empty", string(spec.Stdin))
-	}
-}
-
-func TestAgyBuildCmdSupervisor(t *testing.T) {
+func TestAgyBuildCmdRejectsNonScoutRoles(t *testing.T) {
 	adapter := &AgyAdapter{DefaultModel: "gemini-3.6-flash-medium"}
-	spec, err := adapter.BuildCmd(RoleSupervisor, Request{
-		Prompt:  "write a brief",
-		Workdir: "/repo",
-	})
-	if err != nil {
-		t.Fatalf("BuildCmd() error = %v", err)
-	}
-	want := []string{"agy", "--print=write a brief", "--model", "gemini-3.6-flash-medium", "--sandbox", "--mode", "plan"}
-	if !reflect.DeepEqual(spec.Argv, want) {
-		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
-	}
-	if len(spec.Stdin) != 0 {
-		t.Fatalf("stdin = %q, want empty", string(spec.Stdin))
-	}
-}
-
-func TestAgyBuildCmdReporter(t *testing.T) {
-	adapter := &AgyAdapter{DefaultModel: "gemini-3.6-flash-high"}
-	spec, err := adapter.BuildCmd(RoleReporter, Request{
-		Prompt:  "report remaining work",
-		Workdir: "/repo",
-	})
-	if err != nil {
-		t.Fatalf("BuildCmd() error = %v", err)
-	}
-	want := []string{"agy", "--print=report remaining work", "--model", "gemini-3.6-flash-high", "--sandbox", "--mode", "plan"}
-	if !reflect.DeepEqual(spec.Argv, want) {
-		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
-	}
-	if len(spec.Stdin) != 0 {
-		t.Fatalf("stdin = %q, want empty", string(spec.Stdin))
+	for _, role := range []Role{RoleCoder, RoleAdversary, RoleSupervisor, RoleReporter} {
+		t.Run(string(role), func(t *testing.T) {
+			_, err := adapter.BuildCmd(role, Request{Prompt: "do work", Workdir: "/repo"})
+			if err == nil || !strings.Contains(err.Error(), "supported only as scouts") {
+				t.Fatalf("BuildCmd(%s) error = %v, want scout-only rejection", role, err)
+			}
+		})
 	}
 }
 

@@ -347,6 +347,21 @@ func withModel(adapter, model string) string {
 	return adapter + ":" + model
 }
 
+func (m *model) validateTargetForKind(label, raw string, kind targetKind) (string, error) {
+	value, err := validateTargetWord(label, raw)
+	if err != nil {
+		return "", err
+	}
+	target, err := tagteam.ParseRoleTarget(value)
+	if err != nil {
+		return "", err
+	}
+	if err := tagteam.ValidateRoleTarget(m.roleForTargetKind(kind), target); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
 func roleTargetString(target tagteam.RoleTarget) string {
 	if target.Adapter == "" {
 		return ""

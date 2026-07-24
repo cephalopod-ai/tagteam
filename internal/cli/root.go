@@ -66,10 +66,10 @@ Operational behavior
   Claude supervisors have a known JSON-output rough edge. tagteam does not silently repair that output; use --repair-json-with-worker to explicitly allow the selected worker to act as a read-only parser for invalid JSON contract artifacts.
 `,
 		Example: `tagteam "add OAuth login"
-tagteam run -m agy:gemini-3.6-flash-medium "add OAuth login"
-tagteam --worker agy:gemini-3.6-flash-medium --supervisor codex:gpt-5.6-sol "refactor billing flow"
+tagteam run -m codex:gpt-5.6-terra "add OAuth login"
+tagteam --worker codex:gpt-5.6-terra --supervisor codex:gpt-5.6-sol "refactor billing flow"
 tagteam --solo codex:gpt-5.6-terra "plan a migration and record the result"
-tagteam --relay --scout openai-compatible:gemma4:latest --worker agy:gemini-3.6-flash-medium --supervisor codex:gpt-5.6-sol "add OAuth login"
+tagteam --relay --scout agy:gemini-3.6-flash-medium --worker codex:gpt-5.6-terra --supervisor codex:gpt-5.6-sol "add OAuth login"
 tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma codex:gpt-5.6-sol "audit the billing refactor"`,
 		SilenceUsage:  true,
 		SilenceErrors: true,

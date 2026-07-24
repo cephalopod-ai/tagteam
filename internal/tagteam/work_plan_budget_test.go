@@ -31,3 +31,16 @@ func TestBuildSupervisorWorkPlanPromptIncludesCalibratedBudget(t *testing.T) {
 		t.Fatalf("prompt does not state calibrated budget:\n%s", prompt)
 	}
 }
+
+func TestBuildSupervisorWorkPlanPromptRequiresAChangeForImplementationRequests(t *testing.T) {
+	prompt := BuildSupervisorWorkPlanPrompt("/repo", "repair docs", 5, "", 480)
+	for _, want := range []string{
+		"selected package must perform a requested change",
+		"Do not select a read-only triage, inspection, or planning package first",
+		"request itself is explicitly planning-, audit-, review-, or investigation-only",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}

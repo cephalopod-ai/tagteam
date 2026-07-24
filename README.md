@@ -57,7 +57,7 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 
 Highlights in `v1.1.0`:
 
-- **New default team.** Supervisor and relay flows now default to Claude Opus 4.8 for read-only supervision, GPT-5.6 Terra for implementation, and local Ollama `gemma4:latest` for relay scouting. Agy and Codex Sol remain bounded fallback targets.
+- **New default team.** Supervisor and relay flows now default to Claude Opus 4.8 for read-only supervision, GPT-5.6 Terra for implementation, and local Ollama `gemma4:latest` for relay scouting. Codex Sol is the bounded implementation fallback; Agy/Gemini is restricted to scout work.
 - **Evidence-based Claude roles.** Claude is supported as a read-only supervisor or adversary. Worker/coder assignments are rejected because substantive Sonnet and Opus implementation runs did not reliably complete Tagteam's edit/output lifecycle; Claude scout assignments remain disabled pending a dedicated trial.
 - **Safer dirty-worktree execution.** `--allow-dirty` checkpoints existing work on a new `tagteam/<run-id>` branch, producing a clean baseline instead of treating an uncontrolled dirty tree as the run baseline.
 - **Clearer Claude failures.** Structured Claude error envelopes are preserved even when the Claude process exits nonzero, so errors such as `error_max_structured_output_retries` remain visible and configured fallback ladders can respond to the real cause.
@@ -181,9 +181,9 @@ Supported adapters in this repo today:
 | `codex` | full |
 | `codex-oss` | full |
 | `claude` / Claude Code | read-only supervisor or adversary; worker/coder and scout assignments are rejected |
-| `agy` | full |
+| `agy` / Gemini | scout only; worker/coder, supervisor, and reviewer targets are rejected |
 | `gosling` | coder-only |
-| `grok` | all roles exposed; worker/coder use remains buggy, especially with `grok-4.5` at `medium` or `low` reasoning effort |
+| `grok` | all roles exposed; do not use Grok 4.5 as an unattended supervisor or worker/coder |
 | `openai-compatible` / `oai` | read-only reviewer/scout (first cut) |
 
 The Grok CLI integration is verified against Grok Build 0.2.93. It invokes
@@ -200,8 +200,34 @@ stdin prompt.
 > [!WARNING]
 > This verifies the CLI integration, not reliable end-to-end implementation.
 > Grok worker/coder runs remain experimental, and `grok-4.5` at `medium` or
-> `low` reasoning effort is not reliable. Prefer Codex or Agy for routine
-> implementation work.
+> `low` reasoning effort is not reliable. A live supervisor trial also selected
+> a read-only triage package for an implementation request. Prefer Codex for
+> routine implementation and unattended supervision.
+
+### Maintained Operator Roster
+
+This is an enforced role policy for Agy/Gemini and a maintained selection policy
+for the other providers. `agy` targets are rejected in every role except
+`--scout`; unattended runs and manually selected rotation profiles must follow
+the remaining roster constraints.
+
+| Model family | Allowed roles |
+|---|---|
+| GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.5, GPT-5.4 (non-mini) | supervisor, worker/coder, adversary, scout |
+| GPT-5.6 Luna, GPT-5.3 Spark-Codex | worker/coder or scout |
+| Gemini via `agy` | scout only |
+| Grok 4.5 | monitored worker/coder or scout only; never unattended supervisor |
+| Claude | excluded from automatic rotation; never worker/coder or scout |
+
+Probe the selected provider CLI before a live run. A parsed model name is not
+proof that the logged-in account has access to it. Rotate eligible roles across
+runs to exercise the deterministic pipeline, but keep Gemini out of worker and
+supervisor slots and Grok out of unattended supervisor slots.
+
+Existing configurations that list `agy` under `defaults.fallbacks.worker` (or
+an equivalent worker/coder/supervisor fallback) must replace it with an
+eligible target such as `codex:gpt-5.6-sol`. Tagteam rejects that configuration
+at option resolution with an exit-code-4 error instead of waiting for fallback.
 
 ## Authentication
 
@@ -224,7 +250,7 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - Authentication is adapter-specific. CLI-backed adapters usually rely on the vendor's own login/session flow; `openai-compatible` / `oai` relies on explicit environment/config values.
 - Supervisor slicing is more format-sensitive than the final review pass. The final review path is schema-validated, but some supervisor planning/instruction steps still depend on adapter output being reasonably well-formed.
 - Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and searches a bounded set of contract candidates embedded in the prose: fenced ```json blocks are tried first, followed by balanced JSON objects, so an unrelated or unmatched brace snippet earlier in the prose no longer masks the real payload. Claude envelopes that self-report failure (`is_error` / `error_*` subtypes such as `error_max_turns`) are surfaced as clear adapter errors (`claude reported error_max_turns: ...`) instead of misleading `decode ... JSON` contract failures, which lets the fallback ladder engage. If no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection. If you intentionally want the already-selected worker to act as a read-only parser workaround, pass `--repair-json-with-worker` or set `json_repair = "worker"`; repaired runs are marked degraded with `json_repair_used`.
-- Claude is supported as a read-only `supervisor` or `adversary`. Tagteam rejects Claude targets selected as worker/coder because repeated substantive Sonnet and Opus runs did not complete the editing/output-contract lifecycle reliably; Claude scout assignments remain unsupported pending a real scout trial. Sonnet 5 and Opus 4.8 completed schema-validated supervisor reviews, and a real Haiku adversary run completed a schema-valid review. Use Codex or Agy for implementation roles.
+- Claude is supported as a read-only `supervisor` or `adversary`. Tagteam rejects Claude targets selected as worker/coder because repeated substantive Sonnet and Opus runs did not complete the editing/output-contract lifecycle reliably; Claude scout assignments remain unsupported pending a real scout trial. Sonnet 5 and Opus 4.8 completed schema-validated supervisor reviews, and a real Haiku adversary run completed a schema-valid review. The maintained operator roster excludes Claude from automatic rotation; use Codex for implementation roles.
 - Concurrent Claude Code processes can stall or remain pending, especially in relay/multi-role configurations. `tagteam` now serializes Claude invocations across its own processes by default with an OS-specific cross-process lock under the resolved state root (`adapters.claude.serialize`, `TAGTEAM_CLAUDE_SERIALIZE`); Unix/macOS use `flock`, while Windows uses a PID-file fallback. Waiting runs log `waiting for concurrent claude invocation`, and a crashed Unix/macOS holder releases the lock automatically. Serialization is fail-closed: a run that cannot acquire the lock within its invocation timeout fails that invocation with a classified adapter error (so configured fallbacks such as `claude-failover` can engage) instead of running unlocked.
 - Claude serialization is scoped to a state root, not the whole machine. Tagteam processes configured with different `--state-root` values use different locks and can still overlap; use one shared state root for concurrent Claude-backed runs. The lock also cannot see Claude processes started outside Tagteam. `tagteam doctor` confirms binary availability but cannot detect either form of contention.
 - Unix/macOS Claude locking is runtime-tested with real multi-process contention. The Windows PID-file fallback is compile-checked but not runtime-tested in CI; ownership-record write failures and same-process concurrent invocations remain residual risks there. Prefer one Claude-backed Tagteam run at a time on Windows until that path has equivalent runtime coverage.
@@ -238,7 +264,7 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
   commands.
 - A stalled or externally interrupted adapter process may leave `state.json` at `status=running` / an early phase without writing `final.json`. Treat that run as interrupted and use `tagteam resume [RUN_ID]`; resume verifies the baseline, diff hash, and required artifacts, then continues the first incomplete phase or quarantines unsafe partial work. Do not treat `active.json` or the TUI alone as evidence of success.
 - Different adapters do not expose identical capabilities. Some support schema-constrained output, stdin, or session resume; others do not. `tagteam` degrades where possible, but behavior is not perfectly uniform.
-- Grok remains buggy in the worker/coder role. In particular, `grok-4.5` with `medium` or `low` reasoning effort has not been reliable; prefer another implementation adapter, or treat Grok worker runs as experimental and validate them closely.
+- Grok remains unsuitable for unattended control roles. In addition to unreliable worker/coder runs at `medium` or `low` reasoning effort, a live `grok-4.5` supervisor trial selected a read-only triage package for an implementation request and ended without source changes. Do not use Grok as an unattended supervisor; if used as a worker/coder or scout, monitor it closely and validate the diff.
 - Local `.env` loading is a convenience feature, not a secret-management system. It helps with local runs, but shell-exported environment variables still take precedence.
 - Repo-local `.tagteam.toml` is partially trusted by default: low-authority defaults such as roles/models can be read, but shell tests, adapter passthrough args, Claude permission/tool widening, and `openai-compatible` endpoints/headers are ignored unless you pass `--trust-repo-config`.
 - Published binaries are broader than real-world manual validation. Releases may include targets that pass Go-level CI but have not been exercised end-to-end with every supported vendor CLI.
@@ -250,7 +276,7 @@ Practical guidance:
 - Prefer `tagteam doctor` before blaming orchestration logic.
 - Use `--dry-run` to inspect resolved invocations when an adapter behaves unexpectedly.
 - Start with small prompts and targeted tests when trying a new adapter/model pairing.
-- Do not use Grok as an unattended worker/coder; `grok-4.5` at `medium` or `low` reasoning effort is especially unreliable.
+- Do not use Grok as an unattended supervisor, worker, or coder. Use it only for monitored trials, and inspect its plan, diff, and final review artifacts.
 - Treat new modes, new adapters, and unusual cross-vendor combinations as experimental until you have run them in your own environment.
 
 ### Error behavior
@@ -341,7 +367,7 @@ cd my-project
 tagteam "add a --json flag to the export command and cover it with a test"
 ```
 
-With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `agy:gemini-3.6-flash-medium`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
+With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `codex:gpt-5.6-sol`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
 
 Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. Package estimates are capped at 80% of the per-invocation timeout; deferred packages do not block a normal one-package run, while `--auto-next-package` requires every planned package to fit that cap. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
 
@@ -353,7 +379,7 @@ For a Claude-free supervisor run, choose explicit worker/supervisor adapters, ro
 
 ```bash
 tagteam \
-  --worker agy:gemini-3.6-flash-medium \
+  --worker codex:gpt-5.6-terra \
   --supervisor codex:gpt-5.6-sol \
   -r 3 \
   -t "go test ./..." \
@@ -397,7 +423,7 @@ The built-in relay profile uses a local Ollama Gemma scout through its OpenAI-co
 [profiles.relay]
 mode = "relay"
 scout = "openai-compatible:gemma4:latest"
-coder = "agy:gemini-3.6-flash-medium"
+coder = "codex:gpt-5.6-terra"
 supervisor = "codex:gpt-5.6-sol"
 scout_mode = "recon"
 scout_retrieval = false
@@ -414,20 +440,20 @@ tagteam \
   --scout openai-compatible:gemma4:latest \
   --scout-mode recon \
   --post-scout-mode polish \
-  --coder agy:gemini-3.6-flash-medium \
+  --coder codex:gpt-5.6-terra \
   --supervisor codex:gpt-5.6-sol \
   "refactor billing flow"
 ```
 
 In relay mode, legacy `-mc` selects the coder and `-ma` selects the supervisor. Scout modes are task-typed: `recon`, `lint`, `polish`, `tests`, or `risk`. Scout findings are advisory context only; only the supervisor review can fail a run with blocker/major findings.
 
-If Claude Code is already busy, use a non-Claude relay assignment rather than waiting on a contested role. With Ollama serving its OpenAI-compatible endpoint locally, use Gemma as the read-only scout, Gemini as the coder, and GPT-5.6 Terra as the supervisor:
+If Claude Code is already busy, use a non-Claude relay assignment rather than waiting on a contested role. With Ollama serving its OpenAI-compatible endpoint locally, use Gemma as the read-only scout, GPT-5.6 Terra as the coder, and GPT-5.6 Sol as the supervisor:
 
 ```bash
 TAGTEAM_OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:11434/v1 \
 tagteam --relay --no-scout-retrieval \
   --scout openai-compatible:gemma4:latest \
-  --coder agy:gemini-3.6-flash-medium \
+  --coder codex:gpt-5.6-terra \
   --supervisor codex:gpt-5.6-sol \
   -t 'git diff --check' \
   "make a scoped documentation change"
@@ -492,13 +518,13 @@ tagteam --mode adversarial \
 tagteam --mode adversarial -mc codex:gpt-5.6-terra --reviewer claude:claude-opus-4-8 "audit the CLI cleanup"
 ```
 
-Use Agy with its configured default Gemini model:
+Use Agy as a scout under the maintained operator roster:
 
 ```bash
-tagteam --worker agy --supervisor codex:gpt-5.6-sol "clean up the CLI help"
+tagteam --relay --scout agy:gemini-3.6-flash-low --coder codex:gpt-5.6-terra --supervisor codex:gpt-5.6-sol "clean up the CLI help"
 ```
 
-The built-in `agy` default model is `gemini-3.6-flash-medium`. The Team builder and `/model` picker include `agy:gemini-3.6-flash-low`, `agy:gemini-3.6-flash-medium`, and `agy:gemini-3.6-flash-high`; override any role with another installed Agy model using `agy:<model>`.
+The built-in `agy` default model is `gemini-3.6-flash-medium`. The Team builder and `/model` picker include `agy:gemini-3.6-flash-low`, `agy:gemini-3.6-flash-medium`, and `agy:gemini-3.6-flash-high`; the maintained operator roster confines these targets to the scout slot.
 
 Set the default Agy tier for bare `agy` targets in configuration:
 

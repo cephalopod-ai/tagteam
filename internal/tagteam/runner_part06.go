@@ -686,6 +686,9 @@ func checkAdapters(ctx context.Context, adapters ...Adapter) error {
 }
 
 func selectRunnableRoleAdapter(ctx context.Context, registry map[string]Adapter, role string, primary RoleTarget, fallbackRaw []string, policy LossPolicy, final *FinalRun) (RoleTarget, Adapter, error) {
+	if err := ValidateRoleTarget(roleForSelectionLabel(role), primary); err != nil {
+		return primary, nil, err
+	}
 	adapter, ok := registry[primary.Adapter]
 	if !ok {
 		return primary, nil, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown %s adapter %q", role, primary.Adapter)}
@@ -703,6 +706,9 @@ func selectRunnableRoleAdapter(ctx context.Context, registry map[string]Adapter,
 			target, parseErr := ParseRoleTarget(raw)
 			if parseErr != nil {
 				continue
+			}
+			if err := ValidateRoleTarget(roleForSelectionLabel(role), target); err != nil {
+				return primary, nil, err
 			}
 			attempts = append(attempts, roleTargetString(target))
 			candidate, ok := registry[target.Adapter]
@@ -728,5 +734,18 @@ func selectRunnableRoleAdapter(ctx context.Context, registry map[string]Adapter,
 		status.Attempts = attempts
 		final.RoleStatuses[role] = status
 		return primary, adapter, err
+	}
+}
+
+func roleForSelectionLabel(label string) Role {
+	switch label {
+	case "worker", "coder", "solo":
+		return RoleCoder
+	case "supervisor":
+		return RoleSupervisor
+	case "scout":
+		return RoleScout
+	default:
+		return RoleAdversary
 	}
 }

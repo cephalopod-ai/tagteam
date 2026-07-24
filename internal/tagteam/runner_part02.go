@@ -408,13 +408,17 @@ func supervisorBriefRole(canEdit bool) Role {
 }
 
 func validateRunRoles(opts RunOptions) error {
-	if err := validateRoleTarget(RoleCoder, opts.Coder); err != nil {
+	if err := ValidateRoleTarget(RoleCoder, opts.Coder); err != nil {
 		return err
 	}
 	if opts.Mode == ModeSolo {
 		return nil
 	}
-	if err := validateRoleTarget(RoleAdversary, opts.Adversary); err != nil {
+	reviewerRole := RoleAdversary
+	if opts.Mode == ModeSupervisor || opts.Mode == ModeRelay {
+		reviewerRole = RoleSupervisor
+	}
+	if err := ValidateRoleTarget(reviewerRole, opts.Adversary); err != nil {
 		return err
 	}
 	if opts.Mode == ModeRelay {
@@ -424,13 +428,41 @@ func validateRunRoles(opts RunOptions) error {
 		if err := validateScoutMode("post-scout-mode", opts.PostScoutMode); err != nil {
 			return err
 		}
-		return validateRoleTarget(RoleScout, opts.Scout)
+		return ValidateRoleTarget(RoleScout, opts.Scout)
+	}
+	return nil
+}
+
+func validateRunFallbacks(opts RunOptions) error {
+	editorLabel, reviewerLabel := roleLabels(opts.Mode)
+	checks := []struct {
+		label   string
+		target  RoleTarget
+		enabled bool
+	}{
+		{label: editorLabel, target: opts.Coder, enabled: true},
+		{label: reviewerLabel, target: opts.Adversary, enabled: opts.Mode != ModeSolo},
+		{label: "scout", target: opts.Scout, enabled: opts.Mode == ModeRelay},
+	}
+	for _, check := range checks {
+		if !check.enabled {
+			continue
+		}
+		for _, raw := range fallbackTargetsForRole(opts, check.label, check.target) {
+			target, err := ParseRoleTarget(raw)
+			if err != nil {
+				continue
+			}
+			if err := ValidateRoleTarget(roleForSelectionLabel(check.label), target); err != nil {
+				return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("invalid %s fallback %q: %w", check.label, raw, err)}
+			}
+		}
 	}
 	return nil
 }
 
 func validateReviewRoles(opts RunOptions) error {
-	return validateRoleTarget(RoleAdversary, opts.Adversary)
+	return ValidateRoleTarget(RoleAdversary, opts.Adversary)
 }
 
 func validateClaudeRoleAssignments(opts RunOptions) error {
@@ -453,7 +485,12 @@ func unsupportedClaudeRoleError(role string) error {
 	return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("claude is supported only as a read-only supervisor or adversary; %s role is not supported", role)}
 }
 
-func validateRoleTarget(role Role, target RoleTarget) error {
+// ValidateRoleTarget enforces the role-to-adapter boundary shared by the CLI,
+// control surface, and TUI before an invocation can be constructed.
+func ValidateRoleTarget(role Role, target RoleTarget) error {
+	if target.Adapter == "agy" && role != RoleScout {
+		return unsupportedAgyRoleError(role)
+	}
 	if role != RoleAdversary && role != RoleScout && (target.Adapter == "openai-compatible" || target.Adapter == "oai") {
 		return &ExitError{Code: ExitInvalidArguments, Err: unsupportedOpenAICompatibleRoleError()}
 	}
@@ -464,6 +501,10 @@ func validateRoleTarget(role Role, target RoleTarget) error {
 		return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("gosling is not supported as a scout adapter")}
 	}
 	return nil
+}
+
+func unsupportedAgyRoleError(role Role) error {
+	return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("agy/Gemini targets are supported only as scouts; %s role is not supported", role)}
 }
 
 func (a *App) Doctor(ctx context.Context, opts RunOptions) (map[string]VersionInfo, error) {
