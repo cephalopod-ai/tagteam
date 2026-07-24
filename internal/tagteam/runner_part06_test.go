@@ -231,7 +231,7 @@ func TestFix_LegacyFinalJSONResumesAdversarialMode(t *testing.T) {
 	fixOpts := RunOptions{
 		Workdir:   repo,
 		Mode:      ModeSupervisor,
-		Coder:     RoleTarget{Adapter: "agy"},
+		Coder:     RoleTarget{Adapter: "codex"},
 		Adversary: RoleTarget{Adapter: "claude", Model: "opus"},
 		Rounds:    1,
 		Timeout:   10 * time.Second,

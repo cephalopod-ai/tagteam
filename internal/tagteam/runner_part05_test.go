@@ -233,7 +233,7 @@ func TestFix_RestoresAdversarialModeAndTargetsOverSupervisorDefault(t *testing.T
 	fixOpts := RunOptions{
 		Workdir:   repo,
 		Mode:      ModeSupervisor,
-		Coder:     RoleTarget{Adapter: "agy"},
+		Coder:     RoleTarget{Adapter: "codex"},
 		Adversary: RoleTarget{Adapter: "claude", Model: "opus"},
 		Rounds:    1,
 		Timeout:   10 * time.Second,
@@ -503,7 +503,7 @@ func TestReview_PersistsEditorTargetForFixResume(t *testing.T) {
 	fixOpts := RunOptions{
 		Workdir:   repo,
 		Mode:      ModeSupervisor,
-		Coder:     RoleTarget{Adapter: "agy"},
+		Coder:     RoleTarget{Adapter: "codex"},
 		Adversary: RoleTarget{Adapter: "claude", Model: "opus"},
 		Rounds:    1,
 		Timeout:   10 * time.Second,

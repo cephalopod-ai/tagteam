@@ -419,8 +419,8 @@ func TestValidateClaudeRoleAssignmentsRejectsImplementationAndScout(t *testing.T
 	}{
 		{name: "solo worker", opts: RunOptions{Mode: ModeSolo, Coder: RoleTarget{Adapter: "claude"}}},
 		{name: "supervisor worker", opts: RunOptions{Mode: ModeSupervisor, Coder: RoleTarget{Adapter: "claude"}, Adversary: RoleTarget{Adapter: "codex"}}},
-		{name: "relay scout", opts: RunOptions{Mode: ModeRelay, Coder: RoleTarget{Adapter: "agy"}, Adversary: RoleTarget{Adapter: "codex"}, Scout: RoleTarget{Adapter: "claude"}}},
-		{name: "editing supervisor", opts: RunOptions{Mode: ModeSupervisor, Coder: RoleTarget{Adapter: "agy"}, Adversary: RoleTarget{Adapter: "claude"}, SupervisorCanEdit: true}},
+		{name: "relay scout", opts: RunOptions{Mode: ModeRelay, Coder: RoleTarget{Adapter: "codex"}, Adversary: RoleTarget{Adapter: "codex"}, Scout: RoleTarget{Adapter: "claude"}}},
+		{name: "editing supervisor", opts: RunOptions{Mode: ModeSupervisor, Coder: RoleTarget{Adapter: "codex"}, Adversary: RoleTarget{Adapter: "claude"}, SupervisorCanEdit: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -435,7 +435,7 @@ func TestValidateClaudeRoleAssignmentsRejectsImplementationAndScout(t *testing.T
 func TestValidateRunRolesAllowsReadOnlyClaudeSupervisor(t *testing.T) {
 	opts := RunOptions{
 		Mode:      ModeSupervisor,
-		Coder:     RoleTarget{Adapter: "agy"},
+		Coder:     RoleTarget{Adapter: "codex"},
 		Adversary: RoleTarget{Adapter: "claude"},
 	}
 	if err := validateClaudeRoleAssignments(opts); err != nil {
@@ -586,7 +586,7 @@ func TestResolveOptions_WorkerFlagRejectedInAdversarialMode(t *testing.T) {
 	cfg := DefaultConfig()
 	_, err := ResolveOptions(cfg, nil, FlagInputs{
 		Mode:    "adversarial",
-		Worker:  "agy",
+		Worker:  "codex",
 		Timeout: 15 * time.Minute,
 	}, map[string]bool{"mode": true, "worker": true}, "ship it")
 	if err == nil {
