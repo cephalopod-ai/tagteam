@@ -309,7 +309,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				if err := writeFileDurable(planSchemaPath, []byte(WorkPlanSchema), 0o644, true); err != nil {
 					return final, err
 				}
-				planPrompt := withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package, workPlanBudgetSeconds(opts.Timeout)), repoInstructions)
+				planPrompt := withAdapterRepoInstructions(reviewer, BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package, workPlanBudgetSeconds(opts.Timeout)), repoInstructions)
 				if !reviewer.Capabilities().SupportsSchema {
 					planPrompt += "\n\nJSON schema:\n" + WorkPlanSchema
 				}
@@ -389,7 +389,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
 			briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
 				Context:         ctx,
-				Prompt:          withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
+				Prompt:          withAdapterRepoInstructions(reviewer, BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
 				EnvOverlay:      opts.EnvOverlay,
 				Model:           opts.Adversary.Model,
 				Workdir:         opts.Workdir,
@@ -439,7 +439,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		if sc := CompactSymlinkTopologyForPrompt(symlinkTopology); sc != "" {
 			retrievalContext = strings.TrimSpace(sc + "\n" + retrievalContext)
 		}
-		scoutPrompt := withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext, final.BaselineTest), repoInstructions)
+		scoutPrompt := withAdapterRepoInstructions(scout, BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext, final.BaselineTest), repoInstructions)
 		if opts.ScoutMode == "recon" {
 			contextBudgetPath := filepath.Join(runDir, "scout-context-round-1.json")
 			limit := scoutContextLimitForAdapter(a.Config, opts.Scout.Adapter)
@@ -453,7 +453,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				if (compactedRetrieval != "" && len(compactedRetrieval) < len(retrievalContext)) || (compactedCodeIntel != "" && len(compactedCodeIntel) < len(codeIntelContext)) {
 					retrievalContext = compactedRetrieval
 					codeIntelContext = compactedCodeIntel
-					scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext, final.BaselineTest), repoInstructions)
+					scoutPrompt = withAdapterRepoInstructions(scout, BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext, final.BaselineTest), repoInstructions)
 					contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
 					contextBudget.Adapter = opts.Scout.Adapter
 					contextBudget.Model = opts.Scout.Model
@@ -464,7 +464,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				logProgress(opts, "scout context exceeds configured limit; disabling derived context estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
 				retrievalContext = ""
 				codeIntelContext = ""
-				scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", "", "", final.BaselineTest), repoInstructions)
+				scoutPrompt = withAdapterRepoInstructions(scout, BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", "", "", final.BaselineTest), repoInstructions)
 				contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
 				contextBudget.Adapter = opts.Scout.Adapter
 				contextBudget.Model = opts.Scout.Model
@@ -570,7 +570,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
 		briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
 			Context:         ctx,
-			Prompt:          withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
+			Prompt:          withAdapterRepoInstructions(reviewer, BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
 			EnvOverlay:      opts.EnvOverlay,
 			Model:           opts.Adversary.Model,
 			Workdir:         opts.Workdir,
@@ -595,7 +595,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		logProgress(opts, "supervisor relay instructions started adapter=%s", reviewer.ID())
 		instructionsResult, err := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
 			Context:         ctx,
-			Prompt:          withRepoInstructions(BuildRelaySupervisorInstructionsPrompt(opts.Prompt, brief, relay.Scout, final.BaselineTest), repoInstructions),
+			Prompt:          withAdapterRepoInstructions(reviewer, BuildRelaySupervisorInstructionsPrompt(opts.Prompt, brief, relay.Scout, final.BaselineTest), repoInstructions),
 			EnvOverlay:      opts.EnvOverlay,
 			Model:           opts.Adversary.Model,
 			Workdir:         opts.Workdir,
@@ -644,7 +644,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		if err != nil {
 			return final, err
 		}
-		editorPrompt = workerContractPrompt(withRepoInstructions(editorPrompt, repoInstructions))
+		editorPrompt = workerContractPrompt(withAdapterRepoInstructions(editor, editorPrompt, repoInstructions))
 		implementSelectedPackage = false
 		editorOutputPath := filepath.Join(runDir, fmt.Sprintf("%s-round-%d.md", editorLabel, round))
 		if selectedPackage != nil {

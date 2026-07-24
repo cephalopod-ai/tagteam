@@ -210,7 +210,7 @@ func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runD
 	logProgress(opts, "round %d post-scout %s started adapter=%s", round, opts.PostScoutMode, scout.ID())
 	postScoutStatus.ScoutRan = true
 	postScoutResult, err := a.runAdapter(ctx, scout, RoleScout, Request{
-		Context: ctx, Prompt: withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, relay.Brief, opts.PostScoutMode, "post", diff, safeTestOutput(testOutput), "", final.BaselineTest), repoInstructions), EnvOverlay: opts.EnvOverlay,
+		Context: ctx, Prompt: withAdapterRepoInstructions(scout, BuildScoutPrompt(opts.Workdir, opts.Prompt, relay.Brief, opts.PostScoutMode, "post", diff, safeTestOutput(testOutput), "", final.BaselineTest), repoInstructions), EnvOverlay: opts.EnvOverlay,
 		Model: opts.Scout.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: postScoutPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout,
 		Phase: fmt.Sprintf("round %d post-scout %s %s", round, opts.PostScoutMode, scout.ID()), Quiet: opts.Quiet, Verbose: opts.Verbose, Budget: opts.InvocationBudget,
 		controlResumeGate: controlResumeGateFrom(ctx),

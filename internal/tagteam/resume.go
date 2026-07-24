@@ -248,6 +248,9 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 	continued, err := a.resumeExistingRun(ctx, opts, runDir, meta, state, saved, prior, currentDiffHash, gate)
 	record.ContinuedRunID = runID
 	record.Status = "resumed"
+	if continued.Status == RunStatusCancelled {
+		record.Status = "cancelled"
+	}
 	if err != nil {
 		if continued.FinishedAt.IsZero() {
 			record.Status = "resume_failed"

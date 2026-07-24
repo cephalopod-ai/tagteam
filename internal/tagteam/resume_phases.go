@@ -185,7 +185,7 @@ func (a *App) resumeEditor(ctx context.Context, opts RunOptions, state RunState,
 	if err != nil {
 		return Result{}, "", err
 	}
-	prompt = workerContractPrompt(withRepoInstructions(prompt, runtime.repoInstructions))
+	prompt = workerContractPrompt(withAdapterRepoInstructions(runtime.editor, prompt, runtime.repoInstructions))
 	// Re-resolve immediately before adapter request construction/dispatch.
 	if runDir, err = rebindControlResumeRunDir(gate, runDir, final, filepath.Base(resumeEditorOutputPath(runDir, runtime.editorLabel, round))); err != nil {
 		return Result{}, "", &ExitError{Code: ExitPreflightFailed, Err: err}

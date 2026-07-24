@@ -202,9 +202,10 @@ func IsOutputContractError(err error) bool {
 }
 
 type CapabilitySet struct {
-	SupportsSchema bool
-	SupportsResume bool
-	SupportsStdin  bool
+	SupportsSchema           bool
+	SupportsResume           bool
+	SupportsStdin            bool
+	LoadsProjectInstructions bool
 	// SerializeInvocations requests the cross-process invocation lock for
 	// CLIs that misbehave when multiple copies run concurrently.
 	SerializeInvocations bool

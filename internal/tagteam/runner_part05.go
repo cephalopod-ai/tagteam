@@ -50,7 +50,7 @@ func (a *App) collectRoundLimitReports(ctx context.Context, opts RunOptions, run
 			reports = append(reports, report)
 			continue
 		}
-		prompt := withRepoInstructions(BuildRoundLimitReportPrompt(target.label, target.counterpart, opts.Mode, opts.Prompt, diffWithBaselineHeader(baseline, diff), review, tests), repoInstructions)
+		prompt := withAdapterRepoInstructions(adapter, BuildRoundLimitReportPrompt(target.label, target.counterpart, opts.Mode, opts.Prompt, diffWithBaselineHeader(baseline, diff), review, tests), repoInstructions)
 		result, err := a.runAdapter(ctx, adapter, RoleReporter, Request{
 			Context:         ctx,
 			Prompt:          prompt,
@@ -376,7 +376,7 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 		if bundle.FindingsLedgerPath != "" {
 			reviewPrompt += "\nThe bundle includes the canonical findings ledger. Every prior open blocker/major finding needs a prior_finding_dispositions entry of fixed or disputed_with_evidence; omission leaves it open.\n"
 		}
-		reviewPrompt = withRepoInstructions(reviewPrompt, repoInstructions)
+		reviewPrompt = withAdapterRepoInstructions(adapter, reviewPrompt, repoInstructions)
 		if memory := loadDecisionMemory(opts); memory != "" {
 			reviewPrompt = strings.TrimSpace(reviewPrompt) + "\n\n" + memory
 		}

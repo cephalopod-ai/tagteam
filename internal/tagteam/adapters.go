@@ -159,7 +159,9 @@ func (a *ClaudeAdapter) ID() string {
 }
 
 func (a *ClaudeAdapter) Capabilities() CapabilitySet {
-	return CapabilitySet{SupportsSchema: true, SupportsResume: true, SupportsStdin: true, SerializeInvocations: a.Serialize}
+	// Claude Code loads project instruction files from the request workdir.
+	// Injecting the same bundle into stdin duplicates that native context.
+	return CapabilitySet{SupportsSchema: true, SupportsResume: true, SupportsStdin: true, LoadsProjectInstructions: true, SerializeInvocations: a.Serialize}
 }
 
 func (a *ClaudeAdapter) Detect(ctx context.Context) (VersionInfo, error) {

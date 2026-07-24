@@ -56,6 +56,17 @@ func withRepoInstructions(prompt, repoInstructions string) string {
 	return strings.TrimSpace(prompt) + "\n\n" + repoInstructionsPromptHeader + "\n\n" + repoInstructions
 }
 
+// withAdapterRepoInstructions preserves explicit instruction injection for
+// adapters that need it, but avoids duplicating files a native CLI already
+// loads from the request workdir. The instruction artifact is still persisted
+// for run provenance regardless of the selected adapter.
+func withAdapterRepoInstructions(adapter Adapter, prompt, repoInstructions string) string {
+	if adapter != nil && adapter.Capabilities().LoadsProjectInstructions {
+		return prompt
+	}
+	return withRepoInstructions(prompt, repoInstructions)
+}
+
 // appendHostBaselineEvidence gives every editing role the host's pre-agent
 // observation without allowing a large test log to consume its prompt budget.
 func appendHostBaselineEvidence(prompt string, baseline *TestRun) string {
