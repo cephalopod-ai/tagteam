@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -488,7 +489,7 @@ func unsupportedClaudeRoleError(role string) error {
 // ValidateRoleTarget enforces the role-to-adapter boundary shared by the CLI,
 // control surface, and TUI before an invocation can be constructed.
 func ValidateRoleTarget(role Role, target RoleTarget) error {
-	if target.Adapter == "agy" && role != RoleScout {
+	if isGeminiTarget(target) && role != RoleScout {
 		return unsupportedAgyRoleError(role)
 	}
 	if role != RoleAdversary && role != RoleScout && (target.Adapter == "openai-compatible" || target.Adapter == "oai") {
@@ -503,8 +504,12 @@ func ValidateRoleTarget(role Role, target RoleTarget) error {
 	return nil
 }
 
+func isGeminiTarget(target RoleTarget) bool {
+	return target.Adapter == "agy" || strings.Contains(strings.ToLower(target.Model), "gemini")
+}
+
 func unsupportedAgyRoleError(role Role) error {
-	return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("agy/Gemini targets are supported only as scouts; %s role is not supported", role)}
+	return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("Gemini targets (including agy) are supported only as scouts; %s role is not supported", role)}
 }
 
 func (a *App) Doctor(ctx context.Context, opts RunOptions) (map[string]VersionInfo, error) {

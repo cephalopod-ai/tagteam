@@ -206,16 +206,16 @@ stdin prompt.
 
 ### Maintained Operator Roster
 
-This is an enforced role policy for Agy/Gemini and a maintained selection policy
-for the other providers. `agy` targets are rejected in every role except
-`--scout`; unattended runs and manually selected rotation profiles must follow
-the remaining roster constraints.
+This is an enforced role policy for Gemini and a maintained selection policy
+for the other providers. Any Gemini-labeled target, including `agy`, is rejected
+in every role except `--scout`; unattended runs and manually selected rotation
+profiles must follow the remaining roster constraints.
 
 | Model family | Allowed roles |
 |---|---|
 | GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.5, GPT-5.4 (non-mini) | supervisor, worker/coder, adversary, scout |
 | GPT-5.6 Luna, GPT-5.3 Spark-Codex | worker/coder or scout |
-| Gemini via `agy` | scout only |
+| Gemini (including `agy`) | scout only |
 | Grok 4.5 | monitored worker/coder or scout only; never unattended supervisor |
 | Claude | excluded from automatic rotation; never worker/coder or scout |
 

@@ -463,6 +463,26 @@ func TestValidateRunRolesRejectsAgyOutsideScout(t *testing.T) {
 	}
 }
 
+func TestValidateRoleTargetRejectsGeminiModelOutsideScout(t *testing.T) {
+	tests := []struct {
+		name   string
+		role   Role
+		target RoleTarget
+	}{
+		{name: "worker", role: RoleCoder, target: RoleTarget{Adapter: "gosling", Model: "gemini-3.6-flash-medium"}},
+		{name: "supervisor", role: RoleSupervisor, target: RoleTarget{Adapter: "codex", Model: "gemini-3.6-flash-high"}},
+		{name: "reviewer", role: RoleAdversary, target: RoleTarget{Adapter: "grok", Model: "gemini-3.6-flash-low"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateRoleTarget(tt.role, tt.target)
+			if err == nil || !strings.Contains(err.Error(), "supported only as scouts") {
+				t.Fatalf("ValidateRoleTarget() error = %v, want Gemini scout-only rejection", err)
+			}
+		})
+	}
+}
+
 func TestValidateRunRolesAllowsAgyScout(t *testing.T) {
 	opts := RunOptions{
 		Mode:          ModeRelay,
