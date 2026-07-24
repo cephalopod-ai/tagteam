@@ -721,7 +721,7 @@ func TestDeterministicDiffIgnoresTagteamRunDirButIncludesUntrackedFiles(t *testi
 	runGit(t, repo, "init")
 	runGit(t, repo, "config", "user.email", "test@example.com")
 	runGit(t, repo, "config", "user.name", "Test User")
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".tagteam/\ntagteam\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".tagteam/\ntagteam\ndocs/logs/session/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(repo, "internal", "tagteam"), 0o755); err != nil {
@@ -755,7 +755,15 @@ func TestDeterministicDiffIgnoresTagteamRunDirButIncludesUntrackedFiles(t *testi
 	if err := os.WriteFile(filepath.Join(repo, "staged.txt"), []byte("already staged\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	ignoredStagedPath := filepath.Join(repo, "docs", "logs", "session", "072026", "entry.md")
+	if err := os.MkdirAll(filepath.Dir(ignoredStagedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ignoredStagedPath, []byte("durable session log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	runGit(t, repo, "add", "staged.txt")
+	runGit(t, repo, "add", "-f", "docs/logs/session/072026/entry.md")
 
 	patch, _, _, _, err := deterministicDiffOutputs(context.Background(), repo, baseline, filepath.Join(repo, ".tagteam", "tmp.index"))
 	if err != nil {
@@ -770,6 +778,9 @@ func TestDeterministicDiffIgnoresTagteamRunDirButIncludesUntrackedFiles(t *testi
 	}
 	if !strings.Contains(text, "diff --git a/staged.txt b/staged.txt") {
 		t.Fatalf("patch missing staged addition:\n%s", text)
+	}
+	if !strings.Contains(text, "diff --git a/docs/logs/session/072026/entry.md b/docs/logs/session/072026/entry.md") {
+		t.Fatalf("patch missing explicitly staged ignored addition:\n%s", text)
 	}
 	if !strings.Contains(text, "diff --git a/internal/tagteam/tracked.go b/internal/tagteam/tracked.go") {
 		t.Fatalf("patch missing tracked ignored-path change:\n%s", text)

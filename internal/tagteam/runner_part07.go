@@ -349,7 +349,11 @@ func deterministicDiffOutputs(ctx context.Context, workdir, baseline, indexPath 
 		if err := os.WriteFile(pathspecPath, pathspec, 0o644); err != nil {
 			return nil, nil, nil, nil, err
 		}
-		if _, err := runGitCommandBytes(ctx, workdir, env, "add", "--pathspec-from-file="+pathspecPath, "--pathspec-file-nul"); err != nil {
+		// Additional paths include ordinary untracked files plus additions that
+		// were explicitly staged in the real index. The latter can be ignored
+		// session/governance artifacts staged with `git add -f`; preserve them in
+		// this disposable review index without discovering any other ignored files.
+		if _, err := runGitCommandBytes(ctx, workdir, env, "add", "-f", "--pathspec-from-file="+pathspecPath, "--pathspec-file-nul"); err != nil {
 			return nil, nil, nil, nil, err
 		}
 	}
