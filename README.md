@@ -28,6 +28,7 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 - [Architecture at a glance](#architecture-at-a-glance)
 - [Status](#status)
 - [Requirements](#requirements)
+- [Observed model-role analysis](#observed-model-role-analysis)
 - [Authentication](#authentication)
 - [Compatibility issues & rough edges](#compatibility-issues--rough-edges)
 - [Install](#install)
@@ -228,6 +229,61 @@ Existing configurations that list `agy` under `defaults.fallbacks.worker` (or
 an equivalent worker/coder/supervisor fallback) must replace it with an
 eligible target such as `codex:gpt-5.6-sol`. Tagteam rejects that configuration
 at option resolution with an exit-code-4 error instead of waiting for fallback.
+
+## Observed Model-Role Analysis
+
+This is an operational reading of parseable persisted `final.json` records from
+local trials through 2026-07-25, not an intelligence benchmark. The trials used
+different repositories, prompts, baseline states, test commands, and operator
+interventions. A `degraded` terminal result is accepted output with a recorded
+recovery or quality caveat; it is not equivalent to `passed`. `blocked` and
+`failed` can originate in review findings, test failures, or host preflight
+rather than the selected model. Operator-cancelled runs are shown separately
+and are not attributed to a provider. Non-terminal/legacy states are counted
+as `other` rather than silently discarded.
+
+The configured default remains a policy-derived safe starting point. This
+small, heterogeneous sample does not justify replacing it with a simple
+leaderboard. Use the role policy above as a hard constraint and treat the
+following ordering as operational guidance for a monitored run.
+
+### Top Five Cross-Provider Pairings
+
+The requested top-10 list stops at five: all five entries cross provider
+boundaries, and extending it would promote either policy-ineligible role
+assignments (Claude as a coder/scout or Gemini outside scout) or configurations
+with too little useful evidence to guide an operator.
+
+| Rank | Mode and roles | Observed terminal results | Recommendation and issue |
+|---|---|---|---|
+| 1 | **Relay:** GPT-5.6 Sol (OpenAI) supervisor, Grok 4.5 (xAI) worker, Gemini 3.6 Flash medium (Google) scout | 8 total: 4 passed, 4 degraded, 0 blocked/failed, 0 cancelled | The strongest observed terminal-outcome record. Use only with a human monitoring Grok's plan, diff, and tests; its historical low/medium worker behavior is still not reliable enough for unattended use. |
+| 2 | **Adversarial:** Claude Opus 4.8 (Anthropic) adversary/reviewer, GPT-5.6 Terra (OpenAI) coder | 3 total: 2 passed, 0 degraded, 0 blocked/failed, 0 cancelled, 1 other | The best observed independent-review pair, but the sample is small. Keep Opus read-only and use this for a bounded audit/review loop rather than evidence that Claude is a viable implementation agent. |
+| 3 | **Relay:** Claude Sonnet 5 (Anthropic) supervisor, Grok 4.5 (xAI) worker, Gemini 3.6 Flash medium (Google) scout | 41 total: 11 passed, 7 degraded, 10 blocked/failed, 8 cancelled, 5 other | The largest trial set, but too variable for an operational default. It is useful for stress-testing the pipeline; it needs retries/fallbacks for Claude structured-output failures and close supervision of Grok. |
+| 4 | **Supervisor:** Claude Opus 4.8 (Anthropic) supervisor, GPT-5.6 Terra (OpenAI) worker, no scout | 8 total: 2 passed, 1 degraded, 0 blocked/failed, 3 cancelled, 2 other | A reasonable supervised implementation candidate with no hard terminal result in this sample, but too many incomplete/cancelled trials to rank it as proven. Run it with normal artifact review. |
+| 5 | **Relay:** Claude Fable 5 (Anthropic) supervisor, GPT-5.6 Terra (OpenAI) worker, Gemini 3.5 Flash low (Google) scout | 9 total: 1 passed, 2 degraded, 1 blocked/failed, 2 cancelled, 3 other | A pilot configuration only. It is cross-provider and role-compliant, but the evidence is sparse and incomplete; do not make it a default without fresh, targeted trials. |
+
+No pairing above is an unattended recommendation. The first row is the most
+successful observed relay outcome, while rows 2--5 are useful role-specific
+candidates with stated evidence limits. The current default should be tested in
+the target repository with a small scoped prompt before broad work, as should
+any new model name or reasoning tier.
+
+### What Failed, And Why It Matters
+
+| Model/role pattern | Observed limitation | Operational response |
+|---|---|---|
+| Claude as a read-only supervisor/reviewer | Claude can ignore a JSON schema, return prose/fenced JSON, or report `error_max_structured_output_retries` without a usable contract result. | Keep Claude read-only, preserve the invalid artifact, use the configured fallback ladder or resume path, and do not mislabel an absent structured result as a worker defect. |
+| Claude as worker/coder or scout | Repeated substantive implementation trials did not reliably complete the edit/output-contract lifecycle. | Tagteam rejects these role assignments. Do not override the restriction with a profile or fallback. |
+| Grok 4.5 at low/medium reasoning as worker/coder | Some runs produced weak implementation behavior, including selecting a read-only triage package instead of making the requested source change. | Grok remains a monitored worker/coder or scout. Require a visible diff and targeted test result; never use it as an unattended supervisor. |
+| Gemini outside scout | This is an enforced role-policy boundary, not a measured claim that Gemini cannot write code. Existing trials only establish its scout use in this system. | Keep Gemini/`agy` in scout-only slots until a separately designed, policy-reviewed trial justifies a change. |
+| Host/test failures | A declared `uv run` command failed because the environment lacked an unrelated `control-hooks` dependency even though direct project tests passed. Tagteam correctly reported the declared test failure. | Repair the test environment or command before rerunning. Do not spend model retries on a deterministic host failure. |
+| Cancelled or incomplete runs | Operator cancellations and interrupted/legacy records do not identify a provider fault. | Inspect `tagteam status`, `tagteam transcript`, and saved artifacts before retrying; resume only after the baseline and required artifacts are valid. |
+
+The practical selection rule is therefore role-first, not vendor-first: use a
+read-only reviewer/supervisor with an implementation-capable coder, restrict
+Gemini to bounded reconnaissance, and make Grok prove progress through its
+diff and tests. Treat acceptance state, test evidence, and review artifacts as
+the source of truth rather than a model's self-report.
 
 ## Authentication
 
