@@ -89,7 +89,7 @@ func TestCodexBuildCmdReporterIsReadOnly(t *testing.T) {
 	}
 }
 
-func TestClaudeBuildCmdReadOnlyRolesUsePlanMode(t *testing.T) {
+func TestClaudeBuildCmdReadOnlyRolesUseRestrictedToolSet(t *testing.T) {
 	adapter := &ClaudeAdapter{}
 	for _, role := range []Role{RoleAdversary, RoleSupervisor, RoleReporter, RoleScout} {
 		spec, err := adapter.BuildCmd(role, Request{Prompt: "review", Workdir: t.TempDir()})
@@ -97,12 +97,35 @@ func TestClaudeBuildCmdReadOnlyRolesUsePlanMode(t *testing.T) {
 			t.Fatal(err)
 		}
 		joined := strings.Join(spec.Argv, " ")
-		if !strings.Contains(joined, "--permission-mode plan") || !strings.Contains(joined, "--allowedTools "+claudeReadOnlyTools) {
-			t.Fatalf("%s argv does not grant read-only inspection tools in plan mode: %q", role, joined)
+		if !strings.Contains(joined, "--permission-mode dontAsk") || !strings.Contains(joined, "--tools "+claudeReadOnlyTools) {
+			t.Fatalf("%s argv does not restrict Claude to noninteractive inspection tools: %q", role, joined)
 		}
-		if strings.Contains(joined, "acceptEdits") || strings.Contains(joined, "--permission-mode dontAsk") {
-			t.Fatalf("%s argv does not enforce Claude plan mode: %q", role, joined)
+		if strings.Contains(joined, "--permission-mode plan") || strings.Contains(joined, "--allowedTools") || strings.Contains(joined, "Bash") {
+			t.Fatalf("%s argv exposes Claude plan persistence or a shell: %q", role, joined)
 		}
+	}
+}
+
+func TestClaudeBuildCmdRejectsReadOnlyExtraArgs(t *testing.T) {
+	adapter := &ClaudeAdapter{ExtraArgs: []string{"--permission-mode", "acceptEdits"}}
+	for _, role := range []Role{RoleAdversary, RoleSupervisor, RoleReporter, RoleScout} {
+		t.Run(string(role), func(t *testing.T) {
+			_, err := adapter.BuildCmd(role, Request{Prompt: "review", Workdir: t.TempDir()})
+			if err == nil || !strings.Contains(err.Error(), "extra args are not permitted for read-only role") {
+				t.Fatalf("BuildCmd(%s) error = %v, want read-only extra-args rejection", role, err)
+			}
+		})
+	}
+}
+
+func TestClaudeBuildCmdAllowsCoderExtraArgs(t *testing.T) {
+	adapter := &ClaudeAdapter{ExtraArgs: []string{"--max-budget-usd", "1"}}
+	spec, err := adapter.BuildCmd(RoleCoder, Request{Prompt: "implement", Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("BuildCmd(coder) error = %v", err)
+	}
+	if !strings.Contains(strings.Join(spec.Argv, " "), "--max-budget-usd 1") {
+		t.Fatalf("coder argv did not preserve permitted extra args: %q", spec.Argv)
 	}
 }
 
@@ -150,7 +173,7 @@ func TestClaudeBuildCmdSupervisor(t *testing.T) {
 	if !strings.Contains(argv, "--model claude-sonnet-5 --effort high") {
 		t.Fatalf("expected model and effort, got argv = %v", spec.Argv)
 	}
-	if !strings.Contains(argv, "--permission-mode plan") {
+	if !strings.Contains(argv, "--permission-mode dontAsk --tools "+claudeReadOnlyTools) {
 		t.Fatalf("expected read-only permission mode, got argv = %v", spec.Argv)
 	}
 	if strings.Contains(argv, "--json-schema") {
@@ -174,7 +197,7 @@ func TestClaudeBuildCmdSupervisorWorkPlanUsesSchema(t *testing.T) {
 		t.Fatalf("BuildCmd() error = %v", err)
 	}
 	argv := strings.Join(spec.Argv, " ")
-	if !strings.Contains(argv, "--permission-mode plan") {
+	if !strings.Contains(argv, "--permission-mode dontAsk --tools "+claudeReadOnlyTools) {
 		t.Fatalf("expected read-only permission mode, got argv = %v", spec.Argv)
 	}
 	if !strings.Contains(argv, "--json-schema") {
@@ -195,7 +218,7 @@ func TestClaudeBuildCmdReporterDoesNotUseSchema(t *testing.T) {
 		t.Fatalf("BuildCmd() error = %v", err)
 	}
 	argv := strings.Join(spec.Argv, " ")
-	if !strings.Contains(argv, "--permission-mode plan") {
+	if !strings.Contains(argv, "--permission-mode dontAsk --tools "+claudeReadOnlyTools) {
 		t.Fatalf("expected read-only permission mode, got argv = %v", spec.Argv)
 	}
 	if strings.Contains(argv, "--json-schema") {
