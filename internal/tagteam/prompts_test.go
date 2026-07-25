@@ -40,3 +40,17 @@ func TestHostBaselineEvidenceReachesRelayScoutAndWorker(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewPromptsRequireCurrentStateReconciliation(t *testing.T) {
+	prompts := map[string]string{
+		"adversary":  BuildAdversaryPrompt("repair", "baseline", "diff", "tests", false),
+		"supervisor": BuildSupervisorReviewPrompt("repair", "baseline", "diff", "tests", false),
+		"package":    BuildSupervisorPackageReviewPrompt("repair", WorkPlan{}, WorkPackage{}, "baseline", "diff", "tests", false),
+		"relay":      BuildRelaySupervisorReviewPrompt("repair", "baseline", "brief", Scout{}, Scout{}, "instructions", "diff", "tests", false),
+	}
+	for name, prompt := range prompts {
+		if !strings.Contains(prompt, "Current-state discipline") || !strings.Contains(prompt, "current rather than historical") {
+			t.Fatalf("%s review prompt omitted current-state reconciliation:\n%s", name, prompt)
+		}
+	}
+}
