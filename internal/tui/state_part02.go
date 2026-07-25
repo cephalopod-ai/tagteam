@@ -489,11 +489,26 @@ func (m *model) applyEditorValue() {
 	case fieldWatchdogTimeout:
 		m.applyDurationEditorValue("watchdog-timeout", value, &m.compose.WatchdogTimeout)
 	case fieldTest:
-		m.compose.TestCmd = value
+		m.setComposeTestCommand(value)
 	case fieldLint:
 		m.compose.LintCmd = value
 	}
 	m.editor = editorState{}
+}
+
+// setComposeTestCommand replaces the configured test command list with one
+// explicit command. Re-submitting the unchanged first command keeps an
+// existing parallel list instead of silently collapsing it.
+func (m *model) setComposeTestCommand(value string) {
+	if value == m.compose.TestCmd && len(m.compose.TestCmds) > 1 {
+		return
+	}
+	m.compose.TestCmd = value
+	if strings.TrimSpace(value) == "" {
+		m.compose.TestCmds = nil
+		return
+	}
+	m.compose.TestCmds = []string{value}
 }
 
 func (m *model) adjustField(field composeField, delta int) {
@@ -582,6 +597,7 @@ func (m *model) setComposeFromResolved(profile string, opts tagteam.RunOptions) 
 		Timeout:            opts.Timeout,
 		WatchdogTimeout:    opts.WatchdogTimeout,
 		TestCmd:            opts.TestCmd,
+		TestCmds:           append([]string(nil), opts.TestCommands...),
 		LintCmd:            opts.LintCmd,
 		NoTest:             opts.NoTest,
 		Slice:              opts.SupervisorSlicing,

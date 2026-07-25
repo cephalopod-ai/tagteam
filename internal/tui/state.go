@@ -91,6 +91,7 @@ type composeState struct {
 	Timeout            time.Duration
 	WatchdogTimeout    time.Duration
 	TestCmd            string
+	TestCmds           []string
 	LintCmd            string
 	NoTest             bool
 	Slice              bool
@@ -119,6 +120,14 @@ type runListItem struct {
 type runResult struct {
 	Final tagteam.FinalRun
 	Err   error
+}
+
+// runListCacheEntry lets the per-second refresh skip re-reading every artifact
+// of a run whose directory has not changed. Run artifacts are written with
+// temp-file-plus-rename, so the directory mtime moves on every update.
+type runListCacheEntry struct {
+	modTime time.Time
+	item    runListItem
 }
 
 type model struct {
@@ -155,6 +164,7 @@ type model struct {
 	editor           editorState
 	statusMessage    string
 	runInFlight      bool
+	runListCache     map[string]runListCacheEntry
 	mutationBlocked  string
 	runResultCh      chan runResult
 	width            int
@@ -249,17 +259,30 @@ func (m *model) loadRuns() {
 		return
 	}
 
+	cache := make(map[string]runListCacheEntry, len(entries))
 	items := make([]runListItem, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		runDir := filepath.Join(root, entry.Name())
+		info, infoErr := entry.Info()
+		// The active run and the watched run reflect state outside the run
+		// directory (active.json), so they are always rebuilt.
+		if infoErr == nil && !active[runDir] && runDir != m.currentRunDir {
+			if cached, ok := m.runListCache[runDir]; ok && cached.modTime.Equal(info.ModTime()) {
+				cache[runDir] = cached
+				item := cached.item
+				item.Active = false
+				items = append(items, item)
+				continue
+			}
+		}
 		snapshot, err := tagteam.BuildRunSnapshot(m.workdir, runDir)
 		if err != nil {
 			continue
 		}
-		items = append(items, runListItem{
+		item := runListItem{
 			RunID:     snapshot.RunID,
 			RunDir:    snapshot.RunDir,
 			Mode:      snapshot.Mode,
@@ -267,8 +290,13 @@ func (m *model) loadRuns() {
 			Verdict:   snapshot.Verdict,
 			UpdatedAt: snapshot.UpdatedAt,
 			Active:    active[runDir],
-		})
+		}
+		if infoErr == nil {
+			cache[runDir] = runListCacheEntry{modTime: info.ModTime(), item: item}
+		}
+		items = append(items, item)
 	}
+	m.runListCache = cache
 
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Active != items[j].Active {

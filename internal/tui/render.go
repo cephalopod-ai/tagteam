@@ -220,7 +220,7 @@ func renderSlashCommandLines(model *model, height, width int) []string {
 	if selection < 0 || selection >= len(matches) {
 		selection = 0
 	}
-	lines := []string{"/" + model.commandBuffer + "_"}
+	lines := []string{"/" + tailClip(model.commandBuffer, maxInt(10, width-2)) + "_"}
 	listHeight := maxInt(1, height-2)
 	start := viewportStart(len(matches), selection, listHeight)
 	nameWidth := 18
@@ -390,6 +390,16 @@ func composerPaneHeight(totalHeight int) int {
 	return 4
 }
 
+// tailClip keeps the end of an edited value visible so the cursor position
+// stays on screen; padOrTrim would keep the head and hide what is being typed.
+func tailClip(s string, width int) string {
+	runes := []rune(s)
+	if width <= 0 || len(runes) <= width {
+		return s
+	}
+	return "<" + string(runes[len(runes)-width+1:])
+}
+
 func shortRunLabel(runID string) string {
 	if ts, err := parseRunTime(runID); err == nil {
 		return ts.Format("Jan02 15:04")
@@ -423,6 +433,10 @@ func statusBadge(status string) string {
 		return "warn"
 	case "blocked":
 		return "hold"
+	case "cancelled":
+		return "stop"
+	case "quarantined":
+		return "quar"
 	case "failed", "error":
 		return "fail"
 	default:

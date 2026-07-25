@@ -248,7 +248,7 @@ func (m *model) applyCommand(ctx context.Context, raw string) (action loopAction
 		}
 		m.compose.WatchdogTimeout = value
 	case "test":
-		m.compose.TestCmd = rest
+		m.setComposeTestCommand(rest)
 	case "lint":
 		m.compose.LintCmd = rest
 	case "prompt":
@@ -336,11 +336,17 @@ func (m *model) watchRun(raw string) error {
 		if err != nil {
 			return err
 		}
+		if strings.TrimSpace(active.RunDir) == "" {
+			return fmt.Errorf("no active run")
+		}
 		m.currentRunDir = active.RunDir
 	case "latest":
 		latest, err := tagteam.ReadLatestForCLI(m.workdir)
 		if err != nil {
 			return err
+		}
+		if strings.TrimSpace(latest.RunDir) == "" {
+			return fmt.Errorf("no saved runs yet")
 		}
 		m.currentRunDir = latest.RunDir
 	default:
@@ -464,7 +470,16 @@ func (m *model) buildRunOptions() (tagteam.RunOptions, tagteam.Config, error) {
 	flags.AllowedPaths = append([]string(nil), m.compose.AllowedPaths...)
 	flags.Timeout = m.compose.Timeout
 	flags.WatchdogTimeout = m.compose.WatchdogTimeout
-	flags.Test = m.compose.TestCmd
+	// The CLI accepts repeatable --test commands (run concurrently); resolution
+	// prefers flags.Tests over the legacy singular flags.Test, so the launch
+	// must carry the full compose list and drop any stale startup array.
+	flags.Test = ""
+	flags.Tests = nil
+	if len(m.compose.TestCmds) > 0 {
+		flags.Tests = append([]string(nil), m.compose.TestCmds...)
+	} else {
+		flags.Test = m.compose.TestCmd
+	}
 	flags.Lint = m.compose.LintCmd
 	flags.NoTest = m.compose.NoTest
 	flags.AllowDirty = m.compose.AllowDirty
