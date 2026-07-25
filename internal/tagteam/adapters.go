@@ -156,7 +156,10 @@ type ClaudeAdapter struct {
 	ExtraArgs         []string
 }
 
-const claudeReadOnlyTools = "Read,Glob,Grep,Bash"
+// Claude's native plan permission mode persists a plan under ~/.claude/plans,
+// even when the requested tool surface is read-only. Non-coder roles instead
+// receive the smallest inspection-only tool set in noninteractive mode.
+const claudeReadOnlyTools = "Read,Glob,Grep"
 
 func (a *ClaudeAdapter) ID() string {
 	return "claude"
@@ -177,6 +180,10 @@ func (a *ClaudeAdapter) Detect(ctx context.Context) (VersionInfo, error) {
 }
 
 func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
+	extraArgs, err := claudeExtraArgsForRole(role, a.ExtraArgs)
+	if err != nil {
+		return nil, err
+	}
 	model := req.Model
 	if model == "" {
 		model = a.DefaultModel
@@ -209,8 +216,8 @@ func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 		}
 	case RoleAdversary:
 		argv = append(argv,
-			"--permission-mode", "plan",
-			"--allowedTools", claudeReadOnlyTools,
+			"--permission-mode", "dontAsk",
+			"--tools", claudeReadOnlyTools,
 		)
 		if req.SchemaPath != "" {
 			schemaBytes, err := osReadFile(req.SchemaPath)
@@ -221,8 +228,8 @@ func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 		}
 	case RoleSupervisor, RoleReporter, RoleScout:
 		argv = append(argv,
-			"--permission-mode", "plan",
-			"--allowedTools", claudeReadOnlyTools,
+			"--permission-mode", "dontAsk",
+			"--tools", claudeReadOnlyTools,
 		)
 		if role == RoleSupervisor && req.SchemaPath != "" {
 			schemaBytes, err := osReadFile(req.SchemaPath)
@@ -241,8 +248,18 @@ func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 		argv = append(argv, "--resume", req.ResumeID)
 	}
 	argv = append(argv, "--output-format", "json")
-	argv = append(argv, a.ExtraArgs...)
+	argv = append(argv, extraArgs...)
 	return &CommandSpec{Argv: argv, Dir: req.Workdir, Stdin: promptStdin(req), Output: req.OutputPath}, nil
+}
+
+func claudeExtraArgsForRole(role Role, extraArgs []string) ([]string, error) {
+	switch role {
+	case RoleAdversary, RoleSupervisor, RoleReporter, RoleScout:
+		if len(extraArgs) > 0 {
+			return nil, fmt.Errorf("claude extra args are not permitted for read-only role %q", role)
+		}
+	}
+	return extraArgs, nil
 }
 
 type claudeEnvelope struct {
