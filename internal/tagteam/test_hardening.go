@@ -70,7 +70,7 @@ func validateTestCommand(workdir, command string) error {
 }
 
 func literalTestPathCandidate(token string) bool {
-	if token == "" || strings.HasPrefix(token, "-") || token == "./..." || strings.ContainsAny(token, `$*?[]{}|;&><`) {
+	if token == "" || strings.HasPrefix(token, "-") || strings.HasSuffix(token, "/...") || strings.ContainsAny(token, `$*?[]{}|;&><`) {
 		return false
 	}
 	extensions := []string{".go", ".py", ".js", ".jsx", ".ts", ".tsx", ".rs", ".sh"}

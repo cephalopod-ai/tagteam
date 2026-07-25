@@ -20,6 +20,12 @@ func TestValidateTestCommandRejectsMissingLiteralPath(t *testing.T) {
 	}
 }
 
+func TestValidateTestCommandAcceptsGoRecursivePackagePattern(t *testing.T) {
+	if err := validateTestCommand(t.TempDir(), "go test ./internal/tagteam/..."); err != nil {
+		t.Fatalf("go recursive package pattern rejected: %v", err)
+	}
+}
+
 func TestIsolatedTestDirectoriesArePerInvocation(t *testing.T) {
 	runDir := t.TempDir()
 	firstState, firstTemp, err := isolatedTestDirectories(filepath.Join(runDir, "baseline-test.txt"))
