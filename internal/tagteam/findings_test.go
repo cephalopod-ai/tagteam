@@ -41,6 +41,39 @@ func TestFindingsLedgerKeepsOmittedMajorOpenUntilDisposition(t *testing.T) {
 	}
 }
 
+func TestFindingsLedgerIgnoresUnknownDispositionAndKeepsKnownFindingOpen(t *testing.T) {
+	runDir := t.TempDir()
+	review := currentReviewForTest()
+	normalizeReview(review)
+	if _, err := updateFindingsLedger(runDir, 1, review, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	pass := currentReviewForTest()
+	pass.Verdict = "pass"
+	pass.Findings = []Finding{}
+	pass.Summary = "scout advisory is not a persisted finding"
+	pass.PriorFindingDispositions = []FindingDisposition{{
+		FindingID: "polish-nit-agents-md-link-style",
+		Status:    "disputed_with_evidence",
+		Evidence:  "advisory only",
+	}}
+	summary, err := updateFindingsLedger(runDir, 2, pass, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.OpenBlockerOrMajor != 1 || summary.OpenTotal != 1 {
+		t.Fatalf("unknown disposition changed canonical findings: %#v", summary)
+	}
+	ledger, err := loadFindingsLedger(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.Entries) != 1 || ledger.Entries[0].ID != review.Findings[0].ID || ledger.Entries[0].Status != "open" {
+		t.Fatalf("ledger = %#v", ledger)
+	}
+}
+
 func TestFindingsLedgerReconcilesAbsentQualityGateFinding(t *testing.T) {
 	runDir := t.TempDir()
 	blocked := QualityGateResult{

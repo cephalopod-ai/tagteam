@@ -135,7 +135,9 @@ edge cases; missing tests for changed behavior; unrelated modifications;
 security/data-loss/migration risk; consistency with repo patterns.
 
 Scout findings are advisory only. Use them as context, but only your
-supervisor review can produce blocking findings.
+supervisor review can produce blocking findings. Reserve
+prior_finding_dispositions for host-provided IDs in the prior-findings context;
+do not emit dispositions for scout items or any other advisory observation.
 
 Respond with JSON matching the provided schema. Use "pass" only when
 there are no blocker or major findings. Every finding must name a file
