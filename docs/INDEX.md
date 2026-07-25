@@ -5,7 +5,7 @@ Canonical entry point for `tagteam` documentation.
 ## Start here
 
 - [README](../README.md) — install, quick start, all run modes, configuration,
-  run artifacts, TUI usage, troubleshooting, and `v1.1.0` release highlights.
+  run artifacts, TUI usage, troubleshooting, and `v1.2.1` release highlights.
   Serves as the user manual.
 - [AGENTS.md](../AGENTS.md) — repo-wide contract for coding agents (authoritative
   on conflict).

@@ -23,7 +23,7 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 ## Contents
 
 - [Highlights](#highlights)
-- [What's New In v1.1.0](#whats-new-in-v110)
+- [What's New In v1.2.1](#whats-new-in-v121)
 - [Modes](#modes)
 - [Architecture at a glance](#architecture-at-a-glance)
 - [Status](#status)
@@ -52,11 +52,11 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 >
 > **Why it's simple:** if you're a serious coder who wants fine-grained control over every agent, `tagteam` is probably too simple for you — and that's fine.
 
-## What's New In v1.1.0
+## What's New In v1.2.1
 
-`v1.1.0` builds on the stable command, configuration, artifact-schema, and exit-code contracts introduced in `v1.0.0`. This release tightens Git safety and vendor-adapter behavior while preserving all four orchestration modes. Adapter-specific rough edges remain documented in [Compatibility issues & rough edges](#compatibility-issues--rough-edges).
+`v1.2.1` builds on the stable command, configuration, artifact-schema, and exit-code contracts introduced in `v1.0.0`. This release tightens Git safety and vendor-adapter behavior while preserving all four orchestration modes. Adapter-specific rough edges remain documented in [Compatibility issues & rough edges](#compatibility-issues--rough-edges).
 
-Highlights in `v1.1.0`:
+Highlights in `v1.2.1`:
 
 - **New default team.** Supervisor and relay flows now default to Claude Opus 4.8 for read-only supervision, GPT-5.6 Terra for implementation, and local Ollama `gemma4:latest` for relay scouting. Codex Sol is the bounded implementation fallback; Agy/Gemini is restricted to scout work.
 - **Evidence-based Claude roles.** Claude is supported as a read-only supervisor or adversary. Worker/coder assignments are rejected because substantive Sonnet and Opus implementation runs did not reliably complete Tagteam's edit/output lifecycle; Claude scout assignments remain disabled pending a dedicated trial.
@@ -104,9 +104,9 @@ Full documentation — architecture, more diagrams, and the test ledger — is i
 
 ## Status
 
-This repository reflects the `v1.1.0` release surface: the core run loop, adapter abstraction, persisted run artifacts, live status plumbing, role policy, dirty-worktree checkpointing, and the full command set are implemented and covered by the test ledger. The remaining rough edges are adapter-behavior issues and general ergonomics rather than missing core workflow support.
+This repository reflects the `v1.2.1` release surface: the core run loop, adapter abstraction, persisted run artifacts, live status plumbing, role policy, dirty-worktree checkpointing, and the full command set are implemented and covered by the test ledger. The remaining rough edges are adapter-behavior issues and general ergonomics rather than missing core workflow support.
 
-Included in the `v1.1.0` surface:
+Included in the `v1.2.1` surface:
 
 - supervisor/worker mode is now the default flow
 - relay scout/coder/supervisor mode is available with `--relay`
@@ -393,7 +393,7 @@ Binary releases are published for:
 > [!NOTE]
 > Windows is not validated. The test suite relies on POSIX shell adapters, so `tagteam` is only exercised and released on macOS and Linux. It may well build and run on Windows — if you get it working and verify it, open an issue or PR and I'm more than happy to add Windows back to CI and releases.
 
-Create the release by pushing the `v1.1.0` tag; GitHub Actions runs Go checks on macOS and Linux, then GoReleaser attaches archives plus `checksums.txt` to the release.
+Create the release by pushing the `v1.2.1` tag; GitHub Actions runs Go checks on macOS and Linux, then GoReleaser attaches archives plus `checksums.txt` to the release.
 
 Build from source (development builds must be explicitly allowed for commands that edit a worktree):
 
