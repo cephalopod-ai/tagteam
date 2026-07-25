@@ -64,3 +64,20 @@ func TestRunAdapterLiveScopeGuardCancelsOutOfScopeEditor(t *testing.T) {
 		t.Fatalf("partial diff should remain for review: %v", statErr)
 	}
 }
+
+func TestSettledOutOfScopeDeltaPathsIgnoresTransientArtifact(t *testing.T) {
+	before := worktreeSnapshot{}
+	transient := worktreeSnapshot{"tests/fixtures/generated.tmp": "??:temporary"}
+	pending := map[string]time.Time{}
+	now := time.Now()
+
+	if paths := settledOutOfScopeDeltaPaths(before, transient, []string{"README.md"}, pending, now); len(paths) != 0 {
+		t.Fatalf("first observation paths = %#v, want none", paths)
+	}
+	if paths := settledOutOfScopeDeltaPaths(before, worktreeSnapshot{}, []string{"README.md"}, pending, now.Add(liveScopeGuardInterval)); len(paths) != 0 {
+		t.Fatalf("removed transient paths = %#v, want none", paths)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("pending transient paths = %#v, want none", pending)
+	}
+}
