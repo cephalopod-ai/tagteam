@@ -417,6 +417,14 @@ tagteam "add OAuth login"
 tagteam run --worker codex:gpt-5.6-terra --supervisor claude:claude-opus-5 "add OAuth login"
 ```
 
+> **Claude Code v2.1.219+ required for the default supervisor.** `claude-opus-5`
+> is passed straight through to `claude --model`, and older Claude Code builds do
+> not know that id — the run fails at the first supervisor turn rather than at
+> preflight, since `tagteam doctor` only checks that `claude` is runnable. Run
+> `claude update`, or point the supervisor at a model your CLI has:
+> `--supervisor claude:claude-opus-4-8` (or `claude:opus`, which resolves to
+> whatever your CLI treats as newest).
+
 That's the whole thing — no flags, no config. From your repo root you just describe the change:
 
 ```bash
