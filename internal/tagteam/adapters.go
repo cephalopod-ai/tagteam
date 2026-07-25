@@ -81,7 +81,9 @@ func (a *CodexAdapter) ID() string {
 }
 
 func (a *CodexAdapter) Capabilities() CapabilitySet {
-	return CapabilitySet{SupportsSchema: true}
+	// Codex loads project instruction files from the workdir it receives with
+	// -C, so passing the persisted bundle again needlessly inflates prompts.
+	return CapabilitySet{SupportsSchema: true, LoadsProjectInstructions: true}
 }
 
 func (a *CodexAdapter) Detect(ctx context.Context) (VersionInfo, error) {
@@ -154,12 +156,16 @@ type ClaudeAdapter struct {
 	ExtraArgs         []string
 }
 
+const claudeReadOnlyTools = "Read,Glob,Grep,Bash"
+
 func (a *ClaudeAdapter) ID() string {
 	return "claude"
 }
 
 func (a *ClaudeAdapter) Capabilities() CapabilitySet {
-	return CapabilitySet{SupportsSchema: true, SupportsResume: true, SupportsStdin: true, SerializeInvocations: a.Serialize}
+	// Claude Code loads project instruction files from the request workdir.
+	// Injecting the same bundle into stdin duplicates that native context.
+	return CapabilitySet{SupportsSchema: true, SupportsResume: true, SupportsStdin: true, LoadsProjectInstructions: true, SerializeInvocations: a.Serialize}
 }
 
 func (a *ClaudeAdapter) Detect(ctx context.Context) (VersionInfo, error) {
@@ -203,8 +209,8 @@ func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 		}
 	case RoleAdversary:
 		argv = append(argv,
-			"--permission-mode", "dontAsk",
-			"--allowedTools", "Read,Glob,Grep",
+			"--permission-mode", "plan",
+			"--allowedTools", claudeReadOnlyTools,
 		)
 		if req.SchemaPath != "" {
 			schemaBytes, err := osReadFile(req.SchemaPath)
@@ -215,8 +221,8 @@ func (a *ClaudeAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 		}
 	case RoleSupervisor, RoleReporter, RoleScout:
 		argv = append(argv,
-			"--permission-mode", "dontAsk",
-			"--allowedTools", "Read,Glob,Grep",
+			"--permission-mode", "plan",
+			"--allowedTools", claudeReadOnlyTools,
 		)
 		if role == RoleSupervisor && req.SchemaPath != "" {
 			schemaBytes, err := osReadFile(req.SchemaPath)
@@ -402,6 +408,9 @@ func (a *AgyAdapter) Detect(ctx context.Context) (VersionInfo, error) {
 }
 
 func (a *AgyAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
+	if role != RoleScout {
+		return nil, unsupportedAgyRoleError(role)
+	}
 	model := req.Model
 	if model == "" {
 		model = a.DefaultModel
@@ -416,18 +425,11 @@ func (a *AgyAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	if req.Timeout > 0 {
 		argv = append(argv, "--print-timeout", req.Timeout.String())
 	}
-	switch role {
-	case RoleCoder:
-		argv = append(argv, "--dangerously-skip-permissions")
-	case RoleAdversary, RoleSupervisor, RoleReporter, RoleScout:
-		// Agy's sandbox still permits workspace mutations in some CLI
-		// configurations. Plan mode is the adapter-level read-only guard for
-		// supervisory and scout roles; TagTeam's integrity checks remain the
-		// second line of defense.
-		argv = append(argv, "--sandbox", "--mode", "plan")
-	default:
-		return nil, fmt.Errorf("unsupported role %q", role)
-	}
+	// Agy's sandbox still permits workspace mutations in some CLI
+	// configurations. Plan mode is the adapter-level read-only guard for the
+	// only permitted Gemini role; Tagteam's integrity checks remain the second
+	// line of defense.
+	argv = append(argv, "--sandbox", "--mode", "plan")
 	argv = append(argv, a.ExtraArgs...)
 	return &CommandSpec{Argv: argv, Dir: req.Workdir, Output: req.OutputPath}, nil
 }

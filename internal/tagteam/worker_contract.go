@@ -115,12 +115,13 @@ Your final response MUST be JSON only and match this envelope exactly:
   "remaining_risks": ["honest unresolved risks"]
 }
 Use empty arrays when appropriate. Do not return identity text, Markdown fences, or prose outside the JSON object.
-The files_changed array MUST exactly match Git's tracked and ordinary untracked
-worktree changes for this invocation. Do not list gitignored local artifacts in
-files_changed, even when repository instructions require writing them; report
-those local-only writes in remaining_risks instead. If an ignored artifact must
-be reviewed and transferred, explicitly stage it with git add -f before the
-final response so Git and files_changed agree.
+The files_changed array MUST exactly match Git-visible content changes made
+during this invocation. Do not list a path solely because you staged or
+unstaged an unchanged pre-existing edit. Do not list gitignored local artifacts
+in files_changed, even when repository instructions require writing them;
+report those local-only writes in remaining_risks instead. If an ignored
+artifact must be reviewed and transferred, explicitly stage it with git add -f
+before the final response so Git and files_changed agree.
 Validation commands must be non-interactive and must not modify files outside the task's allowed scope. Do not run setup or configuration commands such as pnpm approve-builds as validation.`
 }
 
@@ -151,18 +152,48 @@ func captureWorktreeSnapshot(ctx context.Context, workdir string) (worktreeSnaps
 			continue
 		}
 		absolute := filepath.Join(workdir, filepath.FromSlash(path))
-		data, readErr := os.ReadFile(absolute)
-		if readErr != nil {
-			if os.IsNotExist(readErr) {
-				snapshot[path] = "deleted:" + status
-				continue
-			}
-			return nil, readErr
+		fingerprint, include, snapshotErr := snapshotWorktreeEntry(absolute, status)
+		if snapshotErr != nil {
+			return nil, snapshotErr
 		}
-		sum := sha256.Sum256(data)
-		snapshot[path] = status + ":" + hex.EncodeToString(sum[:])
+		if include {
+			snapshot[path] = fingerprint
+		}
 	}
 	return snapshot, nil
+}
+
+// snapshotWorktreeEntry hashes only entries Git can version. In particular,
+// pytest's current-result symlink can target a directory, which must be
+// fingerprinted as a symlink rather than followed with os.ReadFile.
+func snapshotWorktreeEntry(path, status string) (fingerprint string, include bool, err error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "deleted:" + status, true, nil
+		}
+		return "", false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", false, err
+		}
+		sum := sha256.Sum256([]byte(target))
+		return "symlink:" + status + ":" + hex.EncodeToString(sum[:]), true, nil
+	}
+	if info.IsDir() || !info.Mode().IsRegular() {
+		return "", false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "deleted:" + status, true, nil
+		}
+		return "", false, err
+	}
+	sum := sha256.Sum256(data)
+	return status + ":" + hex.EncodeToString(sum[:]), true, nil
 }
 
 func worktreeDelta(before, after worktreeSnapshot) []string {
@@ -186,23 +217,14 @@ func worktreeDelta(before, after worktreeSnapshot) []string {
 }
 
 func worktreeContentDelta(before, after worktreeSnapshot) []string {
-	content := func(value string) string {
-		if strings.HasPrefix(value, "deleted:") {
-			return "deleted"
-		}
-		if index := strings.IndexByte(value, ':'); index >= 0 {
-			return value[index+1:]
-		}
-		return value
-	}
 	seen := map[string]bool{}
 	for path, fingerprint := range before {
-		if content(after[path]) != content(fingerprint) {
+		if worktreeContentFingerprint(after[path]) != worktreeContentFingerprint(fingerprint) {
 			seen[path] = true
 		}
 	}
 	for path, fingerprint := range after {
-		if content(before[path]) != content(fingerprint) {
+		if worktreeContentFingerprint(before[path]) != worktreeContentFingerprint(fingerprint) {
 			seen[path] = true
 		}
 	}
@@ -214,8 +236,32 @@ func worktreeContentDelta(before, after worktreeSnapshot) []string {
 	return paths
 }
 
+// worktreeContentFingerprint removes Git index/worktree status metadata while
+// retaining the entry's observable content. A worker contract describes
+// content written during its invocation, not whether it staged an edit that
+// already existed before it started.
+func worktreeContentFingerprint(value string) string {
+	if value == "" || strings.HasPrefix(value, "deleted:") {
+		return "deleted"
+	}
+	if strings.HasPrefix(value, "symlink:") {
+		parts := strings.SplitN(value, ":", 3)
+		if len(parts) == 3 {
+			return "symlink:" + parts[2]
+		}
+		return value
+	}
+	if index := strings.IndexByte(value, ':'); index >= 0 {
+		return value[index+1:]
+	}
+	return value
+}
+
 func validateWorkerGitClaim(ctx context.Context, workdir string, result *WorkerResult, before, after worktreeSnapshot) error {
-	actual := worktreeDelta(before, after)
+	// Match the same content-level change set shown in the review artifact.
+	// Index-only transitions on pre-existing edits must not cause a false
+	// quarantine in later repair rounds.
+	actual := worktreeContentDelta(before, after)
 	claimed := append([]string(nil), result.FilesChanged...)
 	sort.Strings(claimed)
 	if strings.Join(actual, "\x00") != strings.Join(claimed, "\x00") {
@@ -246,7 +292,7 @@ func normalizeCumulativeWorkerClaims(claimed, actual []string, before, after wor
 		}
 		beforeFingerprint, existedBefore := before[path]
 		afterFingerprint, existsAfter := after[path]
-		if !existedBefore || !existsAfter || beforeFingerprint != afterFingerprint {
+		if !existedBefore || !existsAfter || worktreeContentFingerprint(beforeFingerprint) != worktreeContentFingerprint(afterFingerprint) {
 			return nil, false
 		}
 		removed = true

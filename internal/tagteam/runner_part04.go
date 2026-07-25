@@ -131,9 +131,11 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		if final.FinishedAt.IsZero() {
 			final.FinishedAt = time.Now().UTC()
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		cancelled := errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled)
+		if cancelled {
 			final.Status = RunStatusCancelled
 			final.BlockingReason = string(ReasonCancelled)
+			final.Verdict = "cancelled"
 			if artifact, captureErr := captureDiffArtifact(context.Background(), opts.Workdir, baseline, runDir, max(1, final.RoundsCompleted+1)); captureErr == nil {
 				final.LatestDiffPath = artifact.PatchPath
 				final.LatestDiffSHA256 = artifact.Metadata.DiffSHA256
@@ -144,10 +146,15 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			final.Status = RunStatusQuarantined
 			final.BlockingReason = string(ReasonQuarantined)
 		}
-		setFinalBlocking(&final, classifyRoleFailure(currentRole, err), err.Error())
+		reason := classifyRoleFailure(currentRole, err)
+		if cancelled {
+			reason = ReasonCancelled
+			setRoleStatus(&final, currentRole, RoleTarget{Adapter: final.Adapters[currentRole], Model: final.Models[currentRole]}, string(RunStatusCancelled), reason, err.Error())
+		}
+		setFinalBlocking(&final, reason, err.Error())
 		applyInvocationBudget(&final, budget)
 		finalizeRunState(&final)
-		state := runStateForFinal(final, opts.Mode, terminalPhaseForFailure(runDir, final.Phase), "")
+		state := runStateForFinal(final, opts.Mode, synchronizeFinalFailurePhase(runDir, &final), "")
 		if persistErr := a.persistTerminalRun(opts.Workdir, &final, state); persistErr != nil {
 			err = errors.Join(err, persistErr)
 		}
@@ -302,26 +309,28 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				if err := writeFileDurable(planSchemaPath, []byte(WorkPlanSchema), 0o644, true); err != nil {
 					return final, err
 				}
-				planPrompt := withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package), repoInstructions)
-				if !reviewer.Capabilities().SupportsSchema {
-					planPrompt += "\n\nJSON schema:\n" + WorkPlanSchema
-				}
-				planResult, err := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
-					Context:         ctx,
-					Prompt:          planPrompt,
-					EnvOverlay:      opts.EnvOverlay,
-					Model:           opts.Adversary.Model,
-					Workdir:         opts.Workdir,
-					RunDir:          runDir,
-					OutputPath:      planOutputPath,
-					SchemaPath:      planSchemaPath,
-					Timeout:         opts.Timeout,
-					WatchdogTimeout: opts.WatchdogTimeout,
-					Phase:           fmt.Sprintf("supervisor slicing %s", reviewer.ID()),
-					Quiet:           opts.Quiet,
-					Verbose:         opts.Verbose,
-					Budget:          opts.InvocationBudget,
-				}, false)
+				planResult, err := a.runSupervisorWithFallback(ctx, &opts, registry, runDir, reviewerLabel, &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+					planPrompt := withAdapterRepoInstructions(adapter, BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package, workPlanBudgetSeconds(opts.Timeout)), repoInstructions)
+					if !adapter.Capabilities().SupportsSchema {
+						planPrompt += "\n\nJSON schema:\n" + WorkPlanSchema
+					}
+					return a.runAdapter(ctx, adapter, RoleSupervisor, Request{
+						Context:         ctx,
+						Prompt:          planPrompt,
+						EnvOverlay:      opts.EnvOverlay,
+						Model:           target.Model,
+						Workdir:         opts.Workdir,
+						RunDir:          runDir,
+						OutputPath:      planOutputPath,
+						SchemaPath:      planSchemaPath,
+						Timeout:         opts.Timeout,
+						WatchdogTimeout: opts.WatchdogTimeout,
+						Phase:           fmt.Sprintf("supervisor slicing %s", adapter.ID()),
+						Quiet:           opts.Quiet,
+						Verbose:         opts.Verbose,
+						Budget:          opts.InvocationBudget,
+					}, false)
+				})
 				if err != nil {
 					if repairedPlan, repairCost, ok, rerr := a.tryWorkPlanRepair(ctx, opts, registry, runDir, planOutputPath, nil, true, err, &final, reviewerLabel); rerr != nil {
 						return final, rerr
@@ -348,7 +357,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 					planCost += planResult.CostUSD
 				}
 			}
-			if err := validateWorkPlanBudget(plan, int64(opts.Timeout.Seconds()*0.8)); err != nil {
+			if err := validateWorkPlanBudget(plan, workPlanBudgetSeconds(opts.Timeout), opts.AutoNextPackage); err != nil {
 				return final, &ExitError{Code: ExitAdapterFailure, Err: err}
 			}
 			pkg, ok := plan.Selected()
@@ -380,21 +389,23 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		} else {
 			logProgress(opts, "supervisor brief started adapter=%s", reviewer.ID())
 			briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
-			briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
-				Context:         ctx,
-				Prompt:          withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), repoInstructions),
-				EnvOverlay:      opts.EnvOverlay,
-				Model:           opts.Adversary.Model,
-				Workdir:         opts.Workdir,
-				RunDir:          runDir,
-				OutputPath:      briefOutputPath,
-				Timeout:         opts.Timeout,
-				WatchdogTimeout: opts.WatchdogTimeout,
-				Phase:           fmt.Sprintf("supervisor brief %s", reviewer.ID()),
-				Quiet:           opts.Quiet,
-				Verbose:         opts.Verbose,
-				Budget:          opts.InvocationBudget,
-			}, opts.DryRun)
+			briefResult, err := a.runSupervisorWithFallback(ctx, &opts, registry, runDir, reviewerLabel, &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+				return a.runAdapter(ctx, adapter, supervisorBriefRole(opts.SupervisorCanEdit), Request{
+					Context:         ctx,
+					Prompt:          withAdapterRepoInstructions(adapter, BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
+					EnvOverlay:      opts.EnvOverlay,
+					Model:           target.Model,
+					Workdir:         opts.Workdir,
+					RunDir:          runDir,
+					OutputPath:      briefOutputPath,
+					Timeout:         opts.Timeout,
+					WatchdogTimeout: opts.WatchdogTimeout,
+					Phase:           fmt.Sprintf("supervisor brief %s", adapter.ID()),
+					Quiet:           opts.Quiet,
+					Verbose:         opts.Verbose,
+					Budget:          opts.InvocationBudget,
+				}, opts.DryRun)
+			})
 			if err != nil {
 				return final, err
 			}
@@ -432,7 +443,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		if sc := CompactSymlinkTopologyForPrompt(symlinkTopology); sc != "" {
 			retrievalContext = strings.TrimSpace(sc + "\n" + retrievalContext)
 		}
-		scoutPrompt := withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext), repoInstructions)
+		scoutPrompt := withAdapterRepoInstructions(scout, BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext, final.BaselineTest), repoInstructions)
 		if opts.ScoutMode == "recon" {
 			contextBudgetPath := filepath.Join(runDir, "scout-context-round-1.json")
 			limit := scoutContextLimitForAdapter(a.Config, opts.Scout.Adapter)
@@ -446,7 +457,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				if (compactedRetrieval != "" && len(compactedRetrieval) < len(retrievalContext)) || (compactedCodeIntel != "" && len(compactedCodeIntel) < len(codeIntelContext)) {
 					retrievalContext = compactedRetrieval
 					codeIntelContext = compactedCodeIntel
-					scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext), repoInstructions)
+					scoutPrompt = withAdapterRepoInstructions(scout, BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext, final.BaselineTest), repoInstructions)
 					contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
 					contextBudget.Adapter = opts.Scout.Adapter
 					contextBudget.Model = opts.Scout.Model
@@ -457,7 +468,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				logProgress(opts, "scout context exceeds configured limit; disabling derived context estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
 				retrievalContext = ""
 				codeIntelContext = ""
-				scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", "", ""), repoInstructions)
+				scoutPrompt = withAdapterRepoInstructions(scout, BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", "", "", final.BaselineTest), repoInstructions)
 				contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
 				contextBudget.Adapter = opts.Scout.Adapter
 				contextBudget.Model = opts.Scout.Model
@@ -561,21 +572,23 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 
 		logProgress(opts, "supervisor brief started adapter=%s", reviewer.ID())
 		briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
-		briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
-			Context:         ctx,
-			Prompt:          withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), repoInstructions),
-			EnvOverlay:      opts.EnvOverlay,
-			Model:           opts.Adversary.Model,
-			Workdir:         opts.Workdir,
-			RunDir:          runDir,
-			OutputPath:      briefOutputPath,
-			Timeout:         opts.Timeout,
-			WatchdogTimeout: opts.WatchdogTimeout,
-			Phase:           fmt.Sprintf("supervisor brief %s", reviewer.ID()),
-			Quiet:           opts.Quiet,
-			Verbose:         opts.Verbose,
-			Budget:          opts.InvocationBudget,
-		}, opts.DryRun)
+		briefResult, err := a.runSupervisorWithFallback(ctx, &opts, registry, runDir, reviewerLabel, &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+			return a.runAdapter(ctx, adapter, supervisorBriefRole(opts.SupervisorCanEdit), Request{
+				Context:         ctx,
+				Prompt:          withAdapterRepoInstructions(adapter, BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
+				EnvOverlay:      opts.EnvOverlay,
+				Model:           target.Model,
+				Workdir:         opts.Workdir,
+				RunDir:          runDir,
+				OutputPath:      briefOutputPath,
+				Timeout:         opts.Timeout,
+				WatchdogTimeout: opts.WatchdogTimeout,
+				Phase:           fmt.Sprintf("supervisor brief %s", adapter.ID()),
+				Quiet:           opts.Quiet,
+				Verbose:         opts.Verbose,
+				Budget:          opts.InvocationBudget,
+			}, opts.DryRun)
+		})
 		if err != nil {
 			return final, err
 		}
@@ -586,21 +599,23 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 
 		instructionsPath := filepath.Join(runDir, "supervisor-instructions.md")
 		logProgress(opts, "supervisor relay instructions started adapter=%s", reviewer.ID())
-		instructionsResult, err := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
-			Context:         ctx,
-			Prompt:          withRepoInstructions(BuildRelaySupervisorInstructionsPrompt(opts.Prompt, brief, relay.Scout), repoInstructions),
-			EnvOverlay:      opts.EnvOverlay,
-			Model:           opts.Adversary.Model,
-			Workdir:         opts.Workdir,
-			RunDir:          runDir,
-			OutputPath:      instructionsPath,
-			Timeout:         opts.Timeout,
-			WatchdogTimeout: opts.WatchdogTimeout,
-			Phase:           fmt.Sprintf("relay supervisor instructions %s", reviewer.ID()),
-			Quiet:           opts.Quiet,
-			Verbose:         opts.Verbose,
-			Budget:          opts.InvocationBudget,
-		}, opts.DryRun)
+		instructionsResult, err := a.runSupervisorWithFallback(ctx, &opts, registry, runDir, reviewerLabel, &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+			return a.runAdapter(ctx, adapter, RoleSupervisor, Request{
+				Context:         ctx,
+				Prompt:          withAdapterRepoInstructions(adapter, BuildRelaySupervisorInstructionsPrompt(opts.Prompt, brief, relay.Scout, final.BaselineTest), repoInstructions),
+				EnvOverlay:      opts.EnvOverlay,
+				Model:           target.Model,
+				Workdir:         opts.Workdir,
+				RunDir:          runDir,
+				OutputPath:      instructionsPath,
+				Timeout:         opts.Timeout,
+				WatchdogTimeout: opts.WatchdogTimeout,
+				Phase:           fmt.Sprintf("relay supervisor instructions %s", adapter.ID()),
+				Quiet:           opts.Quiet,
+				Verbose:         opts.Verbose,
+				Budget:          opts.InvocationBudget,
+			}, opts.DryRun)
+		})
 		if err != nil {
 			return final, err
 		}
@@ -633,11 +648,11 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		}); stateErr != nil {
 			return final, mandatoryPersistenceError("round implementation state", stateErr)
 		}
-		editorPrompt, err := buildRoundEditorPrompt(ctx, opts, round, runDir, baseline, latestDiff, latestReview, initialReview, relay, selectedPackage, workPlan, brief, implementSelectedPackage)
+		editorPrompt, err := buildRoundEditorPrompt(ctx, opts, round, runDir, baseline, final.BaselineTest, latestDiff, latestReview, initialReview, relay, selectedPackage, workPlan, brief, implementSelectedPackage)
 		if err != nil {
 			return final, err
 		}
-		editorPrompt = workerContractPrompt(withRepoInstructions(editorPrompt, repoInstructions))
+		editorPrompt = workerContractPrompt(withAdapterRepoInstructions(editor, editorPrompt, repoInstructions))
 		implementSelectedPackage = false
 		editorOutputPath := filepath.Join(runDir, fmt.Sprintf("%s-round-%d.md", editorLabel, round))
 		if selectedPackage != nil {
@@ -670,6 +685,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			Verbose:               opts.Verbose,
 			Budget:                opts.InvocationBudget,
 			RequireWorkerContract: true,
+			AllowedScope:          allowedScopeForRound(opts, selectedPackage),
 		}
 		editorResult, err := a.runEditorWithContractRetry(ctx, opts, editor, editorRequest, beforeEditor)
 		if err != nil {

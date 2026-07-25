@@ -59,7 +59,20 @@ type FindingsReport struct {
 
 // ListFindings returns findings from every persisted run for a repository.
 func ListFindings(workdir string, includeAll bool) (FindingsReport, error) {
+	return ListFindingsAtStateRoot(workdir, "", includeAll)
+}
+
+// ListFindingsAtStateRoot returns findings from the repository's selected
+// authoritative store. An empty state root retains pointer and legacy lookup.
+func ListFindingsAtStateRoot(workdir, stateRoot string, includeAll bool) (FindingsReport, error) {
 	runsRoot := RunsRootForCLI(workdir)
+	if strings.TrimSpace(stateRoot) != "" {
+		locator, err := resolveStateLocator(workdir, stateRoot)
+		if err != nil {
+			return FindingsReport{}, err
+		}
+		runsRoot = locator.RunsRoot
+	}
 	report := FindingsReport{SchemaVersion: ArtifactSchemaVersion, RunsRoot: runsRoot, Entries: []PersistedFinding{}}
 	runs, err := os.ReadDir(runsRoot)
 	if os.IsNotExist(err) {
@@ -194,8 +207,10 @@ func updateFindingsLedger(runDir string, round int, review *Review, gates *Quali
 		}
 	}
 	if gates != nil {
+		currentGateIDs := make(map[string]struct{}, len(gates.Findings))
 		for _, finding := range gates.Findings {
 			id := stableGateFindingID(finding)
+			currentGateIDs[id] = struct{}{}
 			entry := entries[id]
 			entry.ID = id
 			entry.Source = "quality_gate"
@@ -208,6 +223,23 @@ func updateFindingsLedger(runDir string, round int, review *Review, gates *Quali
 			if entry.FirstRound == 0 {
 				entry.FirstRound = round
 			}
+			entry.UpdatedAt = now
+			entries[id] = entry
+		}
+		// A quality-gate result is a complete evaluation of the current diff,
+		// unlike a review response. Reconcile only prior open gate findings that
+		// are absent from this result; review findings still require an explicit
+		// reviewer disposition before they can close.
+		for id, entry := range entries {
+			if entry.Source != "quality_gate" || entry.Status != "open" {
+				continue
+			}
+			if _, present := currentGateIDs[id]; present {
+				continue
+			}
+			entry.Status = "resolved"
+			entry.Evidence = fmt.Sprintf("not present in complete quality-gate evaluation for round %d", round)
+			entry.LastRound = round
 			entry.UpdatedAt = now
 			entries[id] = entry
 		}
@@ -272,4 +304,47 @@ func DeferFinding(runDir, findingID, reason string) (FindingsSummary, error) {
 		return FindingsSummary{}, err
 	}
 	return summarizeFindings(path, ledger), nil
+}
+
+// ResolveNonBlockingReviewFinding closes an open minor or nit review finding
+// after the operator has independently applied and verified its fix. Blocking
+// findings and host quality gates remain governed by their existing review or
+// gate paths and cannot be closed through this operator command.
+func ResolveNonBlockingReviewFinding(runDir, findingID, evidence string) (FindingsSummary, error) {
+	evidence = strings.TrimSpace(evidence)
+	if evidence == "" {
+		return FindingsSummary{}, fmt.Errorf("resolution evidence is required")
+	}
+	ledger, err := loadFindingsLedger(runDir)
+	if err != nil {
+		return FindingsSummary{}, err
+	}
+	for index := range ledger.Entries {
+		entry := &ledger.Entries[index]
+		if entry.ID != findingID {
+			continue
+		}
+		if entry.Status != "open" {
+			return FindingsSummary{}, fmt.Errorf("finding %q is not open (status %q)", findingID, entry.Status)
+		}
+		if entry.Source != "review" {
+			return FindingsSummary{}, fmt.Errorf("finding %q is not a review finding", findingID)
+		}
+		if entry.Severity == "blocker" || entry.Severity == "major" {
+			return FindingsSummary{}, fmt.Errorf("finding %q is blocker or major and requires a new review disposition or approved deferral", findingID)
+		}
+		if entry.Severity != "minor" && entry.Severity != "nit" {
+			return FindingsSummary{}, fmt.Errorf("finding %q is not a nonblocking review finding", findingID)
+		}
+		entry.Status = "fixed"
+		entry.Evidence = evidence
+		entry.UpdatedAt = time.Now().UTC()
+		ledger.UpdatedAt = entry.UpdatedAt
+		path := filepath.Join(runDir, findingsLedgerFilename)
+		if err := writeJSONWithNewline(path, ledger); err != nil {
+			return FindingsSummary{}, err
+		}
+		return summarizeFindings(path, ledger), nil
+	}
+	return FindingsSummary{}, fmt.Errorf("finding %q not found", findingID)
 }

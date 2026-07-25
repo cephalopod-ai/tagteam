@@ -3,6 +3,7 @@ package tagteam
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -238,10 +239,15 @@ func TestRolePromptsDoNotLeakConflictingAuthority(t *testing.T) {
 		}
 	}
 
-	scoutPrompt := strings.ToLower(BuildScoutPrompt("/repo", "ship it", "brief", "recon", "pre", "", "", ""))
+	scoutPrompt := strings.ToLower(BuildScoutPrompt("/repo", "ship it", "brief", "recon", "pre", "", "", "", nil))
 	for _, forbidden := range []string{"use \"pass\"", "needs_changes", "blocking findings", "produce blocking findings"} {
 		if strings.Contains(scoutPrompt, forbidden) {
 			t.Fatalf("scout prompt leaked reviewer authority %q:\n%s", forbidden, scoutPrompt)
+		}
+	}
+	for _, required := range []string{"do not run tests", "after implementation instead"} {
+		if !strings.Contains(scoutPrompt, required) {
+			t.Fatalf("scout prompt missing execution boundary %q:\n%s", required, scoutPrompt)
 		}
 	}
 
@@ -249,6 +255,35 @@ func TestRolePromptsDoNotLeakConflictingAuthority(t *testing.T) {
 	for _, forbidden := range []string{"you are read-only", "do not edit files"} {
 		if strings.Contains(coderPrompt, forbidden) {
 			t.Fatalf("coder prompt leaked read-only instruction %q:\n%s", forbidden, coderPrompt)
+		}
+	}
+}
+
+func TestValidateInvocationBudgetRejectsImpossibleModeCap(t *testing.T) {
+	err := validateInvocationBudget(RunOptions{Mode: ModeRelay, Rounds: 1, MaxRoleInvocations: 1})
+	if err == nil {
+		t.Fatal("expected relay cap validation error")
+	}
+	if got := err.Error(); !strings.Contains(got, "at least 6 planned provider invocations") || !strings.Contains(got, "use 0 for unlimited") {
+		t.Fatalf("error = %q", got)
+	}
+}
+
+func TestValidateInvocationBudgetAcceptsUnlimitedAndModeMinimums(t *testing.T) {
+	cases := []struct {
+		mode   Mode
+		rounds int
+		cap    int
+	}{
+		{ModeSolo, 2, 2},
+		{ModeSupervisor, 1, 3},
+		{ModeRelay, 2, 9},
+		{ModeAdversarial, 2, 4},
+		{ModeRelay, 2, 0},
+	}
+	for _, tc := range cases {
+		if err := validateInvocationBudget(RunOptions{Mode: tc.mode, Rounds: tc.rounds, MaxRoleInvocations: tc.cap}); err != nil {
+			t.Fatalf("validateInvocationBudget(%s, rounds=%d, cap=%d): %v", tc.mode, tc.rounds, tc.cap, err)
 		}
 	}
 }
@@ -459,6 +494,93 @@ func TestWithRepoInstructions_AppendsBundle(t *testing.T) {
 	}
 }
 
+func TestWithAdapterRepoInstructionsAvoidsNativeDuplicate(t *testing.T) {
+	const prompt = "base prompt"
+	const instructions = "follow repo rules"
+	for name, adapter := range map[string]Adapter{
+		"claude": &ClaudeAdapter{},
+		"codex":  &CodexAdapter{IDValue: "codex"},
+	} {
+		if got := withAdapterRepoInstructions(adapter, prompt, instructions); got != prompt {
+			t.Fatalf("%s prompt duplicated project instructions: %q", name, got)
+		}
+	}
+	for name, adapter := range map[string]Adapter{
+		"grok": &GrokAdapter{},
+		"agy":  &AgyAdapter{},
+	} {
+		got := withAdapterRepoInstructions(adapter, prompt, instructions)
+		if !strings.Contains(got, repoInstructionsPromptHeader) || !strings.Contains(got, instructions) {
+			t.Fatalf("%s prompt omitted explicit project instructions: %q", name, got)
+		}
+	}
+}
+
+func TestRunSupervisorWithFallbackPersistsSelection(t *testing.T) {
+	runDir := t.TempDir()
+	primary := RoleTarget{Adapter: "primary", Model: "primary-model"}
+	fallback := RoleTarget{Adapter: "fallback", Model: "fallback-model"}
+	opts := RunOptions{
+		Adversary: primary,
+		LossPolicy: RoleLossPolicies{
+			Supervisor: LossPolicyReplaceThenBlock,
+		},
+		FallbacksByTarget: map[string][]string{
+			roleTargetString(primary): {roleTargetString(fallback)},
+		},
+	}
+	primaryAdapter := fakeAdapter{id: primary.Adapter}
+	fallbackAdapter := fakeAdapter{id: fallback.Adapter}
+	var reviewer Adapter = primaryAdapter
+	meta := Meta{
+		Adapters: map[string]string{"supervisor": primary.Adapter},
+		Models:   map[string]string{"supervisor": primary.Model},
+	}
+	final := FinalRun{
+		Adversary: primary,
+		Adapters:  map[string]string{"supervisor": primary.Adapter},
+		Models:    map[string]string{"supervisor": primary.Model},
+	}
+	var attempts []string
+	result, err := (&App{}).runSupervisorWithFallback(context.Background(), &opts, map[string]Adapter{
+		primary.Adapter:  primaryAdapter,
+		fallback.Adapter: fallbackAdapter,
+	}, runDir, "supervisor", &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+		attempts = append(attempts, roleTargetString(target))
+		if target == primary {
+			return Result{}, errors.New("primary supervisor timed out")
+		}
+		return Result{Text: "fallback brief"}, nil
+	})
+	if err != nil {
+		t.Fatalf("runSupervisorWithFallback() error = %v", err)
+	}
+	if result.Text != "fallback brief" {
+		t.Fatalf("result = %#v", result)
+	}
+	if got, want := attempts, []string{roleTargetString(primary), roleTargetString(fallback)}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("attempts = %#v, want %#v", got, want)
+	}
+	if opts.Adversary != fallback || final.Adversary != fallback || reviewer.ID() != fallback.Adapter {
+		t.Fatalf("selected fallback was not retained opts=%#v final=%#v reviewer=%s", opts.Adversary, final.Adversary, reviewer.ID())
+	}
+	if meta.Adapters["supervisor"] != fallback.Adapter || meta.Models["supervisor"] != fallback.Model {
+		t.Fatalf("meta selection = %#v / %#v", meta.Adapters, meta.Models)
+	}
+	if final.Adapters["supervisor"] != fallback.Adapter || final.Models["supervisor"] != fallback.Model || !final.Degraded {
+		t.Fatalf("final fallback state = %#v", final)
+	}
+	status := final.RoleStatuses["supervisor"]
+	if status.Status != "completed" || status.Selected != roleTargetString(fallback) || !reflect.DeepEqual(status.Attempts, attempts) {
+		t.Fatalf("supervisor status = %#v", status)
+	}
+	var persisted Meta
+	readJSONFile(t, filepath.Join(runDir, "meta.json"), &persisted)
+	if persisted.Adapters["supervisor"] != fallback.Adapter || persisted.Models["supervisor"] != fallback.Model {
+		t.Fatalf("persisted selection = %#v / %#v", persisted.Adapters, persisted.Models)
+	}
+}
+
 func TestMergeCommandEnvOverlayDoesNotOverrideShell(t *testing.T) {
 	t.Setenv("TAGTEAM_TEST_ENV", "shell")
 	env := mergeCommandEnv(map[string]string{
@@ -630,6 +752,42 @@ func TestPreflightAllowDirtyCreatesCheckpointBranch(t *testing.T) {
 	}
 }
 
+func TestPreflightDryRunAllowDirtyDoesNotCheckpoint(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "baseline\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	originalBranch := strings.TrimSpace(runGit(t, repo, "rev-parse", "--abbrev-ref", "HEAD"))
+	originalHead := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "changed\n")
+	mustWriteFile(t, filepath.Join(repo, "untracked.txt"), "untracked\n")
+	originalStatus := runGit(t, repo, "status", "--porcelain")
+
+	baseline, cleanup, err := preflight(RunOptions{Workdir: repo, AllowDirty: true, DryRun: true}, "2026-07-24T000000Z")
+	if err != nil {
+		t.Fatalf("preflight() error = %v", err)
+	}
+	if cleanup != nil {
+		t.Fatal("dry-run preflight must not schedule mutating cleanup")
+	}
+	if baseline != originalHead {
+		t.Fatalf("baseline = %q, want %q", baseline, originalHead)
+	}
+	if branch := strings.TrimSpace(runGit(t, repo, "rev-parse", "--abbrev-ref", "HEAD")); branch != originalBranch {
+		t.Fatalf("dry-run changed branch to %q, want %q", branch, originalBranch)
+	}
+	if head := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD")); head != originalHead {
+		t.Fatalf("dry-run changed HEAD to %q, want %q", head, originalHead)
+	}
+	if status := runGit(t, repo, "status", "--porcelain"); status != originalStatus {
+		t.Fatalf("dry-run changed worktree status to %q, want %q", status, originalStatus)
+	}
+}
+
 func TestPreflightAllowDirtyRejectsWhitespaceInvalidCheckpoint(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
@@ -651,7 +809,7 @@ func TestDeterministicDiffIgnoresTagteamRunDirButIncludesUntrackedFiles(t *testi
 	runGit(t, repo, "init")
 	runGit(t, repo, "config", "user.email", "test@example.com")
 	runGit(t, repo, "config", "user.name", "Test User")
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".tagteam/\ntagteam\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".tagteam/\ntagteam\ndocs/logs/session/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(repo, "internal", "tagteam"), 0o755); err != nil {
@@ -685,7 +843,15 @@ func TestDeterministicDiffIgnoresTagteamRunDirButIncludesUntrackedFiles(t *testi
 	if err := os.WriteFile(filepath.Join(repo, "staged.txt"), []byte("already staged\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	ignoredStagedPath := filepath.Join(repo, "docs", "logs", "session", "072026", "entry.md")
+	if err := os.MkdirAll(filepath.Dir(ignoredStagedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ignoredStagedPath, []byte("durable session log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	runGit(t, repo, "add", "staged.txt")
+	runGit(t, repo, "add", "-f", "docs/logs/session/072026/entry.md")
 
 	patch, _, _, _, err := deterministicDiffOutputs(context.Background(), repo, baseline, filepath.Join(repo, ".tagteam", "tmp.index"))
 	if err != nil {
@@ -700,6 +866,9 @@ func TestDeterministicDiffIgnoresTagteamRunDirButIncludesUntrackedFiles(t *testi
 	}
 	if !strings.Contains(text, "diff --git a/staged.txt b/staged.txt") {
 		t.Fatalf("patch missing staged addition:\n%s", text)
+	}
+	if !strings.Contains(text, "diff --git a/docs/logs/session/072026/entry.md b/docs/logs/session/072026/entry.md") {
+		t.Fatalf("patch missing explicitly staged ignored addition:\n%s", text)
 	}
 	if !strings.Contains(text, "diff --git a/internal/tagteam/tracked.go b/internal/tagteam/tracked.go") {
 		t.Fatalf("patch missing tracked ignored-path change:\n%s", text)

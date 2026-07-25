@@ -57,9 +57,9 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 
 Highlights in `v1.1.0`:
 
-- **New default team.** Supervisor and relay flows now default to Claude Opus 4.8 for read-only supervision, GPT-5.6 Terra for implementation, and local Ollama `gemma4:latest` for relay scouting. Agy and Codex Sol remain bounded fallback targets.
+- **New default team.** Supervisor and relay flows now default to Claude Opus 4.8 for read-only supervision, GPT-5.6 Terra for implementation, and local Ollama `gemma4:latest` for relay scouting. Codex Sol is the bounded implementation fallback; Agy/Gemini is restricted to scout work.
 - **Evidence-based Claude roles.** Claude is supported as a read-only supervisor or adversary. Worker/coder assignments are rejected because substantive Sonnet and Opus implementation runs did not reliably complete Tagteam's edit/output lifecycle; Claude scout assignments remain disabled pending a dedicated trial.
-- **Safer dirty-worktree execution.** `--allow-dirty` checkpoints existing work on a new `tagteam/<run-id>` branch, producing a clean baseline instead of treating an uncontrolled dirty tree as the run baseline.
+- **Integrated, isolated runs by default.** Default `git_safety = "integrate"` turns dirty work in the selected worktree into a local commit, synchronizes only that checked-out branch with its tracked upstream, then starts from a fresh `tagteam/<run-id>` run branch. It never pushes, touches another worktree, merges unrelated local branches, or resolves conflicts automatically.
 - **Clearer Claude failures.** Structured Claude error envelopes are preserved even when the Claude process exits nonzero, so errors such as `error_max_structured_output_retries` remain visible and configured fallback ladders can respond to the real cause.
 - **Interactive TUI continuity.** Supervisor, relay, solo, and adversarial workflows remain available without leaving the TUI; solo supports focused implementation or planning, while adversarial mode supports independent audits.
 - **Better live-state observability.** In-progress runs publish external `active.json`, richer phase/progress state, and a shared run snapshot surface that powers both the TUI and status-style views.
@@ -132,6 +132,7 @@ tagteam plan [RUN_ID]
 tagteam transcript [RUN_ID]
 tagteam findings [--all]
 tagteam findings defer RUN_ID FINDING_ID --reason "..."
+tagteam findings resolve RUN_ID FINDING_ID --evidence "commit and verification"
 tagteam transfer RUN_ID --test "..." --lint "..."
 tagteam tui [RUN_ID]
 tagteam mcp
@@ -171,7 +172,7 @@ Tagteam's existing mutation gate.
 > [!IMPORTANT]
 > The selected `--workdir` (the current directory, if unset) must itself be a Git repo with at least one commit — `tagteam` runs `git rev-parse --verify HEAD` there during preflight and uses that commit as the diff baseline for every round. A folder that only *contains* repos (e.g. a workspace directory with several projects as subfolders) does not qualify; point `--workdir` at the actual repo, not a parent above it. Failing this check exits with `workdir is not a git repo or has no HEAD`.
 
-Configured baseline tests run before any model invocation. A shell exit status of `127` is treated as a deterministic preflight error because the configured test command could not start; correct the command or its environment before retrying.
+Configured baseline tests run before any model invocation. Tagteam passes a bounded, untrusted summary of that current-state evidence to scouts, supervisors, and workers; they must verify any proposed change that conflicts with it rather than treating a prior brief or metadata as authoritative. A shell exit status of `127` is treated as a deterministic preflight error because the configured test command could not start; correct the command or its environment before retrying.
 
 Supported adapters in this repo today:
 
@@ -180,9 +181,9 @@ Supported adapters in this repo today:
 | `codex` | full |
 | `codex-oss` | full |
 | `claude` / Claude Code | read-only supervisor or adversary; worker/coder and scout assignments are rejected |
-| `agy` | full |
+| `agy` / Gemini | scout only; worker/coder, supervisor, and reviewer targets are rejected |
 | `gosling` | coder-only |
-| `grok` | all roles exposed; worker/coder use remains buggy, especially with `grok-4.5` at `medium` or `low` reasoning effort |
+| `grok` | all roles exposed; do not use Grok 4.5 as an unattended supervisor or worker/coder |
 | `openai-compatible` / `oai` | read-only reviewer/scout (first cut) |
 
 The Grok CLI integration is verified against Grok Build 0.2.93. It invokes
@@ -199,8 +200,34 @@ stdin prompt.
 > [!WARNING]
 > This verifies the CLI integration, not reliable end-to-end implementation.
 > Grok worker/coder runs remain experimental, and `grok-4.5` at `medium` or
-> `low` reasoning effort is not reliable. Prefer Codex or Agy for routine
-> implementation work.
+> `low` reasoning effort is not reliable. A live supervisor trial also selected
+> a read-only triage package for an implementation request. Prefer Codex for
+> routine implementation and unattended supervision.
+
+### Maintained Operator Roster
+
+This is an enforced role policy for Gemini and a maintained selection policy
+for the other providers. Any Gemini-labeled target, including `agy`, is rejected
+in every role except `--scout`; unattended runs and manually selected rotation
+profiles must follow the remaining roster constraints.
+
+| Model family | Allowed roles |
+|---|---|
+| GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.5, GPT-5.4 (non-mini) | supervisor, worker/coder, adversary, scout |
+| GPT-5.6 Luna, GPT-5.3 Spark-Codex | worker/coder or scout |
+| Gemini (including `agy`) | scout only |
+| Grok 4.5 | monitored worker/coder or scout only; never unattended supervisor |
+| Claude | excluded from automatic rotation; never worker/coder or scout |
+
+Probe the selected provider CLI before a live run. A parsed model name is not
+proof that the logged-in account has access to it. Rotate eligible roles across
+runs to exercise the deterministic pipeline, but keep Gemini out of worker and
+supervisor slots and Grok out of unattended supervisor slots.
+
+Existing configurations that list `agy` under `defaults.fallbacks.worker` (or
+an equivalent worker/coder/supervisor fallback) must replace it with an
+eligible target such as `codex:gpt-5.6-sol`. Tagteam rejects that configuration
+at option resolution with an exit-code-4 error instead of waiting for fallback.
 
 ## Authentication
 
@@ -223,12 +250,13 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
 - Authentication is adapter-specific. CLI-backed adapters usually rely on the vendor's own login/session flow; `openai-compatible` / `oai` relies on explicit environment/config values.
 - Supervisor slicing is more format-sensitive than the final review pass. The final review path is schema-validated, but some supervisor planning/instruction steps still depend on adapter output being reasonably well-formed.
 - Claude Code can occasionally ignore `--output-format json` / `--json-schema` during supervisor review and return prose such as `Review...` instead of the expected JSON envelope. `tagteam` retries once and searches a bounded set of contract candidates embedded in the prose: fenced ```json blocks are tried first, followed by balanced JSON objects, so an unrelated or unmatched brace snippet earlier in the prose no longer masks the real payload. Claude envelopes that self-report failure (`is_error` / `error_*` subtypes such as `error_max_turns`) are surfaced as clear adapter errors (`claude reported error_max_turns: ...`) instead of misleading `decode ... JSON` contract failures, which lets the fallback ladder engage. If no valid JSON is present, the run exits as an adapter/output-contract failure and preserves the invalid output artifacts for inspection. If you intentionally want the already-selected worker to act as a read-only parser workaround, pass `--repair-json-with-worker` or set `json_repair = "worker"`; repaired runs are marked degraded with `json_repair_used`.
-- Claude is supported as a read-only `supervisor` or `adversary`. Tagteam rejects Claude targets selected as worker/coder because repeated substantive Sonnet and Opus runs did not complete the editing/output-contract lifecycle reliably; Claude scout assignments remain unsupported pending a real scout trial. Sonnet 5 and Opus 4.8 completed schema-validated supervisor reviews, and a real Haiku adversary run completed a schema-valid review. Use Codex or Agy for implementation roles.
+- Claude is supported as a read-only `supervisor` or `adversary`. Those roles use Claude Code's `plan` permission mode, which permits inspection commands such as `git status` and `git diff` while refusing repository writes; this avoids a `dontAsk` tool-denial loop during non-interactive reviews. Tagteam rejects Claude targets selected as worker/coder because repeated substantive Sonnet and Opus implementation runs did not complete the editing/output-contract lifecycle reliably; Claude scout assignments remain unsupported pending a dedicated trial. The maintained operator roster excludes Claude from automatic rotation; use Codex for implementation roles.
 - Concurrent Claude Code processes can stall or remain pending, especially in relay/multi-role configurations. `tagteam` now serializes Claude invocations across its own processes by default with an OS-specific cross-process lock under the resolved state root (`adapters.claude.serialize`, `TAGTEAM_CLAUDE_SERIALIZE`); Unix/macOS use `flock`, while Windows uses a PID-file fallback. Waiting runs log `waiting for concurrent claude invocation`, and a crashed Unix/macOS holder releases the lock automatically. Serialization is fail-closed: a run that cannot acquire the lock within its invocation timeout fails that invocation with a classified adapter error (so configured fallbacks such as `claude-failover` can engage) instead of running unlocked.
 - Claude serialization is scoped to a state root, not the whole machine. Tagteam processes configured with different `--state-root` values use different locks and can still overlap; use one shared state root for concurrent Claude-backed runs. The lock also cannot see Claude processes started outside Tagteam. `tagteam doctor` confirms binary availability but cannot detect either form of contention.
 - Unix/macOS Claude locking is runtime-tested with real multi-process contention. The Windows PID-file fallback is compile-checked but not runtime-tested in CI; ownership-record write failures and same-process concurrent invocations remain residual risks there. Prefer one Claude-backed Tagteam run at a time on Windows until that path has equivalent runtime coverage.
 - Do not launch two Tagteam runs against the same worktree. Run-state locking and integrity checks assume one active writer per worktree; use separate Git worktrees when runs need to proceed concurrently, even when their Claude invocations would otherwise serialize.
-- `--allow-dirty` is isolation, not an integrity bypass: Tagteam creates a `tagteam/<run-id>` branch, commits the pre-existing tracked and untracked changes as a local checkpoint, validates that checkpoint with `git diff --check`, and uses that clean commit as the run baseline. The source branch remains unchanged. Invalid whitespace fails preflight with a checkpoint-validation error; fix it before rerunning. The checkpoint requires a usable local Git author configuration and is intentionally preserved for recovery and review.
+- `git_safety = "integrate"` is the default preflight policy. It applies only to the selected worktree's attached branch. Tagteam creates a temporary checkpoint branch, commits any dirty tracked and untracked files there, fetches that branch's configured upstream, and prepares the current branch plus checkpoint for integration. A clean behind-only branch fast-forwards; a checkpoint or a divergent current branch uses a local merge commit. Tagteam creates the isolated `tagteam/<run-id>` run branch from that validated candidate before it fast-forwards the selected source branch, then drops the temporary checkpoint pointer. It never pushes, touches another worktree, merges unrelated local branches, or resolves a conflict. Before the source branch moves, a fetch, merge, or branch-creation failure leaves its ref unchanged; a failed merge also aborts and preserves `tagteam/preflight/<run-id>` for recovery. If checkpoint creation itself fails, Tagteam leaves the original uncommitted content intact rather than discarding it. Repositories without an upstream still receive the local commit and isolated run branch. Set `git_safety = "sync"` for the prior checkpoint-only behavior that refuses divergence, `branch` for a new branch without synchronization, `allow-dirty` for legacy checkpointing without upstream synchronization, `autostash` to restore a stash after the run, or `clean` to reject a dirty worktree. `TAGTEAM_GIT_SAFETY` overrides trusted config.
+- `--allow-dirty` is isolation, not an integrity bypass: it selects the legacy `allow-dirty` policy, creating a `tagteam/<run-id>` branch, committing the pre-existing tracked and untracked changes as a local checkpoint, validating that checkpoint with `git diff --check`, and using that clean commit as the run baseline. The source branch remains unchanged. Invalid whitespace fails preflight with a checkpoint-validation error; fix it before rerunning. The checkpoint requires a usable local Git author configuration and is intentionally preserved for recovery and review.
 - `--autostash` records the created stash by immutable Git object ID and restores
   that exact object even if another process pushes a newer stash. A successful
   apply retains the stash as a recovery point because Git only drops entries by
@@ -237,7 +265,7 @@ This note applies to the vendor CLI adapters; the separate `openai-compatible` a
   commands.
 - A stalled or externally interrupted adapter process may leave `state.json` at `status=running` / an early phase without writing `final.json`. Treat that run as interrupted and use `tagteam resume [RUN_ID]`; resume verifies the baseline, diff hash, and required artifacts, then continues the first incomplete phase or quarantines unsafe partial work. Do not treat `active.json` or the TUI alone as evidence of success.
 - Different adapters do not expose identical capabilities. Some support schema-constrained output, stdin, or session resume; others do not. `tagteam` degrades where possible, but behavior is not perfectly uniform.
-- Grok remains buggy in the worker/coder role. In particular, `grok-4.5` with `medium` or `low` reasoning effort has not been reliable; prefer another implementation adapter, or treat Grok worker runs as experimental and validate them closely.
+- Grok remains unsuitable for unattended control roles. In addition to unreliable worker/coder runs at `medium` or `low` reasoning effort, a live `grok-4.5` supervisor trial selected a read-only triage package for an implementation request and ended without source changes. Do not use Grok as an unattended supervisor; if used as a worker/coder or scout, monitor it closely and validate the diff.
 - Local `.env` loading is a convenience feature, not a secret-management system. It helps with local runs, but shell-exported environment variables still take precedence.
 - Repo-local `.tagteam.toml` is partially trusted by default: low-authority defaults such as roles/models can be read, but shell tests, adapter passthrough args, Claude permission/tool widening, and `openai-compatible` endpoints/headers are ignored unless you pass `--trust-repo-config`.
 - Published binaries are broader than real-world manual validation. Releases may include targets that pass Go-level CI but have not been exercised end-to-end with every supported vendor CLI.
@@ -249,7 +277,7 @@ Practical guidance:
 - Prefer `tagteam doctor` before blaming orchestration logic.
 - Use `--dry-run` to inspect resolved invocations when an adapter behaves unexpectedly.
 - Start with small prompts and targeted tests when trying a new adapter/model pairing.
-- Do not use Grok as an unattended worker/coder; `grok-4.5` at `medium` or `low` reasoning effort is especially unreliable.
+- Do not use Grok as an unattended supervisor, worker, or coder. Use it only for monitored trials, and inspect its plan, diff, and final review artifacts.
 - Treat new modes, new adapters, and unusual cross-vendor combinations as experimental until you have run them in your own environment.
 
 ### Error behavior
@@ -267,6 +295,12 @@ Write scopes accept exact repo-relative files (`README.md`), directory prefixes
 ending in `/` (`docs/` or `./docs/`), and `.` for the whole repository. Absolute
 paths, parent traversal, globs, blanks, backslashes, and normalized duplicates
 are rejected before an adapter starts.
+
+An operator-provided `--allow-path` is a hard ceiling: a supervisor work package
+may narrow it but cannot broaden it. While an editor runs, Tagteam polls the
+invocation-local Git delta; its first out-of-scope write cancels that editor,
+preserves the partial diff, and quarantines the run for operator review rather
+than handing the unsafe diff to a fallback agent.
 
 CLI exit codes and persisted `reason_code` / `blocking_reason` values are the
 stable machine-readable contract. OS, Git, network, and vendor CLI details may
@@ -334,9 +368,9 @@ cd my-project
 tagteam "add a --json flag to the export command and cover it with a test"
 ```
 
-With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `agy:gemini-3.6-flash-medium`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
+With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `codex:gpt-5.6-sol`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
 
-Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
+Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. Package estimates are capped at 80% of the per-invocation timeout; deferred packages do not block a normal one-package run, while `--auto-next-package` requires every planned package to fit that cap. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
 
 ```bash
 tagteam --slice --max-packages 5 --package P1 "add OAuth login"
@@ -346,7 +380,7 @@ For a Claude-free supervisor run, choose explicit worker/supervisor adapters, ro
 
 ```bash
 tagteam \
-  --worker agy:gemini-3.6-flash-medium \
+  --worker codex:gpt-5.6-terra \
   --supervisor codex:gpt-5.6-sol \
   -r 3 \
   -t "go test ./..." \
@@ -390,7 +424,7 @@ The built-in relay profile uses a local Ollama Gemma scout through its OpenAI-co
 [profiles.relay]
 mode = "relay"
 scout = "openai-compatible:gemma4:latest"
-coder = "agy:gemini-3.6-flash-medium"
+coder = "codex:gpt-5.6-terra"
 supervisor = "codex:gpt-5.6-sol"
 scout_mode = "recon"
 scout_retrieval = false
@@ -407,20 +441,20 @@ tagteam \
   --scout openai-compatible:gemma4:latest \
   --scout-mode recon \
   --post-scout-mode polish \
-  --coder agy:gemini-3.6-flash-medium \
+  --coder codex:gpt-5.6-terra \
   --supervisor codex:gpt-5.6-sol \
   "refactor billing flow"
 ```
 
 In relay mode, legacy `-mc` selects the coder and `-ma` selects the supervisor. Scout modes are task-typed: `recon`, `lint`, `polish`, `tests`, or `risk`. Scout findings are advisory context only; only the supervisor review can fail a run with blocker/major findings.
 
-If Claude Code is already busy, use a non-Claude relay assignment rather than waiting on a contested role. With Ollama serving its OpenAI-compatible endpoint locally, use Gemma as the read-only scout, Gemini as the coder, and GPT-5.6 Terra as the supervisor:
+If Claude Code is already busy, use a non-Claude relay assignment rather than waiting on a contested role. With Ollama serving its OpenAI-compatible endpoint locally, use Gemma as the read-only scout, GPT-5.6 Terra as the coder, and GPT-5.6 Sol as the supervisor:
 
 ```bash
 TAGTEAM_OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:11434/v1 \
 tagteam --relay --no-scout-retrieval \
   --scout openai-compatible:gemma4:latest \
-  --coder agy:gemini-3.6-flash-medium \
+  --coder codex:gpt-5.6-terra \
   --supervisor codex:gpt-5.6-sol \
   -t 'git diff --check' \
   "make a scoped documentation change"
@@ -454,7 +488,7 @@ Use `tagteam integrate plan|install|doctor|uninstall --target <codex|claude|curs
 
 Scout model failures are explicit and configurable. By default, `scout_failure_policy = "continue"` warns, writes `scout-execution-round-1.json`, and continues without scout context so the coder and supervisor can still run. Use `--strict-scout` or `scout_failure_policy = "fail"` when evaluation or reproducibility should abort before coder edits if the scout invocation, scout JSON contract, or scout context-budget check fails. Retrieval unavailable/timeout/empty/degraded states are separate from scout model failure and continue into the scout pass where possible.
 
-For finer control, `loss_policy` can be configured per non-primary role: `block`, `degrade`, `replace_then_block`, or `replace_then_degrade`. Replacement is bounded: tagteam may replace an unavailable target during preflight, and reviewer/supervisor review calls may try the configured fallback chain once after an invocation or output-contract failure. Fallback chains are ordered, deduped, capped at five targets, and recorded in `final.json`.
+For finer control, `loss_policy` can be configured per non-primary role: `block`, `degrade`, `replace_then_block`, or `replace_then_degrade`. Replacement is bounded: tagteam may replace an unavailable target during preflight, and supervisor planning/brief/instruction calls plus reviewer calls may try the configured fallback chain once after an invocation or output-contract failure. Fallback chains are ordered, deduped, capped at five targets, and recorded in `final.json`.
 
 The built-in `claude-failover` profile enables a small Claude-to-Codex fallback ladder for review/supervision failures:
 
@@ -485,13 +519,13 @@ tagteam --mode adversarial \
 tagteam --mode adversarial -mc codex:gpt-5.6-terra --reviewer claude:claude-opus-4-8 "audit the CLI cleanup"
 ```
 
-Use Agy with its configured default Gemini model:
+Use Agy as a scout under the maintained operator roster:
 
 ```bash
-tagteam --worker agy --supervisor codex:gpt-5.6-sol "clean up the CLI help"
+tagteam --relay --scout agy:gemini-3.6-flash-low --coder codex:gpt-5.6-terra --supervisor codex:gpt-5.6-sol "clean up the CLI help"
 ```
 
-The built-in `agy` default model is `gemini-3.6-flash-medium`. The Team builder and `/model` picker include `agy:gemini-3.6-flash-low`, `agy:gemini-3.6-flash-medium`, and `agy:gemini-3.6-flash-high`; override any role with another installed Agy model using `agy:<model>`.
+The built-in `agy` default model is `gemini-3.6-flash-medium`. The Team builder and `/model` picker include `agy:gemini-3.6-flash-low`, `agy:gemini-3.6-flash-medium`, and `agy:gemini-3.6-flash-high`; the maintained operator roster confines these targets to the scout slot.
 
 Set the default Agy tier for bare `agy` targets in configuration:
 
@@ -645,12 +679,13 @@ tagteam init
 | `max_role_invocations` | optional hard cap on adapter calls in one run; `--max-role-invocations` overrides it |
 | `json_repair` | explicit JSON contract repair mode: `off` (default) or `worker`; `--repair-json-with-worker` enables the selected worker as a read-only parser for invalid JSON artifacts |
 | `state_root`, `watchdog_timeout` | authoritative external artifact root and no-progress timeout |
-| `lint`, `test`, `test_identity_regex`, `git_safety` | transfer lint, focused tests, optional failure-identity regex, and git safety settings |
+| `lint`, `test`, `test_identity_regex` | transfer lint, focused tests, and optional failure-identity regex |
+| `git_safety` | Git preflight policy: `integrate` (default: commit the selected worktree, merge only its tracked upstream when needed, then create an isolated run branch), `sync` (prior checkpoint-only policy), `branch`, `allow-dirty`, `autostash`, or `clean`. Integrate never pushes, touches another worktree, merges arbitrary local branches, or resolves conflicts. `TAGTEAM_GIT_SAFETY` overrides trusted config. |
 | `churn` | configurable `max_files`, `max_changed_lines`, `max_fixture_files`, `whitespace_ratio`, and `minimum_semantic_ratio` gates |
 
 </details>
 
-Profiles may override `mode`, `state_root`, `watchdog_timeout`, `scout`, `scout_mode`, `scout_retrieval`, `code_intel_command`, `scout_failure_policy`, `scout_context_policy`, `loss_policy`, `fallbacks`, `fallbacks_by_target`, `json_repair`, `post_scout_mode`, `worker`, `supervisor`, `coder`, `adversary`, `rounds`, `test`, `lint`, `test_identity_regex`, and `churn`. A profile that sets `coder`/`adversary` but omits `mode` resolves as an adversarial-mode profile, so profiles written before `mode` existed keep working unchanged:
+Profiles may override `mode`, `state_root`, `watchdog_timeout`, `scout`, `scout_mode`, `scout_retrieval`, `code_intel_command`, `scout_failure_policy`, `scout_context_policy`, `loss_policy`, `fallbacks`, `fallbacks_by_target`, `json_repair`, `post_scout_mode`, `worker`, `supervisor`, `coder`, `adversary`, `rounds`, `test`, `lint`, `test_identity_regex`, `git_safety`, and `churn`. A profile that sets `coder`/`adversary` but omits `mode` resolves as an adversarial-mode profile, so profiles written before `mode` existed keep working unchanged:
 
 ```toml
 [defaults]
@@ -666,6 +701,7 @@ supervisor_slicing = true
 max_packages = 5
 rounds = 2
 json_repair = "off"
+git_safety = "integrate"
 
 [profiles.relay.loss_policy]
 scout = "replace_then_degrade"
@@ -770,6 +806,12 @@ Completed implementation and test phases are not repeated. Timeouts, stalls,
 cancellation, and invalid worker output preserve streams and partial diffs;
 changed work enters a supervisor recovery decision (`repair`,
 `continue_with_fallback`, or `quarantine`) instead of being discarded.
+A resumed round replaces that round's quality-gate snapshot and reconciles
+superseded open quality-gate findings against the fresh complete evaluation.
+Review findings remain open until the reviewer explicitly disposes of them.
+Resume retains the saved mode, but an explicit compatible role flag such as
+`--supervisor`, `--reviewer`, `--worker`, `--coder`, or `--scout` replaces that
+role for the recovery attempt.
 
 <details>
 <summary><strong>Typical contents</strong></summary>
@@ -817,7 +859,7 @@ Diff artifacts are captured through a temporary Git index, not the real staging 
 
 Every live implementation response must match the worker-result JSON contract and name exactly the files changed during that invocation. Reviewer schema v2 requires evidence for malformed-input preservation, annotation/history retention, ambiguous identity handling, and read-only non-mutation. Scope, churn, regression, and unresolved independent-review findings remain blocking even when tests are green.
 
-Transfer is never automatic. Use `tagteam transfer RUN_ID --test '...' --lint '...' [--to PATH]`; Tagteam rechecks the patch hash, repository identity, target baseline/cleanliness, bounded scope, lint, focused tests, regression identities, findings ledger, and final review before applying the patch without staging or committing. Run `tagteam findings` to list unresolved findings across all persisted runs (`--all` includes disposition history). Approve an explicit risk deferral with `tagteam findings defer RUN_ID FINDING_ID --reason '...'`.
+Transfer is never automatic. Use `tagteam transfer RUN_ID --test '...' --lint '...' [--to PATH]`; Tagteam rechecks the patch hash, repository identity, target baseline/cleanliness, bounded scope, lint, focused tests, regression identities, findings ledger, and final review before applying the patch without staging or committing. Run `tagteam findings` to list unresolved findings across all persisted runs (`--all` includes disposition history). Approve an explicit risk deferral with `tagteam findings defer RUN_ID FINDING_ID --reason '...'`. Close a fixed nonblocking review note only with durable evidence, for example `tagteam findings resolve RUN_ID FINDING_ID --evidence 'commit abc123; pytest tests/ passed'`; it cannot clear a quality gate, blocker, or major finding.
 
 <details>
 <summary><strong><code>blocking_reason</code> vocabulary</strong></summary>

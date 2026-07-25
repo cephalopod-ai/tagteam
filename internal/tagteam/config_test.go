@@ -72,6 +72,9 @@ func TestDefaultConfig_SupervisorDefaults(t *testing.T) {
 	if cfg.Defaults.LossPolicy.Worker != LossPolicyReplaceThenBlock || len(cfg.Defaults.Fallbacks.Worker) != 1 || cfg.Defaults.Fallbacks.Worker[0] != defaultWorkerFallback {
 		t.Fatalf("worker fallback policy = policy:%q fallbacks:%#v", cfg.Defaults.LossPolicy.Worker, cfg.Defaults.Fallbacks.Worker)
 	}
+	if got := cfg.Defaults.Fallbacks.Worker[0]; got != "codex:gpt-5.6-sol" {
+		t.Fatalf("automatic worker fallback = %q, want codex:gpt-5.6-sol", got)
+	}
 	if cfg.Defaults.ScoutContextPolicy != "warn" {
 		t.Fatalf("scout context policy = %q", cfg.Defaults.ScoutContextPolicy)
 	}
@@ -321,16 +324,13 @@ func TestResolveOptions_SoloModeWorkerAndMc(t *testing.T) {
 		t.Fatalf("--worker target = %#v", opts.Coder)
 	}
 
-	opts, err = ResolveOptions(cfg, nil, FlagInputs{
+	_, err = ResolveOptions(cfg, nil, FlagInputs{
 		Mode:    "solo",
 		Coder:   "agy:gemini",
 		Timeout: 15 * time.Minute,
 	}, map[string]bool{"mode": true, "mc": true}, "ship it")
-	if err != nil {
-		t.Fatalf("ResolveOptions() error = %v", err)
-	}
-	if opts.Coder.Adapter != "agy" || opts.Coder.Model != "gemini" {
-		t.Fatalf("-mc target = %#v", opts.Coder)
+	if err == nil || !strings.Contains(err.Error(), "supported only as scouts") {
+		t.Fatalf("-mc Agy worker error = %v, want scout-only rejection", err)
 	}
 }
 
@@ -419,8 +419,8 @@ func TestValidateClaudeRoleAssignmentsRejectsImplementationAndScout(t *testing.T
 	}{
 		{name: "solo worker", opts: RunOptions{Mode: ModeSolo, Coder: RoleTarget{Adapter: "claude"}}},
 		{name: "supervisor worker", opts: RunOptions{Mode: ModeSupervisor, Coder: RoleTarget{Adapter: "claude"}, Adversary: RoleTarget{Adapter: "codex"}}},
-		{name: "relay scout", opts: RunOptions{Mode: ModeRelay, Coder: RoleTarget{Adapter: "agy"}, Adversary: RoleTarget{Adapter: "codex"}, Scout: RoleTarget{Adapter: "claude"}}},
-		{name: "editing supervisor", opts: RunOptions{Mode: ModeSupervisor, Coder: RoleTarget{Adapter: "agy"}, Adversary: RoleTarget{Adapter: "claude"}, SupervisorCanEdit: true}},
+		{name: "relay scout", opts: RunOptions{Mode: ModeRelay, Coder: RoleTarget{Adapter: "codex"}, Adversary: RoleTarget{Adapter: "codex"}, Scout: RoleTarget{Adapter: "claude"}}},
+		{name: "editing supervisor", opts: RunOptions{Mode: ModeSupervisor, Coder: RoleTarget{Adapter: "codex"}, Adversary: RoleTarget{Adapter: "claude"}, SupervisorCanEdit: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -435,11 +435,74 @@ func TestValidateClaudeRoleAssignmentsRejectsImplementationAndScout(t *testing.T
 func TestValidateRunRolesAllowsReadOnlyClaudeSupervisor(t *testing.T) {
 	opts := RunOptions{
 		Mode:      ModeSupervisor,
-		Coder:     RoleTarget{Adapter: "agy"},
+		Coder:     RoleTarget{Adapter: "codex"},
 		Adversary: RoleTarget{Adapter: "claude"},
 	}
 	if err := validateClaudeRoleAssignments(opts); err != nil {
 		t.Fatalf("validateClaudeRoleAssignments() error = %v", err)
+	}
+}
+
+func TestValidateRunRolesRejectsAgyOutsideScout(t *testing.T) {
+	tests := []struct {
+		name string
+		opts RunOptions
+	}{
+		{name: "solo worker", opts: RunOptions{Mode: ModeSolo, Coder: RoleTarget{Adapter: "agy"}}},
+		{name: "supervisor worker", opts: RunOptions{Mode: ModeSupervisor, Coder: RoleTarget{Adapter: "agy"}, Adversary: RoleTarget{Adapter: "codex"}}},
+		{name: "supervisor reviewer", opts: RunOptions{Mode: ModeSupervisor, Coder: RoleTarget{Adapter: "codex"}, Adversary: RoleTarget{Adapter: "agy"}}},
+		{name: "relay coder", opts: RunOptions{Mode: ModeRelay, Coder: RoleTarget{Adapter: "agy"}, Adversary: RoleTarget{Adapter: "codex"}, Scout: RoleTarget{Adapter: "agy"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRunRoles(tt.opts)
+			if err == nil || !strings.Contains(err.Error(), "supported only as scouts") {
+				t.Fatalf("validateRunRoles() error = %v, want Agy role rejection", err)
+			}
+		})
+	}
+}
+
+func TestValidateRoleTargetRejectsGeminiModelOutsideScout(t *testing.T) {
+	tests := []struct {
+		name   string
+		role   Role
+		target RoleTarget
+	}{
+		{name: "worker", role: RoleCoder, target: RoleTarget{Adapter: "gosling", Model: "gemini-3.6-flash-medium"}},
+		{name: "supervisor", role: RoleSupervisor, target: RoleTarget{Adapter: "codex", Model: "gemini-3.6-flash-high"}},
+		{name: "reviewer", role: RoleAdversary, target: RoleTarget{Adapter: "grok", Model: "gemini-3.6-flash-low"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateRoleTarget(tt.role, tt.target)
+			if err == nil || !strings.Contains(err.Error(), "supported only as scouts") {
+				t.Fatalf("ValidateRoleTarget() error = %v, want Gemini scout-only rejection", err)
+			}
+		})
+	}
+}
+
+func TestValidateRunRolesAllowsAgyScout(t *testing.T) {
+	opts := RunOptions{
+		Mode:          ModeRelay,
+		Coder:         RoleTarget{Adapter: "codex"},
+		Adversary:     RoleTarget{Adapter: "codex"},
+		Scout:         RoleTarget{Adapter: "agy"},
+		ScoutMode:     "recon",
+		PostScoutMode: "polish",
+	}
+	if err := validateRunRoles(opts); err != nil {
+		t.Fatalf("validateRunRoles() error = %v", err)
+	}
+}
+
+func TestResolveOptionsRejectsAgyImplementationFallback(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Defaults.Fallbacks.Worker = []string{"agy:gemini-3.6-flash-medium"}
+	_, err := ResolveOptions(cfg, nil, FlagInputs{Timeout: 15 * time.Minute}, map[string]bool{}, "ship it")
+	if err == nil || !strings.Contains(err.Error(), "invalid worker fallback") || !strings.Contains(err.Error(), "supported only as scouts") {
+		t.Fatalf("ResolveOptions() error = %v, want deterministic Agy fallback rejection", err)
 	}
 }
 
@@ -453,7 +516,7 @@ func TestValidateClaudeRoleAssignmentsAllowsClaudeAdversary(t *testing.T) {
 func TestResolveOptions_LegacyFlagsMapByMode(t *testing.T) {
 	cfg := DefaultConfig()
 	flags := FlagInputs{
-		Coder:     "agy:gemini",
+		Coder:     "codex:gpt-5.6-luna",
 		Adversary: "codex:o1",
 		Timeout:   15 * time.Minute,
 	}
@@ -463,7 +526,7 @@ func TestResolveOptions_LegacyFlagsMapByMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveOptions() error = %v", err)
 	}
-	if supervisorOpts.Coder.Adapter != "agy" || supervisorOpts.Coder.Model != "gemini" {
+	if supervisorOpts.Coder.Adapter != "codex" || supervisorOpts.Coder.Model != "gpt-5.6-luna" {
 		t.Fatalf("supervisor-mode worker target = %#v", supervisorOpts.Coder)
 	}
 	if supervisorOpts.Adversary.Adapter != "codex" || supervisorOpts.Adversary.Model != "o1" {
@@ -476,7 +539,7 @@ func TestResolveOptions_LegacyFlagsMapByMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveOptions() error = %v", err)
 	}
-	if adversarialOpts.Coder.Adapter != "agy" || adversarialOpts.Coder.Model != "gemini" {
+	if adversarialOpts.Coder.Adapter != "codex" || adversarialOpts.Coder.Model != "gpt-5.6-luna" {
 		t.Fatalf("adversarial-mode coder target = %#v", adversarialOpts.Coder)
 	}
 	if adversarialOpts.Adversary.Adapter != "codex" || adversarialOpts.Adversary.Model != "o1" {
@@ -543,7 +606,7 @@ func TestResolveOptions_WorkerFlagRejectedInAdversarialMode(t *testing.T) {
 	cfg := DefaultConfig()
 	_, err := ResolveOptions(cfg, nil, FlagInputs{
 		Mode:    "adversarial",
-		Worker:  "agy",
+		Worker:  "codex",
 		Timeout: 15 * time.Minute,
 	}, map[string]bool{"mode": true, "worker": true}, "ship it")
 	if err == nil {

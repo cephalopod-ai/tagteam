@@ -759,6 +759,33 @@ func TestValidateWorkerResultNormalizesUnchangedCumulativeClaims(t *testing.T) {
 	}
 }
 
+func TestValidateWorkerResultIgnoresIndexOnlyTransitionForPreexistingEdit(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "existing.txt"), "baseline\n")
+	runGit(t, repo, "add", "existing.txt")
+	runGit(t, repo, "commit", "-m", "init")
+
+	// This edit predates the invocation. Staging it is an index transition,
+	// not a content change authored by the worker.
+	mustWriteFile(t, filepath.Join(repo, "existing.txt"), "preexisting edit\n")
+	before, err := captureWorktreeSnapshot(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "existing.txt")
+
+	result := Result{Text: `{"schema_version":1,"status":"completed","summary":"verified existing edit","files_changed":[],"checks_run":[],"remaining_risks":[]}`}
+	if err := validateWorkerResultForRequest(context.Background(), Request{Workdir: repo, RequireWorkerContract: true}, &result, before); err != nil {
+		t.Fatalf("validateWorkerResultForRequest() error = %v", err)
+	}
+	if result.Worker == nil || len(result.Worker.FilesChanged) != 0 {
+		t.Fatalf("worker = %#v, want no content changes", result.Worker)
+	}
+}
+
 func (f fakeDirectAdapter) ID() string { return "fake-direct" }
 func (f fakeDirectAdapter) Detect(ctx context.Context) (VersionInfo, error) {
 	return VersionInfo{Found: true, Runnable: true}, nil

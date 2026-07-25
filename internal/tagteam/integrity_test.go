@@ -155,3 +155,34 @@ func TestRunAdapterRestoresProtectedRunState(t *testing.T) {
 		t.Fatalf("restored state did not retain the host transition: %#v", restored)
 	}
 }
+
+func TestRunAdapterAllowsInvocationTemporaryStateFiles(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "baseline\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "baseline")
+
+	runDir := t.TempDir()
+	temporaryState := filepath.Join(runDir, "tmp", "invocations", "worker", "pytest-of-user", "pytest-0", ".dory", "state.json")
+	adapter := fakeDirectAdapter{
+		build: func(role Role, req Request) (*CommandSpec, error) { return &CommandSpec{}, nil },
+		direct: func(role Role, req Request) (Result, error) {
+			if err := os.MkdirAll(filepath.Dir(temporaryState), 0o700); err != nil {
+				return Result{}, err
+			}
+			if err := os.WriteFile(temporaryState, []byte("temporary\n"), 0o600); err != nil {
+				return Result{}, err
+			}
+			return Result{Text: "worker complete"}, nil
+		},
+	}
+	if _, err := (&App{}).runAdapter(context.Background(), adapter, RoleCoder, Request{Workdir: repo, RunDir: runDir, Phase: "temporary state test"}, false); err != nil {
+		t.Fatalf("invocation temporary state was treated as protected host state: %v", err)
+	}
+	if _, err := os.Stat(temporaryState); err != nil {
+		t.Fatalf("temporary state should be preserved: %v", err)
+	}
+}

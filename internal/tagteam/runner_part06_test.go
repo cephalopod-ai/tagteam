@@ -12,6 +12,57 @@ import (
 	"time"
 )
 
+func TestCommandEnvForInvocation_IsolatesReadOnlyRoleTempDir(t *testing.T) {
+	runDir := t.TempDir()
+	env, err := commandEnvForInvocation(RoleScout, Request{
+		RunDir:       runDir,
+		InvocationID: "scout-1",
+	}, []string{"TMPDIR=/caller-temp", "TMP=/caller-temp", "TEMP=/caller-temp"})
+	if err != nil {
+		t.Fatalf("commandEnvForInvocation() error = %v", err)
+	}
+	values := commandEnvValues(env)
+	want := filepath.Join(runDir, "tmp", "invocations", "scout-1")
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		if values[key] != want {
+			t.Fatalf("%s = %q, want %q", key, values[key], want)
+		}
+	}
+	info, err := os.Stat(want)
+	if err != nil {
+		t.Fatalf("stat isolated temp dir: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("isolated temp path is not a directory: %s", want)
+	}
+}
+
+func TestCommandEnvForInvocation_IsolatesCoderTempDir(t *testing.T) {
+	runDir := t.TempDir()
+	env, err := commandEnvForInvocation(RoleCoder, Request{
+		RunDir:       runDir,
+		InvocationID: "coder-1",
+	}, []string{"TMPDIR=/caller-temp"})
+	if err != nil {
+		t.Fatalf("commandEnvForInvocation() error = %v", err)
+	}
+	want := filepath.Join(runDir, "tmp", "invocations", "coder-1")
+	if got := commandEnvValues(env)["TMPDIR"]; got != want {
+		t.Fatalf("TMPDIR = %q, want %q", got, want)
+	}
+}
+
+func commandEnvValues(env []string) map[string]string {
+	values := make(map[string]string, len(env))
+	for _, item := range env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	return values
+}
+
 func TestFix_ExplicitSameModeRestoresSavedTargets(t *testing.T) {
 	installFakeClaudeBinary(t)
 
@@ -180,7 +231,7 @@ func TestFix_LegacyFinalJSONResumesAdversarialMode(t *testing.T) {
 	fixOpts := RunOptions{
 		Workdir:   repo,
 		Mode:      ModeSupervisor,
-		Coder:     RoleTarget{Adapter: "agy"},
+		Coder:     RoleTarget{Adapter: "codex"},
 		Adversary: RoleTarget{Adapter: "claude", Model: "opus"},
 		Rounds:    1,
 		Timeout:   10 * time.Second,
@@ -318,13 +369,16 @@ func readJSONFile(t *testing.T, path string, out any) {
 	}
 }
 
-func TestConciseAdapterErrorPreservesHeadTailAndArtifactPath(t *testing.T) {
-	message := "HEAD-MARKER\n" + strings.Repeat("x", 6000) + "\nTAIL-MARKER"
+func TestConciseAdapterErrorBoundsMultilineOutputToFirstDiagnostic(t *testing.T) {
+	message := "HEAD-MARKER\n" + strings.Repeat("untrusted prompt content ", 400) + "\nTAIL-MARKER"
 	got := conciseAdapterError(message, "/tmp/run/stderr.log")
-	for _, want := range []string{"HEAD-MARKER", "TAIL-MARKER", "bytes omitted", "full stderr: /tmp/run/stderr.log"} {
+	for _, want := range []string{"HEAD-MARKER", "full stderr: /tmp/run/stderr.log"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("concise error missing %q: %q", want, got)
 		}
+	}
+	if strings.Contains(got, "untrusted prompt content") || strings.Contains(got, "TAIL-MARKER") {
+		t.Fatalf("concise error leaked multiline body: %q", got)
 	}
 	if len(got) >= len(message) {
 		t.Fatalf("adapter error was not reduced: got=%d original=%d", len(got), len(message))

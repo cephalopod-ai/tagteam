@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
@@ -66,10 +65,10 @@ Operational behavior
   Claude supervisors have a known JSON-output rough edge. tagteam does not silently repair that output; use --repair-json-with-worker to explicitly allow the selected worker to act as a read-only parser for invalid JSON contract artifacts.
 `,
 		Example: `tagteam "add OAuth login"
-tagteam run -m agy:gemini-3.6-flash-medium "add OAuth login"
-tagteam --worker agy:gemini-3.6-flash-medium --supervisor codex:gpt-5.6-sol "refactor billing flow"
+tagteam run -m codex:gpt-5.6-terra "add OAuth login"
+tagteam --worker codex:gpt-5.6-terra --supervisor codex:gpt-5.6-sol "refactor billing flow"
 tagteam --solo codex:gpt-5.6-terra "plan a migration and record the result"
-tagteam --relay --scout openai-compatible:gemma4:latest --worker agy:gemini-3.6-flash-medium --supervisor codex:gpt-5.6-sol "add OAuth login"
+tagteam --relay --scout agy:gemini-3.6-flash-medium --worker codex:gpt-5.6-terra --supervisor codex:gpt-5.6-sol "add OAuth login"
 tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma codex:gpt-5.6-sol "audit the billing refactor"`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -226,7 +225,7 @@ func runDefault(cmd *cobra.Command, flags *flagState, prompt string) error {
 		return err
 	}
 	app := tagteam.NewApp(cfg)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := commandSignalContext(context.Background())
 	defer stop()
 	final, err := app.Run(ctx, opts)
 	final = withErrorExitCode(final, err)
@@ -255,7 +254,7 @@ func newReviewCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			app := tagteam.NewApp(cfg)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, stop := commandSignalContext(context.Background())
 			defer stop()
 			final, err := app.Review(ctx, opts, "")
 			final = withErrorExitCode(final, err)
@@ -280,7 +279,7 @@ func newFixCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			app := tagteam.NewApp(cfg)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, stop := commandSignalContext(context.Background())
 			defer stop()
 			final, err := app.Fix(ctx, opts)
 			final = withErrorExitCode(final, err)
@@ -317,7 +316,7 @@ func newResumeCommand(shared *flagState) *cobra.Command {
 				return &tagteam.ExitError{Code: tagteam.ExitInvalidArguments, Err: fmt.Errorf("no run id supplied and no active/latest run found")}
 			}
 			app := tagteam.NewApp(cfg)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, stop := commandSignalContext(context.Background())
 			defer stop()
 			final, runErr := app.Resume(ctx, opts, runID)
 			final = withErrorExitCode(final, runErr)
@@ -330,11 +329,11 @@ func newResumeCommand(shared *flagState) *cobra.Command {
 func newFindingsCommand(shared *flagState) *cobra.Command {
 	var includeAll bool
 	runList := func(cmd *cobra.Command, _ []string) error {
-		workdir, err := filepath.Abs(shared.Workdir)
+		opts, _, err := resolve(cmd, shared, "")
 		if err != nil {
 			return err
 		}
-		report, err := tagteam.ListFindings(workdir, includeAll)
+		report, err := tagteam.ListFindingsAtStateRoot(opts.Workdir, opts.StateRoot, includeAll)
 		if err != nil {
 			return err
 		}
@@ -372,11 +371,11 @@ func newFindingsCommand(shared *flagState) *cobra.Command {
 			if err := requireVerifiedInstallation(shared); err != nil {
 				return err
 			}
-			workdir, err := filepath.Abs(shared.Workdir)
+			opts, _, err := resolve(cmd, shared, "")
 			if err != nil {
 				return err
 			}
-			runDir, err := tagteam.RunDirForCLI(workdir, args[0])
+			runDir, err := tagteam.RunDirForCLIAtStateRoot(opts.Workdir, opts.StateRoot, args[0])
 			if err != nil {
 				return err
 			}
@@ -390,7 +389,35 @@ func newFindingsCommand(shared *flagState) *cobra.Command {
 	}
 	deferCommand.Flags().StringVar(&reason, "reason", "", "Required operator justification")
 	_ = deferCommand.MarkFlagRequired("reason")
-	findings.AddCommand(listCommand, deferCommand)
+	var evidence string
+	resolveCommand := &cobra.Command{
+		Use:          "resolve RUN_ID FINDING_ID",
+		Short:        "Close a fixed nonblocking review finding with verification evidence",
+		SilenceUsage: true,
+		Args:         cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireVerifiedInstallation(shared); err != nil {
+				return err
+			}
+			opts, _, err := resolve(cmd, shared, "")
+			if err != nil {
+				return err
+			}
+			runDir, err := tagteam.RunDirForCLIAtStateRoot(opts.Workdir, opts.StateRoot, args[0])
+			if err != nil {
+				return err
+			}
+			summary, err := tagteam.ResolveNonBlockingReviewFinding(runDir, args[1], evidence)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "resolved=%s open=%d ledger=%s\n", args[1], summary.OpenTotal, summary.Path)
+			return nil
+		},
+	}
+	resolveCommand.Flags().StringVar(&evidence, "evidence", "", "Required verification evidence, such as a commit and test result")
+	_ = resolveCommand.MarkFlagRequired("evidence")
+	findings.AddCommand(listCommand, deferCommand, resolveCommand)
 	return findings
 }
 
@@ -409,7 +436,7 @@ func newTransferCommand(shared *flagState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, stop := commandSignalContext(context.Background())
 			defer stop()
 			record, err := tagteam.TransferRun(ctx, opts, args[0], target)
 			if shared.JSON {
@@ -483,6 +510,13 @@ func renderRunSnapshot(cmd *cobra.Command, snapshot tagteam.RunSnapshot, asJSON 
 	}
 	if snapshot.BlockingReason != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "blocking_reason=%s\n", snapshot.BlockingReason)
+	}
+	for _, finding := range snapshot.QualityGateBlockers {
+		fmt.Fprintf(cmd.OutOrStdout(), "quality_gate_blocker=%s severity=%s gate=%s message=%s", finding.ID, finding.Severity, finding.Gate, finding.Message)
+		if finding.Path != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), " path=%s", finding.Path)
+		}
+		fmt.Fprintln(cmd.OutOrStdout())
 	}
 	if snapshot.RunDir != "" {
 		fmt.Fprintln(cmd.OutOrStdout(), snapshot.RunDir)
@@ -563,7 +597,7 @@ func newDoctorCommand(shared *flagState) *cobra.Command {
 				return err
 			}
 			app := tagteam.NewApp(cfg)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, stop := commandSignalContext(context.Background())
 			defer stop()
 			status, err := app.Doctor(ctx, opts)
 			renderDoctorStatus(cmd.OutOrStdout(), status)

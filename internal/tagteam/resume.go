@@ -199,17 +199,11 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 	if saved.Mode != "" {
 		opts.Mode = saved.Mode
 	}
-	if saved.Coder.Adapter != "" {
-		opts.Coder = saved.Coder
-	}
-	if saved.Adversary.Adapter != "" {
-		opts.Adversary = saved.Adversary
-	}
-	if saved.Scout.Adapter != "" {
-		opts.Scout = saved.Scout
-	}
 	if opts.Mode == "" {
 		opts.Mode = metaMode(meta)
+	}
+	if err := applySavedResumeTargets(&opts, saved); err != nil {
+		return FinalRun{}, err
 	}
 	if opts.Coder.Adapter == "" || (opts.Mode != ModeSolo && opts.Adversary.Adapter == "") {
 		restoreTargetsFromMeta(&opts, meta)
@@ -254,6 +248,9 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 	continued, err := a.resumeExistingRun(ctx, opts, runDir, meta, state, saved, prior, currentDiffHash, gate)
 	record.ContinuedRunID = runID
 	record.Status = "resumed"
+	if continued.Status == RunStatusCancelled {
+		record.Status = "cancelled"
+	}
 	if err != nil {
 		if continued.FinishedAt.IsZero() {
 			record.Status = "resume_failed"
@@ -273,6 +270,24 @@ func (a *App) resumeAtRunDir(ctx context.Context, opts RunOptions, runID, runDir
 		err = errors.Join(err, mandatoryPersistenceError("terminal resume record", recordErr))
 	}
 	return continued, err
+}
+
+// applySavedResumeTargets retains a run's recorded roles unless the operator
+// explicitly selects a compatible replacement for this resume attempt.
+func applySavedResumeTargets(opts *RunOptions, saved FinalRun) error {
+	if err := validateExplicitTargetModes(*opts); err != nil {
+		return err
+	}
+	if !opts.CoderExplicit && saved.Coder.Adapter != "" {
+		opts.Coder = saved.Coder
+	}
+	if !opts.AdversaryExplicit && saved.Adversary.Adapter != "" {
+		opts.Adversary = saved.Adversary
+	}
+	if !opts.ScoutExplicit && saved.Scout.Adapter != "" {
+		opts.Scout = saved.Scout
+	}
+	return nil
 }
 
 // verifyResumeArtifacts checks diff/review/journal integrity. controlSafe uses
@@ -508,15 +523,17 @@ func metaMode(meta Meta) Mode {
 
 func restoreTargetsFromMeta(opts *RunOptions, meta Meta) {
 	editor, reviewer := roleLabels(opts.Mode)
-	if adapter := strings.TrimSpace(meta.Adapters[editor]); adapter != "" {
-		opts.Coder = RoleTarget{Adapter: adapter, Model: meta.Models[editor]}
+	if !opts.CoderExplicit && opts.Coder.Adapter == "" {
+		if adapter := strings.TrimSpace(meta.Adapters[editor]); adapter != "" {
+			opts.Coder = RoleTarget{Adapter: adapter, Model: meta.Models[editor]}
+		}
 	}
-	if opts.Mode != ModeSolo {
+	if opts.Mode != ModeSolo && !opts.AdversaryExplicit && opts.Adversary.Adapter == "" {
 		if adapter := strings.TrimSpace(meta.Adapters[reviewer]); adapter != "" {
 			opts.Adversary = RoleTarget{Adapter: adapter, Model: meta.Models[reviewer]}
 		}
 	}
-	if opts.Mode == ModeRelay {
+	if opts.Mode == ModeRelay && !opts.ScoutExplicit && opts.Scout.Adapter == "" {
 		if adapter := strings.TrimSpace(meta.Adapters["scout"]); adapter != "" {
 			opts.Scout = RoleTarget{Adapter: adapter, Model: meta.Models["scout"]}
 		}

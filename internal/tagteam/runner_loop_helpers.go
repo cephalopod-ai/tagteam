@@ -8,6 +8,83 @@ import (
 	"time"
 )
 
+// runSupervisorWithFallback applies the configured supervisor replacement
+// policy to planning calls as well as post-edit reviews. A supervisor can be
+// runnable at preflight yet fail or time out while preparing its first brief.
+func (a *App) runSupervisorWithFallback(
+	ctx context.Context,
+	opts *RunOptions,
+	registry map[string]Adapter,
+	runDir, reviewerLabel string,
+	reviewer *Adapter,
+	meta *Meta,
+	final *FinalRun,
+	invoke func(RoleTarget, Adapter) (Result, error),
+) (Result, error) {
+	primary := opts.Adversary
+	result, err := invoke(primary, *reviewer)
+	if err == nil || !policyAttemptsReplacement(lossPolicyForRole(*opts, reviewerLabel)) {
+		return result, err
+	}
+
+	attempts := []string{roleTargetString(primary)}
+	for _, raw := range fallbackTargetsForRole(*opts, reviewerLabel, primary) {
+		target, parseErr := ParseRoleTarget(raw)
+		if parseErr != nil {
+			continue
+		}
+		attempts = append(attempts, roleTargetString(target))
+		candidate, ok := registry[target.Adapter]
+		if !ok {
+			continue
+		}
+		if detectErr := checkAdapters(ctx, candidate); detectErr != nil {
+			continue
+		}
+		logProgress(*opts, "%s failed; trying fallback target=%s error=%q", reviewerLabel, roleTargetString(target), err.Error())
+		fallbackResult, fallbackErr := invoke(target, candidate)
+		if fallbackErr != nil {
+			err = fallbackErr
+			continue
+		}
+
+		opts.Adversary = target
+		*reviewer = candidate
+		final.Adversary = target
+		if final.Adapters == nil {
+			final.Adapters = map[string]string{}
+		}
+		if final.Models == nil {
+			final.Models = map[string]string{}
+		}
+		final.Adapters[reviewerLabel] = target.Adapter
+		final.Models[reviewerLabel] = target.Model
+		setFinalRoleTarget(final, reviewerLabel, target)
+		setFinalDegraded(final, ReasonFallbackUsed, fmt.Sprintf("%s fallback selected after primary failure", reviewerLabel))
+		appendRoleLoss(final, reviewerLabel, lossPolicyForRole(*opts, reviewerLabel), "replace", "fallback_selected_after_failure", ReasonFallbackUsed, fmt.Sprintf("%s -> %s", roleTargetString(primary), roleTargetString(target)))
+		setRoleStatus(final, reviewerLabel, target, "completed", ReasonFallbackUsed, "fallback selected after primary failure")
+		status := final.RoleStatuses[reviewerLabel]
+		status.Attempts = attempts
+		status.Selected = roleTargetString(target)
+		final.RoleStatuses[reviewerLabel] = status
+		if meta != nil {
+			if meta.Adapters == nil {
+				meta.Adapters = map[string]string{}
+			}
+			if meta.Models == nil {
+				meta.Models = map[string]string{}
+			}
+			meta.Adapters[reviewerLabel] = target.Adapter
+			meta.Models[reviewerLabel] = target.Model
+			if err := writeJSON(filepath.Join(runDir, "meta.json"), *meta); err != nil {
+				return Result{}, err
+			}
+		}
+		return fallbackResult, nil
+	}
+	return Result{}, err
+}
+
 func runIDForOptions(opts RunOptions) (string, error) {
 	runID := opts.RunID
 	if runID == "" {
@@ -32,6 +109,9 @@ func (a *App) recoverRoundEditorFailure(
 	final *FinalRun,
 	cause error,
 ) (Result, RoleTarget, Adapter, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, opts.Coder, editor, err
+	}
 	setRoleStatus(final, editorLabel, opts.Coder, "failed", classifyRoleFailure(editorLabel, cause), cause.Error())
 	if IsIntegrityViolation(cause) {
 		final.Status = RunStatusQuarantined
@@ -58,6 +138,9 @@ func (a *App) recoverRoundEditorFailure(
 
 func (a *App) runEditorWithContractRetry(ctx context.Context, opts RunOptions, editor Adapter, req Request, before worktreeSnapshot) (Result, error) {
 	result, err := a.runAdapter(ctx, editor, RoleCoder, req, opts.DryRun)
+	if cancelErr := ctx.Err(); cancelErr != nil {
+		return result, cancelErr
+	}
 	if err == nil || !IsOutputContractError(err) || opts.DryRun {
 		return result, err
 	}
@@ -95,16 +178,16 @@ func (a *App) runEditorWithContractRetry(ctx context.Context, opts RunOptions, e
 	return a.runAdapter(ctx, editor, RoleCoder, req, opts.DryRun)
 }
 
-func buildRoundEditorPrompt(ctx context.Context, opts RunOptions, round int, runDir, baseline, latestDiff string, latestReview Review, initialReview *Review, relay RelayContext, selectedPackage *WorkPackage, workPlan *WorkPlan, brief string, implementSelectedPackage bool) (string, error) {
+func buildRoundEditorPrompt(ctx context.Context, opts RunOptions, round int, runDir, baseline string, baselineTest *TestRun, latestDiff string, latestReview Review, initialReview *Review, relay RelayContext, selectedPackage *WorkPackage, workPlan *WorkPlan, brief string, implementSelectedPackage bool) (string, error) {
 	switch {
 	case round == 1 && initialReview == nil && opts.Mode == ModeRelay:
-		return BuildRelayCoderPrompt(opts.Workdir, opts.Prompt, relay.Brief, relay.Instructions, relay.Scout), nil
+		return appendHostBaselineEvidence(BuildRelayCoderPrompt(opts.Workdir, opts.Prompt, relay.Brief, relay.Instructions, relay.Scout), baselineTest), nil
 	case implementSelectedPackage && opts.Mode == ModeSupervisor && selectedPackage != nil && workPlan != nil:
-		return BuildWorkerPackageImplementPrompt(opts.Workdir, opts.Prompt, *workPlan, *selectedPackage), nil
+		return appendHostBaselineEvidence(BuildWorkerPackageImplementPrompt(opts.Workdir, opts.Prompt, *workPlan, *selectedPackage), baselineTest), nil
 	case round == 1 && initialReview == nil && opts.Mode == ModeSupervisor:
-		return BuildWorkerImplementPrompt(opts.Workdir, opts.Prompt, brief), nil
+		return appendHostBaselineEvidence(BuildWorkerImplementPrompt(opts.Workdir, opts.Prompt, brief), baselineTest), nil
 	case round == 1 && initialReview == nil:
-		return BuildCoderPrompt(opts.Workdir, opts.Prompt), nil
+		return appendHostBaselineEvidence(BuildCoderPrompt(opts.Workdir, opts.Prompt), baselineTest), nil
 	}
 	diff := latestDiff
 	if diff == "" {
@@ -120,13 +203,13 @@ func buildRoundEditorPrompt(ctx context.Context, opts RunOptions, round int, run
 	}
 	switch {
 	case opts.Mode == ModeRelay:
-		return BuildRelayFixPrompt(round, opts.Prompt, diff, relay.Brief, relay.Instructions, relay.Scout, relay.PostScout, review), nil
+		return appendHostBaselineEvidence(BuildRelayFixPrompt(round, opts.Prompt, diff, relay.Brief, relay.Instructions, relay.Scout, relay.PostScout, review), baselineTest), nil
 	case opts.Mode == ModeSupervisor && selectedPackage != nil:
-		return BuildWorkerPackageFixPrompt(round, opts.Prompt, diff, *selectedPackage, review), nil
+		return appendHostBaselineEvidence(BuildWorkerPackageFixPrompt(round, opts.Prompt, diff, *selectedPackage, review), baselineTest), nil
 	case opts.Mode == ModeSupervisor:
-		return BuildWorkerFixPrompt(round, opts.Prompt, diff, review), nil
+		return appendHostBaselineEvidence(BuildWorkerFixPrompt(round, opts.Prompt, diff, review), baselineTest), nil
 	default:
-		return BuildFixPrompt(round, opts.Prompt, diff, review), nil
+		return appendHostBaselineEvidence(BuildFixPrompt(round, opts.Prompt, diff, review), baselineTest), nil
 	}
 }
 
@@ -204,7 +287,7 @@ func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runD
 	logProgress(opts, "round %d post-scout %s started adapter=%s", round, opts.PostScoutMode, scout.ID())
 	postScoutStatus.ScoutRan = true
 	postScoutResult, err := a.runAdapter(ctx, scout, RoleScout, Request{
-		Context: ctx, Prompt: withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, relay.Brief, opts.PostScoutMode, "post", diff, safeTestOutput(testOutput), ""), repoInstructions), EnvOverlay: opts.EnvOverlay,
+		Context: ctx, Prompt: withAdapterRepoInstructions(scout, BuildScoutPrompt(opts.Workdir, opts.Prompt, relay.Brief, opts.PostScoutMode, "post", diff, safeTestOutput(testOutput), "", final.BaselineTest), repoInstructions), EnvOverlay: opts.EnvOverlay,
 		Model: opts.Scout.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: postScoutPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout,
 		Phase: fmt.Sprintf("round %d post-scout %s %s", round, opts.PostScoutMode, scout.ID()), Quiet: opts.Quiet, Verbose: opts.Verbose, Budget: opts.InvocationBudget,
 		controlResumeGate: controlResumeGateFrom(ctx),

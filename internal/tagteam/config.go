@@ -74,7 +74,9 @@ func DefaultConfig() Config {
 				WhitespaceRatio:      0.60,
 				MinimumSemanticRatio: 0.20,
 			},
-			GitSafety: "clean",
+			// Integrate commits the selected worktree's dirty state, synchronizes
+			// its tracked branch, and then creates the isolated Tagteam run branch.
+			GitSafety: "integrate",
 		},
 		Profiles: map[string]ProfileConfig{
 			"fast": {
@@ -409,6 +411,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 		profile.Tests = nil
 		profile.Lint = ""
 		profile.TestIdentityRegex = ""
+		profile.GitSafety = ""
 		profile.MaxOutputBytes = 0
 		profile.MaxWallTime = ""
 		profile.MaxRoleInvocations = 0
@@ -658,6 +661,9 @@ func mergeConfig(dst *Config, src Config) {
 			}
 			if profile.TestIdentityRegex != "" {
 				current.TestIdentityRegex = profile.TestIdentityRegex
+			}
+			if profile.GitSafety != "" {
+				current.GitSafety = profile.GitSafety
 			}
 			mergeChurnThresholds(&current.Churn, profile.Churn)
 			dst.Profiles[key] = current
