@@ -177,7 +177,10 @@ func updateFindingsLedger(runDir string, round int, review *Review, gates *Quali
 		for _, disposition := range review.PriorFindingDispositions {
 			entry, ok := entries[disposition.FindingID]
 			if !ok {
-				return FindingsSummary{}, fmt.Errorf("review disposed unknown finding %q", disposition.FindingID)
+				// A reviewer can see advisory scout items that are never persisted in
+				// this ledger. An unknown ID cannot close or mutate a real finding, so
+				// preserve the raw review artifact and leave the canonical ledger intact.
+				continue
 			}
 			entry.Status = disposition.Status
 			entry.Evidence = disposition.Evidence

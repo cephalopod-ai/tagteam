@@ -492,7 +492,7 @@ func TestBuildRelaySupervisorReviewPromptIncludesPostScout(t *testing.T) {
 		"tests passed",
 		false,
 	)
-	for _, want := range []string{"Post-scout advisory JSON", `"mode": "polish"`, "duplication", "advisory only"} {
+	for _, want := range []string{"Post-scout advisory JSON", `"mode": "polish"`, "duplication", "advisory only", "do not emit dispositions for scout items"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
