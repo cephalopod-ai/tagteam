@@ -55,6 +55,14 @@ top-level current-status fields and fresh host test output. Before emitting a
 blocker that conflicts with either, inspect the current source or its schema
 and explain why the cited value is current rather than historical.`
 
+const reviewerComputedMetadataDiscipline = `Computed-metadata discipline:
+For metadata such as a line count, hash, or entry count, do not infer the
+value from a rendered file preview, a visual line number, or a trailing blank
+segment. Treat an explicit host command in the supplied test output as
+authoritative. Without such evidence, do not emit a finding that asserts a
+specific computed value. In particular, a trailing newline does not add a
+logical line under Python splitlines() or wc -l.`
+
 const reviewerFindingGrounding = `Finding discipline: A review finding must
 cite a repository-relative file that appears in the diff under review. Do not
 invent placeholder files or report pre-existing issues outside this change.`
@@ -170,13 +178,15 @@ Test output:
 
 %s
 
+%s
+
 Evaluate: does the diff satisfy the request; correctness bugs; missed
 edge cases; missing tests for changed behavior; unrelated modifications;
 security/data-loss/migration risk; consistency with repo patterns.
 
 Respond with JSON matching the provided schema. Use "pass" only when
 there are no blocker or major findings. Every finding must name a file
-	and a concrete fix.`, userPrompt, baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline, reviewerFindingGrounding)
+	and a concrete fix.`, userPrompt, baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline, reviewerComputedMetadataDiscipline, reviewerFindingGrounding)
 }
 
 func BuildFixPrompt(round int, userPrompt, diff string, review Review) string {
@@ -469,13 +479,15 @@ Test output:
 
 %s
 
+%s
+
 Evaluate: does the diff satisfy the request; correctness bugs; missed
 edge cases; missing tests for changed behavior; unrelated modifications;
 security/data-loss/migration risk; consistency with repo patterns.
 
 Respond with JSON matching the provided schema. Use "pass" only when
 there are no blocker or major findings. Every finding must name a file
-	and a concrete fix.`, userPrompt, baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline, reviewerFindingGrounding)
+	and a concrete fix.`, userPrompt, baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline, reviewerComputedMetadataDiscipline, reviewerFindingGrounding)
 }
 
 func BuildSupervisorPackageReviewPrompt(userPrompt string, plan WorkPlan, pkg WorkPackage, baseline, diffRef, testOutput string, diffViaStdin bool) string {
@@ -509,13 +521,15 @@ Test output:
 
 %s
 
+%s
+
 Evaluate only the selected work package. Do not fail the run for deferred
 packages unless the worker's diff makes them harder, breaks existing behavior,
 or violates the selected package acceptance criteria.
 
 Respond with JSON matching the provided schema. Use "pass" only when
 there are no blocker or major findings for the selected package. Every
-	finding must name a file and a concrete fix.`, userPrompt, string(pkgJSON), string(planJSON), baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline, reviewerFindingGrounding)
+	finding must name a file and a concrete fix.`, userPrompt, string(pkgJSON), string(planJSON), baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline, reviewerComputedMetadataDiscipline, reviewerFindingGrounding)
 }
 
 func BuildScoutPrompt(workdir, userPrompt, brief, mode, phase, diff, testOutput, retrievalContext string, baseline *TestRun) string {
