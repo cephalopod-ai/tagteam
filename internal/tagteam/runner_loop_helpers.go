@@ -286,8 +286,9 @@ func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runD
 	postScoutStatus := newScoutExecutionArtifact(opts.PostScoutMode, opts.ScoutFailurePolicy, false)
 	logProgress(opts, "round %d post-scout %s started adapter=%s", round, opts.PostScoutMode, scout.ID())
 	postScoutStatus.ScoutRan = true
+	postScoutPrompt := buildPostScoutPrompt(scout, opts.Workdir, opts.Prompt, relay.Brief, opts.PostScoutMode, diff, safeTestOutput(testOutput), repoInstructions, final.BaselineTest)
 	postScoutResult, err := a.runAdapter(ctx, scout, RoleScout, Request{
-		Context: ctx, Prompt: withAdapterRepoInstructions(scout, BuildScoutPrompt(opts.Workdir, opts.Prompt, relay.Brief, opts.PostScoutMode, "post", diff, safeTestOutput(testOutput), "", final.BaselineTest), repoInstructions), EnvOverlay: opts.EnvOverlay,
+		Context: ctx, Prompt: postScoutPrompt, EnvOverlay: opts.EnvOverlay,
 		Model: opts.Scout.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: postScoutPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout,
 		Phase: fmt.Sprintf("round %d post-scout %s %s", round, opts.PostScoutMode, scout.ID()), Quiet: opts.Quiet, Verbose: opts.Verbose, Budget: opts.InvocationBudget,
 		controlResumeGate: controlResumeGateFrom(ctx),
@@ -335,6 +336,67 @@ func (a *App) runPostScout(ctx context.Context, opts RunOptions, round int, runD
 		return &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("write post-scout execution artifact: %w", err)}
 	}
 	return nil
+}
+
+// buildPostScoutPrompt keeps Agy's required --print argument safely below the
+// platform command-line limit. The full diff and test artifacts remain on disk;
+// the post-scout is advisory and receives compacted evidence when necessary.
+func buildPostScoutPrompt(scout Adapter, workdir, userPrompt, brief, mode, diff, testOutput, repoInstructions string, baseline *TestRun) string {
+	build := func(diff, tests string) string {
+		return withAdapterRepoInstructions(scout, BuildScoutPrompt(workdir, userPrompt, brief, mode, "post", diff, tests, "", baseline), repoInstructions)
+	}
+	prompt := build(diff, testOutput)
+	if scout.ID() != "agy" || len(prompt) <= maxInlinePromptArgumentBytes {
+		return prompt
+	}
+
+	basePrompt := build("", "")
+	evidenceBudget := maxInlinePromptArgumentBytes - len(basePrompt)
+	if evidenceBudget <= 0 {
+		// Agy's adapter emits a deterministic size error for an operator prompt
+		// that cannot fit even without host-produced evidence.
+		return prompt
+	}
+	compactedDiff, compactedTests := compactPostScoutEvidence(diff, testOutput, evidenceBudget)
+	return build(compactedDiff, compactedTests)
+}
+
+func compactPostScoutEvidence(diff, testOutput string, limit int) (string, string) {
+	if limit <= 0 || len(diff)+len(testOutput) <= limit {
+		return diff, testOutput
+	}
+	if diff == "" {
+		return "", compactPromptEvidence(testOutput, limit)
+	}
+	if testOutput == "" {
+		return compactPromptEvidence(diff, limit), ""
+	}
+
+	diffLimit := limit * 2 / 3
+	testLimit := limit - diffLimit
+	if len(diff) < diffLimit {
+		testLimit += diffLimit - len(diff)
+	}
+	if len(testOutput) < testLimit {
+		diffLimit += testLimit - len(testOutput)
+	}
+	return compactPromptEvidence(diff, diffLimit), compactPromptEvidence(testOutput, testLimit)
+}
+
+func compactPromptEvidence(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	if limit <= 0 {
+		return ""
+	}
+	marker := "\n...[truncated by tagteam before inline scout delivery; full host artifact retained]...\n"
+	if limit <= len(marker) {
+		return marker[:limit]
+	}
+	head := (limit - len(marker)) / 2
+	tail := limit - len(marker) - head
+	return value[:head] + marker + value[len(value)-tail:]
 }
 
 func (a *App) runRoundReview(ctx context.Context, opts RunOptions, round int, runDir, schemaPath, baseline, diff, diffPath, testOutput, editorOutputPath, repoInstructions, reviewerLabel string, reviewer Adapter, relay RelayContext, latestReview Review, executionPlan *ExecutionPlan, final *FinalRun) (*Review, error) {

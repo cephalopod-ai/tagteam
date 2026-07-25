@@ -177,6 +177,23 @@ func TestRunLoop_RelayModeScoutContextExceedsWithoutRetrievalFailsEarly(t *testi
 	}
 }
 
+func TestBuildPostScoutPromptCompactsAgyEvidenceForInlineDelivery(t *testing.T) {
+	diff := "diff-header\n" + strings.Repeat("d", 100*1024) + "\ndiff-tail\n"
+	tests := "test-header\n" + strings.Repeat("t", 100*1024) + "\ntest-tail\n"
+	prompt := buildPostScoutPrompt(&AgyAdapter{}, "/repo", "repair fleet discovery", "brief", "polish", diff, tests, "repo instructions", nil)
+	if len(prompt) > maxInlinePromptArgumentBytes {
+		t.Fatalf("post-scout prompt is %d bytes, want <= %d", len(prompt), maxInlinePromptArgumentBytes)
+	}
+	for _, want := range []string{"diff-header", "diff-tail", "test-header", "test-tail", "truncated by tagteam"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("compacted prompt missing %q", want)
+		}
+	}
+	if _, err := (&AgyAdapter{}).BuildCmd(RoleScout, Request{Prompt: prompt, Workdir: "/repo"}); err != nil {
+		t.Fatalf("compacted post-scout prompt must build: %v", err)
+	}
+}
+
 func TestFix_RestoresAdversarialModeAndTargetsOverSupervisorDefault(t *testing.T) {
 	installFakeClaudeBinary(t)
 

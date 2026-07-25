@@ -217,6 +217,15 @@ func promptStdin(req Request) []byte {
 	return buf.Bytes()
 }
 
+const maxInlinePromptArgumentBytes = 64 * 1024
+
+func validateInlinePromptArgument(adapter, prompt string) error {
+	if len(prompt) <= maxInlinePromptArgumentBytes {
+		return nil
+	}
+	return fmt.Errorf("%s inline prompt exceeds %d-byte command-line limit (%d bytes); shorten the request or use an adapter with stdin support", adapter, maxInlinePromptArgumentBytes, len(prompt))
+}
+
 type goslingMessageContent struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
@@ -302,6 +311,9 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 		model = a.DefaultModel
 	}
 	prompt := strings.TrimSuffix(string(promptStdin(req)), "\n")
+	if err := validateInlinePromptArgument("grok", prompt); err != nil {
+		return nil, err
+	}
 	argv := []string{"grok", "--single", prompt, "--cwd", req.Workdir}
 	if model != "" {
 		argv = append(argv, "--model", model)

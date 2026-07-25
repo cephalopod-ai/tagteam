@@ -418,6 +418,9 @@ func (a *AgyAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	// Agy 1.1+ does not read a print-mode prompt from stdin when launched by a
 	// subprocess. The prompt must be the value of --print.
 	prompt := strings.TrimSuffix(string(promptStdin(req)), "\n")
+	if err := validateInlinePromptArgument("agy", prompt); err != nil {
+		return nil, err
+	}
 	argv := []string{"agy", "--print=" + prompt}
 	if model != "" {
 		argv = append(argv, "--model", model)

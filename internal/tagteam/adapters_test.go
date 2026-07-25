@@ -345,6 +345,20 @@ func TestAgyBuildCmdScout(t *testing.T) {
 	}
 }
 
+func TestInlinePromptAdaptersRejectOversizedArguments(t *testing.T) {
+	for name, adapter := range map[string]Adapter{
+		"agy":  &AgyAdapter{},
+		"grok": &GrokAdapter{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := adapter.BuildCmd(RoleScout, Request{Prompt: strings.Repeat("x", maxInlinePromptArgumentBytes+1), Workdir: "/repo"})
+			if err == nil || !strings.Contains(err.Error(), "inline prompt exceeds") {
+				t.Fatalf("BuildCmd() error = %v, want deterministic inline prompt limit", err)
+			}
+		})
+	}
+}
+
 func TestAgyParseResultExtractsFencedReviewJSON(t *testing.T) {
 	adapter := &AgyAdapter{}
 	raw := []byte("```json\n{\"verdict\":\"pass\",\"summary\":\"looks good\",\"findings\":[],\"test_suggestions\":[]}\n```")
