@@ -5,7 +5,7 @@ const (
 	agyGemini36FlashMedium = "gemini-3.6-flash-medium"
 	agyGemini36FlashHigh   = "gemini-3.6-flash-high"
 
-	defaultSupervisorTarget   = "claude:claude-opus-4-8"
+	defaultSupervisorTarget   = "claude:claude-opus-5"
 	defaultSupervisorFallback = "codex:gpt-5.6-sol"
 	defaultWorkerTarget       = "codex:gpt-5.6-terra"
 	// Keep automatic implementation fallback on a model permitted to edit.
