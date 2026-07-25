@@ -130,6 +130,8 @@ Test output:
 
 %s
 
+%s
+
 Evaluate: does the diff satisfy the request; correctness bugs; missed
 edge cases; missing tests for changed behavior; unrelated modifications;
 security/data-loss/migration risk; consistency with repo patterns.
@@ -141,7 +143,7 @@ do not emit dispositions for scout items or any other advisory observation.
 
 Respond with JSON matching the provided schema. Use "pass" only when
 there are no blocker or major findings. Every finding must name a file
-and a concrete fix.`, userPrompt, brief, scoutJSON, postScoutJSON, scoutInstructions, baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline)
+	and a concrete fix.`, userPrompt, brief, scoutJSON, postScoutJSON, scoutInstructions, baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline, reviewerFindingGrounding)
 }
 
 func BuildRoundLimitReportPrompt(roleLabel, counterpartLabel string, mode Mode, userPrompt, diff string, review Review, tests []TestRun) string {
