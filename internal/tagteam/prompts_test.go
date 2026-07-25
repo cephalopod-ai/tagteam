@@ -49,7 +49,7 @@ func TestReviewPromptsRequireCurrentStateReconciliation(t *testing.T) {
 		"relay":      BuildRelaySupervisorReviewPrompt("repair", "baseline", "brief", Scout{}, Scout{}, "instructions", "diff", "tests", false),
 	}
 	for name, prompt := range prompts {
-		if !strings.Contains(prompt, "Current-state discipline") || !strings.Contains(prompt, "current rather than historical") {
+		if !strings.Contains(prompt, "Current-state discipline") || !strings.Contains(prompt, "current rather than historical") || !strings.Contains(prompt, "Finding discipline") || !strings.Contains(prompt, "appears in the diff under review") {
 			t.Fatalf("%s review prompt omitted current-state reconciliation:\n%s", name, prompt)
 		}
 	}

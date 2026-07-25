@@ -362,7 +362,6 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 	if _, err := buildReviewBundle(runDir, opts, reviewerLabel, round, baseline, DiffArtifact{PatchPath: diffPath}, testOutput, coderOutputPath, relay, priorReview); err != nil {
 		return nil, 0, "", &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("build review bundle: %w", err)}
 	}
-
 	invoke := func(target RoleTarget, adapter Adapter, outputPath string) (*Review, float64, string, error) {
 		input := prepareReviewInput(adapter, diff, diffPath)
 		var reviewPrompt string
@@ -409,6 +408,9 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 		}
 		req.Stdin = input.Stdin
 		result, err := a.runAdapter(ctx, adapter, RoleAdversary, req, opts.DryRun)
+		if err == nil {
+			err = validateReviewerResult(result, opts.MaxFindings, diffPath)
+		}
 		if err != nil {
 			if !IsOutputContractError(err) {
 				return nil, 0, "", err
@@ -433,6 +435,9 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 				}
 			}
 			result, err = a.runAdapter(ctx, adapter, RoleAdversary, req, opts.DryRun)
+			if err == nil {
+				err = validateReviewerResult(result, opts.MaxFindings, diffPath)
+			}
 			if err != nil {
 				if IsOutputContractError(err) {
 					if repaired, repairCost, attempted, repairErr := a.tryRepairJSONFromArtifact(ctx, opts, Registry(a.Config, opts), runDir, req.OutputPath, "review", ReviewSchema, result.Raw, err); repairErr != nil {
@@ -441,6 +446,9 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 						}
 					} else if attempted {
 						review, parseErr := parseReviewPayload(repaired)
+						if parseErr == nil {
+							parseErr = validateReviewForDiff(review, opts.MaxFindings, diffPath)
+						}
 						if parseErr == nil {
 							if final != nil {
 								setFinalDegraded(final, ReasonJSONRepairUsed, "review JSON repaired by worker")
@@ -470,8 +478,6 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 				return nil, 0, "", err
 			}
 		}
-		normalizeReview(result.Review)
-		applyReviewCaps(result.Review, opts.MaxFindings)
 		return result.Review, result.CostUSD, outputPath, nil
 	}
 

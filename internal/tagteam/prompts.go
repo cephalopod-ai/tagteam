@@ -55,6 +55,10 @@ top-level current-status fields and fresh host test output. Before emitting a
 blocker that conflicts with either, inspect the current source or its schema
 and explain why the cited value is current rather than historical.`
 
+const reviewerFindingGrounding = `Finding discipline: A review finding must
+cite a repository-relative file that appears in the diff under review. Do not
+invent placeholder files or report pre-existing issues outside this change.`
+
 const maxHostBaselineEvidenceBytes = 4 * 1024
 
 func withRepoInstructions(prompt, repoInstructions string) string {
@@ -164,13 +168,15 @@ Test output:
 
 %s
 
+%s
+
 Evaluate: does the diff satisfy the request; correctness bugs; missed
 edge cases; missing tests for changed behavior; unrelated modifications;
 security/data-loss/migration risk; consistency with repo patterns.
 
 Respond with JSON matching the provided schema. Use "pass" only when
 there are no blocker or major findings. Every finding must name a file
-and a concrete fix.`, userPrompt, baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline)
+	and a concrete fix.`, userPrompt, baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline, reviewerFindingGrounding)
 }
 
 func BuildFixPrompt(round int, userPrompt, diff string, review Review) string {
@@ -461,13 +467,15 @@ Test output:
 
 %s
 
+%s
+
 Evaluate: does the diff satisfy the request; correctness bugs; missed
 edge cases; missing tests for changed behavior; unrelated modifications;
 security/data-loss/migration risk; consistency with repo patterns.
 
 Respond with JSON matching the provided schema. Use "pass" only when
 there are no blocker or major findings. Every finding must name a file
-and a concrete fix.`, userPrompt, baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline)
+	and a concrete fix.`, userPrompt, baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline, reviewerFindingGrounding)
 }
 
 func BuildSupervisorPackageReviewPrompt(userPrompt string, plan WorkPlan, pkg WorkPackage, baseline, diffRef, testOutput string, diffViaStdin bool) string {
@@ -499,13 +507,15 @@ Test output:
 
 %s
 
+%s
+
 Evaluate only the selected work package. Do not fail the run for deferred
 packages unless the worker's diff makes them harder, breaks existing behavior,
 or violates the selected package acceptance criteria.
 
 Respond with JSON matching the provided schema. Use "pass" only when
 there are no blocker or major findings for the selected package. Every
-finding must name a file and a concrete fix.`, userPrompt, string(pkgJSON), string(planJSON), baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline)
+	finding must name a file and a concrete fix.`, userPrompt, string(pkgJSON), string(planJSON), baseline, diffSection, testOutput, untrustedArtifactNotice, reviewerCurrentStateDiscipline, reviewerFindingGrounding)
 }
 
 func BuildScoutPrompt(workdir, userPrompt, brief, mode, phase, diff, testOutput, retrievalContext string, baseline *TestRun) string {
