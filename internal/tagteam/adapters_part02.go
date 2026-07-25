@@ -217,7 +217,9 @@ func promptStdin(req Request) []byte {
 	return buf.Bytes()
 }
 
-const maxInlinePromptArgumentBytes = 64 * 1024
+// Keep one inline argument well below the smallest practical exec argument
+// budget while still allowing normal scout retrieval context.
+const maxInlinePromptArgumentBytes = 128 * 1024
 
 func validateInlinePromptArgument(adapter, prompt string) error {
 	if len(prompt) <= maxInlinePromptArgumentBytes {
