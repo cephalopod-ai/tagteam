@@ -463,6 +463,17 @@ func TestValidateRunRolesRejectsAgyOutsideScout(t *testing.T) {
 	}
 }
 
+func TestValidateRunRolesRejectsGoslingSupervisor(t *testing.T) {
+	err := validateRunRoles(RunOptions{
+		Mode:      ModeSupervisor,
+		Coder:     RoleTarget{Adapter: "codex"},
+		Adversary: RoleTarget{Adapter: "gosling"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "gosling is not supported as a supervisor adapter") {
+		t.Fatalf("validateRunRoles() error = %v, want deterministic Gosling supervisor rejection", err)
+	}
+}
+
 func TestValidateRoleTargetRejectsGeminiModelOutsideScout(t *testing.T) {
 	tests := []struct {
 		name   string

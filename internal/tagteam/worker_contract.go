@@ -241,7 +241,12 @@ func worktreeContentDelta(before, after worktreeSnapshot) []string {
 // content written during its invocation, not whether it staged an edit that
 // already existed before it started.
 func worktreeContentFingerprint(value string) string {
-	if value == "" || strings.HasPrefix(value, "deleted:") {
+	if value == "" {
+		// A path absent from the invocation baseline is distinct from a clean
+		// tracked file deleted during this invocation.
+		return "missing"
+	}
+	if strings.HasPrefix(value, "deleted:") {
 		return "deleted"
 	}
 	if strings.HasPrefix(value, "symlink:") {

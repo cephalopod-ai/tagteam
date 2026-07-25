@@ -244,8 +244,10 @@ type Request struct {
 	Budget                *InvocationBudget
 	RequireWorkerContract bool
 	// AllowedScope is the host-derived intersection of operator and package
-	// limits. It is checked while an editor is still running.
+	// limits. EnforceAllowedScope distinguishes an intentional empty
+	// intersection (deny all writes) from legacy requests without a policy.
 	AllowedScope         []string
+	EnforceAllowedScope  bool
 	InvocationID         string
 	ProgressStdout       *invocationStream
 	ProgressStderr       *invocationStream

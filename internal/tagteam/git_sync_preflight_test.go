@@ -167,6 +167,26 @@ func TestPreflightIntegrateAbortsConflictAndPreservesCheckpoint(t *testing.T) {
 	}
 }
 
+func TestPreflightIntegrateRestoresSourceWhenRunBranchExists(t *testing.T) {
+	repo, _, sourceBranch := syncFixture(t)
+	runID := "integrate-run-branch-exists"
+	runGit(t, repo, "branch", "tagteam/"+runID)
+
+	_, _, err := preflight(RunOptions{Workdir: repo, GitSafety: "integrate"}, runID)
+	if err == nil || !strings.Contains(err.Error(), "create isolated run branch") {
+		t.Fatalf("preflight() error = %v, want run-branch creation failure", err)
+	}
+	if branch := strings.TrimSpace(runGit(t, repo, "branch", "--show-current")); branch != sourceBranch {
+		t.Fatalf("branch = %q, want source branch %q after failure", branch, sourceBranch)
+	}
+	if status := strings.TrimSpace(runGit(t, repo, "status", "--porcelain")); status != "" {
+		t.Fatalf("source worktree remains dirty after run-branch failure: %q", status)
+	}
+	if branch := strings.TrimSpace(runGit(t, repo, "branch", "--list", "tagteam/preflight/"+runID)); branch == "" {
+		t.Fatal("prepared checkpoint should remain available after run-branch creation failure")
+	}
+}
+
 func TestPreflightSyncRejectsDivergentSourceAndPreservesCheckpoint(t *testing.T) {
 	repo, peer, sourceBranch := syncFixture(t)
 	mustWriteFile(t, filepath.Join(repo, "local-commit.txt"), "local commit\n")

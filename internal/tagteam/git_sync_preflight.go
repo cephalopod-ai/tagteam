@@ -91,7 +91,7 @@ func gitPrepareIntegratedRun(workdir, runID string) (string, error) {
 	}
 	runBranch := "tagteam/" + runID
 	if err := gitCreateBranchAt(workdir, runBranch, checkpointBranch); err != nil {
-		return "", err
+		return "", restoreSourceAfterCandidateFailure(workdir, sourceBranch, err)
 	}
 	if err := gitSwitchBranch(workdir, sourceBranch, "restore source branch before applying prepared integration"); err != nil {
 		return "", err

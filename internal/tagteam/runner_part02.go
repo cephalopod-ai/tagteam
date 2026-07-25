@@ -498,6 +498,9 @@ func ValidateRoleTarget(role Role, target RoleTarget) error {
 	if role == RoleAdversary && target.Adapter == "gosling" {
 		return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("gosling is not supported as an adversary adapter")}
 	}
+	if role == RoleSupervisor && target.Adapter == "gosling" {
+		return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("gosling is not supported as a supervisor adapter")}
+	}
 	if role == RoleScout && target.Adapter == "gosling" {
 		return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("gosling is not supported as a scout adapter")}
 	}

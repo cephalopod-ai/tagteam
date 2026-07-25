@@ -24,6 +24,48 @@ func TestAllowedScopeForRoundIntersectsOperatorAndPackage(t *testing.T) {
 	}
 }
 
+func TestRunAdapterLiveScopeGuardRejectsEmptyScopeIntersection(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "baseline\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "baseline")
+
+	allowed := allowedScopeForRound(
+		RunOptions{AllowedPaths: []string{"docs/"}},
+		&WorkPackage{AllowedScope: []string{"internal/"}},
+	)
+	if len(allowed) != 0 {
+		t.Fatalf("allowed scope = %#v, want empty intersection", allowed)
+	}
+	adapter := fakeAdapter{
+		build: func(role Role, req Request) (*CommandSpec, error) {
+			return &CommandSpec{Argv: []string{"sh", "-c", "printf blocked > README.md; sleep 10"}, Dir: repo}, nil
+		},
+		parse: func(role Role, raw []byte) (Result, error) { return Result{Raw: raw}, nil },
+	}
+	_, err := NewApp(DefaultConfig()).runAdapter(context.Background(), adapter, RoleCoder, Request{
+		Context:               context.Background(),
+		Workdir:               repo,
+		RunDir:                t.TempDir(),
+		Timeout:               15 * time.Second,
+		Phase:                 "empty scope intersection regression",
+		ProgressRole:          RoleCoder,
+		RequireWorkerContract: true,
+		AllowedScope:          allowed,
+		EnforceAllowedScope:   true,
+	}, false)
+	var violation *LiveScopeViolationError
+	if !errors.As(err, &violation) {
+		t.Fatalf("error = %T %v, want LiveScopeViolationError", err, err)
+	}
+	if len(violation.Paths) != 1 || violation.Paths[0] != "README.md" {
+		t.Fatalf("violation paths = %#v", violation.Paths)
+	}
+}
+
 func TestRunAdapterLiveScopeGuardCancelsOutOfScopeEditor(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
@@ -49,6 +91,7 @@ func TestRunAdapterLiveScopeGuardCancelsOutOfScopeEditor(t *testing.T) {
 		ProgressRole:          RoleCoder,
 		RequireWorkerContract: true,
 		AllowedScope:          []string{"README.md"},
+		EnforceAllowedScope:   true,
 	}, false)
 	var violation *LiveScopeViolationError
 	if !errors.As(err, &violation) {

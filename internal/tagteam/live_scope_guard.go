@@ -33,13 +33,10 @@ func isLiveScopeViolation(err error) bool {
 // that briefly create and remove temporary artifacts. It intentionally never
 // removes a persistent partial diff: recovery records preserve it for review.
 func startLiveScopeGuard(ctx context.Context, req Request, before worktreeSnapshot, cancel context.CancelFunc) func() error {
-	if !req.RequireWorkerContract || req.Workdir == "" || len(req.AllowedScope) == 0 {
+	if !req.RequireWorkerContract || !req.EnforceAllowedScope || req.Workdir == "" {
 		return func() error { return nil }
 	}
 	allowed := normalizeAllowedScope(req.AllowedScope)
-	if len(allowed) == 0 {
-		return func() error { return nil }
-	}
 	done := make(chan struct{})
 	stopped := make(chan struct{})
 	var stopOnce sync.Once

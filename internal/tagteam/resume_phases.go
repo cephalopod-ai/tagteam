@@ -193,7 +193,7 @@ func (a *App) resumeEditor(ctx context.Context, opts RunOptions, state RunState,
 	outputPath := resumeEditorOutputPath(runDir, runtime.editorLabel, round)
 	workerSchemaPath = filepath.Join(runDir, "worker-result-schema.json")
 	setRoleStatus(final, runtime.editorLabel, final.Coder, "running", "", "")
-	editorRequest := Request{Context: ctx, Prompt: prompt, SystemPrompt: editorSystemPromptForMode(opts.Mode), EnvOverlay: opts.EnvOverlay, Model: final.Coder.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: outputPath, SchemaPath: workerSchemaPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: fmt.Sprintf("resumed round %d %s", round, runtime.editorLabel), ProgressRole: Role(runtime.editorLabel), Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, RequireWorkerContract: true, AllowedScope: allowedScopeForRound(opts, runtime.selectedPackage), controlResumeGate: gate}
+	editorRequest := Request{Context: ctx, Prompt: prompt, SystemPrompt: editorSystemPromptForMode(opts.Mode), EnvOverlay: opts.EnvOverlay, Model: final.Coder.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: outputPath, SchemaPath: workerSchemaPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: fmt.Sprintf("resumed round %d %s", round, runtime.editorLabel), ProgressRole: Role(runtime.editorLabel), Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, RequireWorkerContract: true, AllowedScope: allowedScopeForRound(opts, runtime.selectedPackage), EnforceAllowedScope: true, controlResumeGate: gate}
 	if partial {
 		before = worktreeSnapshot{}
 		if runDir, err = rebindControlResumeRunDir(gate, runDir, final); err != nil {

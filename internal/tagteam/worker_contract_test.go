@@ -54,3 +54,32 @@ func TestCaptureWorktreeSnapshotDoesNotFollowDirectorySymlink(t *testing.T) {
 		t.Fatalf("worktree delta = %#v, want retargeted symlink", changed)
 	}
 }
+
+func TestWorkerContractCountsDeletionOfCleanTrackedFile(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "baseline\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "baseline")
+
+	before, err := captureWorktreeSnapshot(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("capture baseline snapshot: %v", err)
+	}
+	if err := os.Remove(filepath.Join(repo, "README.md")); err != nil {
+		t.Fatalf("delete tracked file: %v", err)
+	}
+	after, err := captureWorktreeSnapshot(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("capture deletion snapshot: %v", err)
+	}
+	if actual := worktreeContentDelta(before, after); len(actual) != 1 || actual[0] != "README.md" {
+		t.Fatalf("content delta = %#v, want deleted tracked file", actual)
+	}
+	result := &WorkerResult{FilesChanged: []string{"README.md"}}
+	if err := validateWorkerGitClaim(context.Background(), repo, result, before, after); err != nil {
+		t.Fatalf("validateWorkerGitClaim() deletion = %v", err)
+	}
+}

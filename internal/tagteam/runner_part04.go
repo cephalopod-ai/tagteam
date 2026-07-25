@@ -484,6 +484,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			Budget:                opts.InvocationBudget,
 			RequireWorkerContract: true,
 			AllowedScope:          allowedScopeForRound(opts, selectedPackage),
+			EnforceAllowedScope:   true,
 		}
 		editorResult, err := a.runEditorWithContractRetry(ctx, opts, editor, editorRequest, beforeEditor)
 		if err != nil {
