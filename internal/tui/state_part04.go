@@ -68,7 +68,7 @@ func (m *model) composerLines(width int) []string {
 		}
 		lines = append(lines, "> "+padOrTrim(prompt, maxInt(20, width-4)))
 	case m.editor.Active && m.editor.Field == fieldPrompt:
-		lines = append(lines, "> "+m.editor.Buffer+"_")
+		lines = append(lines, "> "+tailClip(m.editor.Buffer, maxInt(20, width-4))+"_")
 	default:
 		prompt := strings.TrimSpace(m.compose.Prompt)
 		if prompt == "" {
@@ -138,6 +138,9 @@ func (m *model) composeFieldValue(field composeField) string {
 	case fieldTest:
 		if m.compose.NoTest {
 			return "(disabled)"
+		}
+		if len(m.compose.TestCmds) > 1 {
+			return fmt.Sprintf("%d parallel: %s", len(m.compose.TestCmds), strings.Join(m.compose.TestCmds, " | "))
 		}
 		return dashIfEmpty(m.compose.TestCmd)
 	case fieldLint:

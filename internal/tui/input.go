@@ -21,6 +21,10 @@ const (
 	keyPageDown
 	keyHome
 	keyEnd
+	// keyIgnored marks a complete escape sequence with no bound action
+	// (Delete, function keys, ...) so its bytes are consumed instead of
+	// leaking into editors as literal text.
+	keyIgnored
 )
 
 type keyEvent struct {
@@ -66,7 +70,9 @@ func decodeKeyEventPrefix(chunk []byte, flush bool) ([]keyEvent, []byte) {
 				return events, chunk
 			}
 			if matched {
-				events = append(events, keyEvent{Kind: kind})
+				if kind != keyIgnored {
+					events = append(events, keyEvent{Kind: kind})
+				}
 				chunk = chunk[size:]
 				continue
 			}
@@ -121,14 +127,41 @@ func decodeEscapeSequence(chunk []byte) (matched, incomplete bool, kind keyKind,
 		{[]byte("\x1b[6~"), keyPageDown},
 		{[]byte("\x1b[H"), keyHome},
 		{[]byte("\x1bOH"), keyHome},
+		{[]byte("\x1b[1~"), keyHome},
 		{[]byte("\x1b[F"), keyEnd},
 		{[]byte("\x1bOF"), keyEnd},
+		{[]byte("\x1b[4~"), keyEnd},
 	} {
 		if len(chunk) < len(sequence.bytes) && bytes.Equal(chunk, sequence.bytes[:len(chunk)]) {
 			return false, true, 0, 0
 		}
 		if bytes.HasPrefix(chunk, sequence.bytes) {
 			return true, false, sequence.kind, len(sequence.bytes)
+		}
+	}
+	if len(chunk) >= 2 {
+		switch chunk[1] {
+		case '[':
+			// CSI: parameter/intermediate bytes 0x20-0x3f, final byte 0x40-0x7e.
+			for i := 2; i < len(chunk); i++ {
+				b := chunk[i]
+				if b >= 0x40 && b <= 0x7e {
+					return true, false, keyIgnored, i + 1
+				}
+				if b < 0x20 || b > 0x3f {
+					return false, false, 0, 0
+				}
+			}
+			return false, true, 0, 0
+		case 'O':
+			// SS3: exactly one final byte 0x40-0x7e (F1-F4 and keypad keys).
+			if len(chunk) < 3 {
+				return false, true, 0, 0
+			}
+			if b := chunk[2]; b >= 0x40 && b <= 0x7e {
+				return true, false, keyIgnored, 3
+			}
+			return false, false, 0, 0
 		}
 	}
 	return false, false, 0, 0

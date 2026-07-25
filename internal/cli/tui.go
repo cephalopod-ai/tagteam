@@ -35,13 +35,14 @@ With no RUN_ID it starts in compose mode, surfaces the active/latest run as cont
 				mutationBlocked = verifyErr.Error()
 			}
 			inspectOnStart := shouldInspectTUIRun(workdir, runDir, len(args) > 0)
+			changed := collectChangedFlags(cmd)
 			return tui.Run(ctx, tui.RunOptions{
 				Workdir:         workdir,
 				InitialRunDir:   runDir,
 				InspectOnStart:  inspectOnStart,
 				Flags:           shared.FlagInputs,
-				Changed:         collectChangedFlags(cmd),
-				TrustRepoConfig: shared.TrustRepoConfig && collectChangedFlags(cmd)["trust-repo-config"],
+				Changed:         changed,
+				TrustRepoConfig: shared.TrustRepoConfig && changed["trust-repo-config"],
 				MutationBlocked: mutationBlocked,
 			}, os.Stdout, os.Stdin)
 		},
