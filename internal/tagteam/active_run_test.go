@@ -199,6 +199,10 @@ func TestRunSolo_MidRunFailureSnapshotReportsFailedNotRunning(t *testing.T) {
 }
 
 func TestRunSoloCancellationPersistsCancelledTerminalRun(t *testing.T) {
+	// Unix cancellation allows a five-second SIGTERM grace period before a
+	// forced kill. Keep a scheduler margin while still detecting a true hang.
+	const cancellationCompletionBound = 7 * time.Second
+
 	marker := filepath.Join(t.TempDir(), "adapter-started")
 	installFakeBinaries(t, map[string]string{"claude": `#!/bin/sh
 if [ "$1" = "--version" ]; then
@@ -264,7 +268,7 @@ sleep 30
 		if state.Status != string(RunStatusCancelled) || state.BlockingReason != string(ReasonCancelled) {
 			t.Fatalf("cancelled state = %#v", state)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(cancellationCompletionBound):
 		t.Fatal("cancelled run did not finish promptly")
 	}
 }
