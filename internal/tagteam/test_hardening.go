@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -93,6 +94,31 @@ func isolatedTestDirectories(outputPath string) (string, string, error) {
 		return "", "", err
 	}
 	return state, temp, nil
+}
+
+// shortTestTempAlias keeps the durable per-run test directory as the
+// authoritative target while giving subprocesses a short UNIX pathname. macOS
+// and Linux cap AF_UNIX socket paths, so exposing a long state-root path as
+// TMPDIR makes otherwise healthy socket tests fail before their code runs.
+func shortTestTempAlias(tempDir string) (string, func(), error) {
+	if runtime.GOOS == "windows" {
+		return tempDir, func() {}, nil
+	}
+	target, err := filepath.Abs(tempDir)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve test temporary directory: %w", err)
+	}
+	aliasRoot, err := os.MkdirTemp("/tmp", "tt-")
+	if err != nil {
+		return "", nil, fmt.Errorf("create short test temporary directory alias: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(aliasRoot) }
+	alias := filepath.Join(aliasRoot, "t")
+	if err := os.Symlink(target, alias); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("link short test temporary directory alias: %w", err)
+	}
+	return alias, cleanup, nil
 }
 
 // isolatedTestDirectoriesForControlResume preserves the CLI isolation behavior

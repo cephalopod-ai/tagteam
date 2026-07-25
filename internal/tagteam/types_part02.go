@@ -79,6 +79,7 @@ type ProfileConfig struct {
 	Lint                    string           `toml:"lint"`
 	TestIdentityRegex       string           `toml:"test_identity_regex"`
 	Churn                   ChurnThresholds  `toml:"churn"`
+	GitSafety               string           `toml:"git_safety"`
 }
 
 type ChurnThresholds struct {
@@ -564,9 +565,13 @@ type RunSnapshot struct {
 	LatestTestPath   string                `json:"latest_test_path,omitempty"`
 	ChangedFiles     []string              `json:"changed_files,omitempty"`
 	PreexistingFiles []string              `json:"preexisting_files,omitempty"`
-	FindingsCount    int                   `json:"findings_count"`
-	OpenMajorCount   int                   `json:"open_major_count"`
-	UpdatedAt        time.Time             `json:"updated_at"`
+	// QualityGateBlockers are the blocker/major findings from the latest
+	// quality-gate artifact. They remain visible even when a reviewer disputes
+	// the matching findings-ledger entry with supporting evidence.
+	QualityGateBlockers []GateFinding `json:"quality_gate_blockers,omitempty"`
+	FindingsCount       int           `json:"findings_count"`
+	OpenMajorCount      int           `json:"open_major_count"`
+	UpdatedAt           time.Time     `json:"updated_at"`
 }
 
 func (f FinalRun) MarshalJSON() ([]byte, error) {

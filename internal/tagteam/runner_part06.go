@@ -134,6 +134,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		if directCtx == nil {
 			directCtx = ctx
 		}
+		scopeCtx, scopeCancel := context.WithCancel(directCtx)
+		defer scopeCancel()
+		directCtx = scopeCtx
 		directTimeout := req.Timeout
 		directCancel := func() {}
 		if directTimeout > 0 {
@@ -154,10 +157,15 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		}()
 		stopProgress := startSoftProgressMonitor(directCtx, req, progressRole, phase, started, nil)
 		defer stopProgress()
+		stopScopeGuard := startLiveScopeGuard(directCtx, req, before, scopeCancel)
+		defer stopScopeGuard()
 		if err := rebindRequestControlResume(&req); err != nil {
 			return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
 		result, err := direct.RunDirect(role, req)
+		if scopeErr := stopScopeGuard(); scopeErr != nil {
+			err = scopeErr
+		}
 		if err != nil {
 			var validationErr *directValidationError
 			if errors.As(err, &validationErr) {
@@ -178,6 +186,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 					return Result{}, artifactErr
 				}
 				record.ValidationErrorPath = validationPath
+				err = conciseAdapterResultError(adapter.ID(), err, validationPath, req.EnvOverlay)
 			}
 			if directCtx.Err() != nil {
 				record.CancellationCause = directCtx.Err().Error()
@@ -191,7 +200,7 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 				record.StderrBytes = int64(len(err.Error()) + 1)
 			}
 			finishDeliveryRecord(req, recordPath, record, "failed", err)
-			return Result{}, err
+			return result, err
 		}
 		raw := result.Raw
 		if len(raw) == 0 {
@@ -219,8 +228,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			}
 			record.ValidationErrorPath = validationPath
 			_, _ = writeOutputContractArtifacts(req, role, result, artifactRaw)
-			finishDeliveryRecord(req, recordPath, record, "failed", err)
-			return Result{}, err
+			resultErr := conciseAdapterResultError(adapter.ID(), err, validationPath, req.EnvOverlay)
+			finishDeliveryRecord(req, recordPath, record, "failed", resultErr)
+			return result, resultErr
 		}
 		if role == RoleAdversary && result.Review != nil {
 			if err := result.Review.ValidateCurrent(); err != nil {
@@ -231,8 +241,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 					return Result{}, artifactErr
 				}
 				record.ValidationErrorPath = validationPath
-				finishDeliveryRecord(req, recordPath, record, "failed", contractErr)
-				return Result{}, contractErr
+				resultErr := conciseAdapterResultError(adapter.ID(), contractErr, validationPath, req.EnvOverlay)
+				finishDeliveryRecord(req, recordPath, record, "failed", resultErr)
+				return result, resultErr
 			}
 		}
 		normalizeReview(result.Review)
@@ -309,6 +320,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	if runCtx == nil {
 		runCtx = ctx
 	}
+	scopeCtx, scopeCancel := context.WithCancel(runCtx)
+	defer scopeCancel()
+	runCtx = scopeCtx
 	progressRole := role
 	if req.ProgressRole != "" {
 		progressRole = req.ProgressRole
@@ -338,7 +352,11 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	cmd := exec.CommandContext(runCtx, spec.Argv[0], spec.Argv[1:]...)
 	prepareProcessTree(cmd)
 	cmd.Dir = spec.Dir
-	cmd.Env = mergeCommandEnvForRole(role, req.EnvOverlay, spec.Env)
+	cmd.Env, err = commandEnvForInvocation(role, req, spec.Env)
+	if err != nil {
+		finishDeliveryRecord(req, recordPath, record, "failed", err)
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: err}
+	}
 	if len(spec.Stdin) > 0 {
 		cmd.Stdin = bytes.NewReader(spec.Stdin)
 	}
@@ -369,12 +387,18 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		_ = stderr.Sync()
 	})
 	defer stopProgress()
+	stopScopeGuard := startLiveScopeGuard(runCtx, req, before, scopeCancel)
+	defer stopScopeGuard()
 	if err := rebindRequestControlResume(&req); err != nil {
 		return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
 	if err := cmd.Run(); err != nil {
 		stopProgress()
 		finishInvocationStreams(&record, stdout, stderr)
+		if scopeErr := stopScopeGuard(); scopeErr != nil {
+			finishDeliveryRecord(req, recordPath, record, "failed", scopeErr)
+			return Result{}, scopeErr
+		}
 		if stdout.Exceeded() || stderr.Exceeded() {
 			limitErr := &ExitError{Code: ExitAdapterFailure, Err: outputLimitError(adapter.ID(), maxOutputBytes(req))}
 			finishDeliveryRecord(req, recordPath, record, "failed", limitErr)
@@ -411,6 +435,10 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	}
 	stopProgress()
 	finishInvocationStreams(&record, stdout, stderr)
+	if scopeErr := stopScopeGuard(); scopeErr != nil {
+		finishDeliveryRecord(req, recordPath, record, "failed", scopeErr)
+		return Result{}, scopeErr
+	}
 	_, _ = writeLiveProgress(context.Background(), req, progressRole, phase, started, "completed")
 	logRequestProgress(req, "%s process completed elapsed=%s", phase, shortDuration(time.Since(started)))
 	if stdout.Exceeded() || stderr.Exceeded() {
@@ -459,8 +487,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			return Result{}, artifactErr
 		}
 		record.ValidationErrorPath = validationPath
-		finishDeliveryRecord(req, recordPath, record, "failed", err)
-		return Result{}, err
+		resultErr := conciseAdapterResultError(adapter.ID(), err, validationPath, req.EnvOverlay)
+		finishDeliveryRecord(req, recordPath, record, "failed", resultErr)
+		return Result{Raw: raw, Text: strings.TrimSpace(string(raw))}, resultErr
 	}
 	if err := validateWorkerResultForRequest(ctx, req, &result, before); err != nil {
 		validationPath, artifactErr := writeValidationErrorArtifact(req, err)
@@ -470,8 +499,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		}
 		record.ValidationErrorPath = validationPath
 		_, _ = writeOutputContractArtifacts(req, role, result, artifactRaw)
-		finishDeliveryRecord(req, recordPath, record, "failed", err)
-		return Result{}, err
+		resultErr := conciseAdapterResultError(adapter.ID(), err, validationPath, req.EnvOverlay)
+		finishDeliveryRecord(req, recordPath, record, "failed", resultErr)
+		return result, resultErr
 	}
 	if role == RoleAdversary && result.Review != nil {
 		if err := result.Review.ValidateCurrent(); err != nil {
@@ -482,8 +512,9 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 				return Result{}, artifactErr
 			}
 			record.ValidationErrorPath = validationPath
-			finishDeliveryRecord(req, recordPath, record, "failed", contractErr)
-			return Result{}, contractErr
+			resultErr := conciseAdapterResultError(adapter.ID(), contractErr, validationPath, req.EnvOverlay)
+			finishDeliveryRecord(req, recordPath, record, "failed", resultErr)
+			return result, resultErr
 		}
 	}
 	normalizeReview(result.Review)
@@ -507,16 +538,12 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 }
 
 func conciseAdapterError(message, artifactPath string) string {
-	const headBytes = 2048
-	const tailBytes = 1024
 	message = strings.TrimSpace(message)
-	if len(message) <= headBytes+tailBytes {
+	if len(message) <= 512 && !strings.Contains(message, "\n") {
 		return message
 	}
-	omitted := len(message) - headBytes - tailBytes
-	head := strings.ToValidUTF8(message[:headBytes], "")
-	tail := strings.ToValidUTF8(message[len(message)-tailBytes:], "")
-	summary := fmt.Sprintf("%s\n... %d bytes omitted ...\n%s", head, omitted, tail)
+	firstLine := firstAdapterDiagnosticLine(message, "adapter process failed")
+	summary := firstLine
 	if artifactPath != "" {
 		summary += "\nfull stderr: " + artifactPath
 	}
@@ -588,6 +615,11 @@ func preflight(opts RunOptions, runID string) (string, preflightCleanup, error) 
 			return "", nil, err
 		}
 	}
+	// A dry run may inspect a dirty worktree, but it must not create a branch,
+	// stage files, commit, or stash in order to do so.
+	if opts.DryRun {
+		return baseline, nil, nil
+	}
 	if err := ensureRepositoryRuntimeIgnored(opts.Workdir); err != nil {
 		return "", nil, &ExitError{Code: ExitPreflightFailed, Err: err}
 	}
@@ -604,6 +636,22 @@ func preflight(opts RunOptions, runID string) (string, preflightCleanup, error) 
 		return checkpoint, nil, nil
 	}
 	if opts.SkipDirtyCheck {
+		return baseline, nil, nil
+	}
+	if opts.GitSafety == "integrate" {
+		logProgress(opts, "committing selected worktree state, synchronizing its tracked branch, and creating isolated run branch")
+		baseline, err := gitPrepareIntegratedRun(opts.Workdir, runID)
+		if err != nil {
+			return "", nil, err
+		}
+		return baseline, nil, nil
+	}
+	if opts.GitSafety == "sync" {
+		logProgress(opts, "syncing current branch and creating isolated run branch")
+		baseline, err := gitPrepareSyncedRun(opts.Workdir, runID)
+		if err != nil {
+			return "", nil, err
+		}
 		return baseline, nil, nil
 	}
 	if opts.GitSafety == "branch" {
@@ -656,6 +704,9 @@ func checkAdapters(ctx context.Context, adapters ...Adapter) error {
 }
 
 func selectRunnableRoleAdapter(ctx context.Context, registry map[string]Adapter, role string, primary RoleTarget, fallbackRaw []string, policy LossPolicy, final *FinalRun) (RoleTarget, Adapter, error) {
+	if err := ValidateRoleTarget(roleForSelectionLabel(role), primary); err != nil {
+		return primary, nil, err
+	}
 	adapter, ok := registry[primary.Adapter]
 	if !ok {
 		return primary, nil, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("unknown %s adapter %q", role, primary.Adapter)}
@@ -673,6 +724,9 @@ func selectRunnableRoleAdapter(ctx context.Context, registry map[string]Adapter,
 			target, parseErr := ParseRoleTarget(raw)
 			if parseErr != nil {
 				continue
+			}
+			if err := ValidateRoleTarget(roleForSelectionLabel(role), target); err != nil {
+				return primary, nil, err
 			}
 			attempts = append(attempts, roleTargetString(target))
 			candidate, ok := registry[target.Adapter]
@@ -698,5 +752,18 @@ func selectRunnableRoleAdapter(ctx context.Context, registry map[string]Adapter,
 		status.Attempts = attempts
 		final.RoleStatuses[role] = status
 		return primary, adapter, err
+	}
+}
+
+func roleForSelectionLabel(label string) Role {
+	switch label {
+	case "worker", "coder", "solo":
+		return RoleCoder
+	case "supervisor":
+		return RoleSupervisor
+	case "scout":
+		return RoleScout
+	default:
+		return RoleAdversary
 	}
 }

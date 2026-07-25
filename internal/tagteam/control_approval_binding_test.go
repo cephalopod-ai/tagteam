@@ -41,7 +41,7 @@ func TestControlStartDigestBindsLaunchIdentityFields(t *testing.T) {
 		name   string
 		mutate func(*ControlStartRequest)
 	}{
-		{"worker adapter", func(r *ControlStartRequest) { r.Launch.Team.Worker.Adapter = "codex" }},
+		{"worker adapter", func(r *ControlStartRequest) { r.Launch.Team.Worker.Adapter = "grok" }},
 		{"worker model", func(r *ControlStartRequest) { r.Launch.Team.Worker.Model = "different-model" }},
 		{"supervisor model", func(r *ControlStartRequest) { r.Launch.Team.Supervisor.Model = "different-model" }},
 		{"allowed paths", func(r *ControlStartRequest) { r.Launch.AllowedPaths = []string{"README.md"} }},

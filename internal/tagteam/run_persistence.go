@@ -39,6 +39,14 @@ func terminalPhaseForFailure(runDir, fallback string) string {
 	return fallback
 }
 
+// synchronizeFinalFailurePhase keeps final.json aligned with the durable
+// state.json phase when a run exits before the round loop updates FinalRun.
+func synchronizeFinalFailurePhase(runDir string, final *FinalRun) string {
+	phase := terminalPhaseForFailure(runDir, final.Phase)
+	final.Phase = phase
+	return phase
+}
+
 func mandatoryPersistenceError(artifact string, err error) error {
 	if err == nil {
 		return nil

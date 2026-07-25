@@ -131,6 +131,27 @@ func TestRenderDashboardShowsSerializedInvocationWait(t *testing.T) {
 	}
 }
 
+func TestRenderDashboardShowsQualityGateBlockers(t *testing.T) {
+	m := fixtureModel()
+	m.currentSnapshot.BlockingReason = "blocking_findings"
+	m.currentSnapshot.QualityGateBlockers = []tagteam.GateFinding{{
+		ID:       "CHURN-LINES",
+		Severity: "major",
+		Gate:     "churn",
+		Message:  "diff changes 5815 lines; threshold is 5000",
+	}}
+	out := renderDashboard(m)
+	for _, want := range []string{
+		"Blocking reason: blocking_findings",
+		"Quality gate blockers:",
+		"[major] CHURN-LINES: diff changes 5815 lines; threshold is 5000",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("render output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderDashboardNoSelectedRunShowsComposeHint(t *testing.T) {
 	m := fixtureModel()
 	m.currentSnapshot = nil

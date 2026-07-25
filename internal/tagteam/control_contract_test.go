@@ -16,8 +16,8 @@ func controlLaunchFixture(t *testing.T, repo string) ControlLaunchSpec {
 		Prompt:        "repair the parser",
 		Team: ControlTeamSpec{
 			Mode:       ModeSupervisor,
-			Worker:     &ControlRoleTarget{Adapter: "agy", Model: "gemini-3.6-flash-medium"},
-			Supervisor: &ControlRoleTarget{Adapter: "codex", Model: "gpt-5.6-sol"},
+			Worker:     &ControlRoleTarget{Adapter: "codex", Model: "gpt-5.6-sol"},
+			Supervisor: &ControlRoleTarget{Adapter: "codex", Model: "gpt-5.4"},
 		},
 		AllowedPaths: []string{"./internal/", "README.md"},
 		Rounds:       2,
@@ -252,12 +252,22 @@ func TestControlStatusUsesAuthoritativeSnapshotAndBoundsContent(t *testing.T) {
 	if err := writeJSONWithNewline(filepath.Join(runDir, "final.json"), final); err != nil {
 		t.Fatal(err)
 	}
+	gateFindings := make([]GateFinding, controlMaxChangedFiles+1)
+	for i := range gateFindings {
+		gateFindings[i] = GateFinding{ID: strings.Repeat("g", controlMaxTextBytes+1), Gate: "churn", Severity: "major", Message: "line threshold exceeded"}
+	}
+	if err := writeJSONWithNewline(filepath.Join(runDir, "quality-gates-round-1.json"), QualityGateResult{SchemaVersion: ArtifactSchemaVersion, Round: 1, Blocking: true, Findings: gateFindings}); err != nil {
+		t.Fatal(err)
+	}
 	status, err := service.Status(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Run.Status != string(RunStatusPassed) || len(status.Run.ChangedFiles) != controlMaxChangedFiles || !status.Truncated || len(status.SnapshotID) != 64 {
+	if status.Run.Status != string(RunStatusPassed) || len(status.Run.ChangedFiles) != controlMaxChangedFiles || len(status.Run.QualityGateBlockers) != controlMaxChangedFiles || !status.Truncated || len(status.SnapshotID) != 64 {
 		t.Fatalf("status = %#v", status)
+	}
+	if !strings.HasSuffix(status.Run.QualityGateBlockers[0].ID, "...[truncated]") {
+		t.Fatalf("quality gate blocker text was not bounded: %#v", status.Run.QualityGateBlockers[0])
 	}
 	if _, err := service.Status("../escape"); err == nil || !strings.Contains(err.Error(), "invalid run id") {
 		t.Fatalf("invalid run error = %v", err)

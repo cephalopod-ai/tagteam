@@ -40,8 +40,8 @@ func TestEstimateScoutPromptBudgetStatuses(t *testing.T) {
 }
 
 func TestEstimateScoutPromptBudgetRetrievalIncreasesEstimate(t *testing.T) {
-	base := BuildScoutPrompt("/repo", "ship it", "", "recon", "pre", "", "", "")
-	withRetrieval := BuildScoutPrompt("/repo", "ship it", "", "recon", "pre", "", "", strings.Repeat("retrieval evidence ", 100))
+	base := BuildScoutPrompt("/repo", "ship it", "", "recon", "pre", "", "", "", nil)
+	withRetrieval := BuildScoutPrompt("/repo", "ship it", "", "recon", "pre", "", "", strings.Repeat("retrieval evidence ", 100), nil)
 	baseBudget := estimateScoutPromptBudget(base, ScoutContextLimit{MaxContextTokens: 10000})
 	retrievalBudget := estimateScoutPromptBudget(withRetrieval, ScoutContextLimit{MaxContextTokens: 10000})
 	if retrievalBudget.EstimatedInputTokens <= baseBudget.EstimatedInputTokens {

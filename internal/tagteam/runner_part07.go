@@ -1,7 +1,6 @@
 package tagteam
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -47,6 +46,60 @@ func mergeCommandEnvForRole(role Role, overlay map[string]string, extra []string
 		return mergeCommandEnv(overlay, extra)
 	}
 	return mergeRestrictedCommandEnv(overlay, extra)
+}
+
+// commandEnvForInvocation prevents provider commands and their validation
+// tools from placing incidental temporary artifacts in the repository
+// worktree. Intentional project edits use their explicit repository paths and
+// do not require the caller's ambient temporary directory.
+func commandEnvForInvocation(role Role, req Request, extra []string) ([]string, error) {
+	env := mergeCommandEnvForRole(role, req.EnvOverlay, extra)
+	if strings.TrimSpace(req.RunDir) == "" {
+		return env, nil
+	}
+	invocationID := strings.TrimSpace(req.InvocationID)
+	if invocationID == "" {
+		invocationID = string(role)
+	}
+	tempDir := filepath.Join(req.RunDir, "tmp", "invocations", invocationID)
+	if err := os.MkdirAll(tempDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create isolated temporary directory for %s: %w", role, err)
+	}
+	return overrideCommandEnv(env, map[string]string{
+		"TMPDIR": tempDir,
+		"TMP":    tempDir,
+		"TEMP":   tempDir,
+	}), nil
+}
+
+func overrideCommandEnv(env []string, overrides map[string]string) []string {
+	result := make([]string, 0, len(env)+len(overrides))
+	seen := make(map[string]bool, len(overrides))
+	for _, item := range env {
+		key, _, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		if value, replace := overrides[key]; replace {
+			if !seen[key] {
+				result = append(result, key+"="+value)
+				seen[key] = true
+			}
+			continue
+		}
+		result = append(result, item)
+	}
+	keys := make([]string, 0, len(overrides))
+	for key := range overrides {
+		if !seen[key] {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		result = append(result, key+"="+overrides[key])
+	}
+	return result
 }
 
 func roleAllowsParentEnv(role Role) bool {
@@ -268,94 +321,6 @@ func captureDiffArtifact(ctx context.Context, workdir, baseline, runDir string, 
 		Patch:       string(patch),
 		Metadata:    metadata,
 	}, nil
-}
-
-func deterministicDiffPatch(ctx context.Context, workdir, baseline, indexPath string) ([]byte, error) {
-	patch, _, _, _, err := deterministicDiffOutputs(ctx, workdir, baseline, indexPath)
-	return patch, err
-}
-
-func deterministicDiffOutputs(ctx context.Context, workdir, baseline, indexPath string) ([]byte, []byte, []byte, []byte, error) {
-	defer os.Remove(indexPath)
-	defer os.Remove(indexPath + ".lock")
-	pathspecPath := indexPath + ".pathspec"
-	defer os.Remove(pathspecPath)
-	env := []string{"LC_ALL=C", "GIT_INDEX_FILE=" + indexPath}
-	if _, err := runGitCommandBytes(ctx, workdir, env, "read-tree", baseline); err != nil {
-		return nil, nil, nil, nil, err
-	}
-	if _, err := runGitCommandBytes(ctx, workdir, env, "add", "-u", "--", "."); err != nil {
-		return nil, nil, nil, nil, err
-	}
-	pathspec, err := deterministicAdditionalPathspec(ctx, workdir, baseline)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	if len(pathspec) > 0 {
-		if err := os.WriteFile(pathspecPath, pathspec, 0o644); err != nil {
-			return nil, nil, nil, nil, err
-		}
-		if _, err := runGitCommandBytes(ctx, workdir, env, "add", "--pathspec-from-file="+pathspecPath, "--pathspec-file-nul"); err != nil {
-			return nil, nil, nil, nil, err
-		}
-	}
-	patch, err := runGitCommandBytes(ctx, workdir, env, "-c", "core.quotepath=false", "diff", "--cached", "--no-ext-diff", "--no-color", "--binary", "--full-index", "--find-renames=50%", baseline, "--", ".")
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	numstat, err := runGitCommandBytes(ctx, workdir, env, "-c", "core.quotepath=false", "diff", "--cached", "--no-ext-diff", "--no-color", "--numstat", baseline, "--", ".")
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	statusZ, err := runGitCommandBytes(ctx, workdir, env, "-c", "core.quotepath=false", "diff", "--cached", "--no-ext-diff", "--no-color", "--name-status", "-z", "--find-renames=50%", baseline, "--", ".")
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	numstatZ, err := runGitCommandBytes(ctx, workdir, env, "-c", "core.quotepath=false", "diff", "--cached", "--no-ext-diff", "--no-color", "--numstat", "-z", baseline, "--", ".")
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	return patch, numstat, statusZ, numstatZ, nil
-}
-
-func deterministicAdditionalPathspec(ctx context.Context, workdir, baseline string) ([]byte, error) {
-	untracked, err := runGitCommandBytes(ctx, workdir, []string{"LC_ALL=C"}, "ls-files", "-z", "--others", "--exclude-standard", "--", ".")
-	if err != nil {
-		return nil, err
-	}
-	// A staged new file is no longer reported by ls-files --others. Rebuilding
-	// the temporary index from the baseline must therefore include additions
-	// from the real index as well, or review artifacts silently omit them.
-	stagedAdds, err := runGitCommandBytes(ctx, workdir, []string{"LC_ALL=C"}, "diff", "--cached", "--name-only", "--diff-filter=ACR", "-z", "--find-renames=50%", baseline, "--", ".")
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	paths := []string{}
-	for _, raw := range append(splitNULTokens(untracked), splitNULTokens(stagedAdds)...) {
-		path := strings.TrimPrefix(raw, "./")
-		if path == "" || path == ".tagteam" || strings.HasPrefix(path, ".tagteam/") {
-			continue
-		}
-		if seen[path] {
-			continue
-		}
-		if _, err := os.Lstat(filepath.Join(workdir, filepath.FromSlash(path))); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, err
-		}
-		seen[path] = true
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	var buf bytes.Buffer
-	for _, path := range paths {
-		buf.WriteString(path)
-		buf.WriteByte(0)
-	}
-	return buf.Bytes(), nil
 }
 
 func buildDiffFiles(statusZ, numstatZ []byte) []DiffFile {
@@ -704,12 +669,17 @@ func runTestCommand(ctx context.Context, workdir, testCmd string, timeout time.D
 		}
 		return TestRun{}, isolationErr
 	}
+	commandTempDir, cleanupTempAlias, aliasErr := shortTestTempAlias(tempDir)
+	if aliasErr != nil {
+		return TestRun{}, aliasErr
+	}
+	defer cleanupTempAlias()
 	cmd.Env = mergeCommandEnv(envOverlay, []string{
 		"TAGTEAM_STATE_ROOT=" + stateRoot,
 		"XDG_STATE_HOME=" + stateRoot,
-		"TMPDIR=" + tempDir,
-		"TMP=" + tempDir,
-		"TEMP=" + tempDir,
+		"TMPDIR=" + commandTempDir,
+		"TMP=" + commandTempDir,
+		"TEMP=" + commandTempDir,
 	})
 	var out boundedBuffer
 	out.limit = maxBytes

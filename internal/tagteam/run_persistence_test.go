@@ -49,6 +49,20 @@ func TestPersistRunStateSnapshotFailureOccursAfterJournal(t *testing.T) {
 	}
 }
 
+func TestSynchronizeFinalFailurePhaseUsesDurablePlanningState(t *testing.T) {
+	runDir := t.TempDir()
+	if err := writeRunState(runDir, RunState{RunID: "run-1", Status: "running", Phase: string(PhasePlanning)}); err != nil {
+		t.Fatalf("write running state: %v", err)
+	}
+	final := FinalRun{Phase: "preflight"}
+	if got := synchronizeFinalFailurePhase(runDir, &final); got != string(PhasePlanning) {
+		t.Fatalf("terminal phase = %q, want %q", got, PhasePlanning)
+	}
+	if final.Phase != string(PhasePlanning) {
+		t.Fatalf("final phase = %q, want durable planning phase", final.Phase)
+	}
+}
+
 func TestPersistTerminalRunRewritesSuccessAsPersistenceFailure(t *testing.T) {
 	final := FinalRun{RunID: "run-1", RunDir: "/tmp/run-1", Status: RunStatusPassed, Verdict: "done"}
 	finalWrites := []FinalRun{}

@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -29,7 +28,7 @@ With no RUN_ID it starts in compose mode, surfaces the active/latest run as cont
 			if err != nil {
 				return err
 			}
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			ctx, stop := commandSignalContext(cmd.Context())
 			defer stop()
 			mutationBlocked := ""
 			if _, verifyErr := verifyInstallation(shared.AllowDevBuild); verifyErr != nil {

@@ -35,8 +35,8 @@ func TestControlLaunchNormalizationEqualsDirectCLIOptions(t *testing.T) {
 		Mode:            "supervisor",
 		Workdir:         normalized.Repository.CanonicalRoot,
 		StateRoot:       stateRoot,
-		Worker:          "agy:gemini-3.6-flash-medium",
-		Supervisor:      "codex:gpt-5.6-sol",
+		Worker:          "codex:gpt-5.6-sol",
+		Supervisor:      "codex:gpt-5.4",
 		AllowedPaths:    append([]string(nil), normalized.AllowedPaths...),
 		Rounds:          normalized.Rounds,
 		Timeout:         time.Duration(normalized.TimeBudget.InvocationTimeoutSeconds) * time.Second,
@@ -71,10 +71,10 @@ func TestControlLaunchNormalizationEqualsDirectCLIOptions(t *testing.T) {
 		t.Fatalf("budgets MCP wall=%s watchdog=%s CLI wall=%s watchdog=%s", mcpOpts.MaxWallTime, mcpOpts.WatchdogTimeout, cliOpts.MaxWallTime, cliOpts.WatchdogTimeout)
 	}
 	// The projected roles must carry the exact adapters and models requested.
-	if mcpOpts.Coder.Adapter != "agy" || mcpOpts.Coder.Model != "gemini-3.6-flash-medium" {
+	if mcpOpts.Coder.Adapter != "codex" || mcpOpts.Coder.Model != "gpt-5.6-sol" {
 		t.Fatalf("worker role = %#v", mcpOpts.Coder)
 	}
-	if mcpOpts.Adversary.Adapter != "codex" || mcpOpts.Adversary.Model != "gpt-5.6-sol" {
+	if mcpOpts.Adversary.Adapter != "codex" || mcpOpts.Adversary.Model != "gpt-5.4" {
 		t.Fatalf("supervisor role = %#v", mcpOpts.Adversary)
 	}
 }

@@ -17,7 +17,7 @@ orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`
 | Component | File(s) | Responsibility |
 |---|---|---|
 | Entry point | `main.go` | Wires cobra root command, invokes `internal/cli`. |
-| CLI surface | `internal/cli/root.go`, `internal/cli/tui.go` | Defines commands including `resume`, `transfer`, `findings defer`, and `verify-install`, flag parsing, output formatting, and TUI run selection. |
+| CLI surface | `internal/cli/root.go`, `internal/cli/tui.go` | Defines commands including `resume`, `transfer`, `findings defer/resolve`, and `verify-install`, flag parsing, output formatting, and TUI run selection. |
 | App / run loop | `internal/tagteam/runner.go` | `App` type; `Run`, `Review`, `Fix`, `Doctor`; the round loop, role dispatch, env policy, artifact writing. |
 | Config resolution | `internal/tagteam/config.go` | Layered config (flags > shell env > `.env` overlay > repo `.tagteam.toml` > user config > defaults), profiles, `ResolveOptions`. |
 | Adapters | `internal/tagteam/adapters.go`, `internal/tagteam/adapters_part02.go` | Adapter interface + `codex`, `codex-oss`, `claude`, `agy`, `gosling`, `grok`, `openai-compatible`; `Registry`, command construction, capability sets. |

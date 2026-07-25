@@ -58,11 +58,21 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 			return
 		}
 		final.ExitCode = ExitCode(err)
-		final.Verdict = "error"
 		final.Summary = redactSecretsWithOverlay(err.Error(), opts.EnvOverlay)
 		final.FinishedAt = time.Now().UTC()
-		if final.Status != RunStatusQuarantined && final.Status != RunStatusCancelled {
+		cancelled := errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled)
+		if cancelled {
+			final.Status = RunStatusCancelled
+			final.Verdict = "cancelled"
+			final.BlockingReason = string(ReasonCancelled)
+			for role, status := range final.RoleStatuses {
+				if status.Status == "running" {
+					setRoleStatus(&final, role, RoleTarget{Adapter: status.Adapter, Model: status.Model}, string(RunStatusCancelled), ReasonCancelled, err.Error())
+				}
+			}
+		} else if final.Status != RunStatusQuarantined && final.Status != RunStatusCancelled {
 			final.Status = RunStatusFailed
+			final.Verdict = "error"
 		}
 		applyInvocationBudget(&final, budget)
 		// Deferred failure persistence must not write through a replaced run dir.
@@ -72,7 +82,11 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 		} else {
 			runDir = current
 		}
-		terminalState := runStateForFinal(final, opts.Mode, terminalPhaseForFailure(runDir, final.Phase), "resume_failed")
+		resumeStatus := "resume_failed"
+		if cancelled {
+			resumeStatus = "resume_cancelled"
+		}
+		terminalState := runStateForFinal(final, opts.Mode, terminalPhaseForFailure(runDir, final.Phase), resumeStatus)
 		terminalState.CurrentRound = max(1, state.CurrentRound)
 		if persistErr := a.persistTerminalRun(opts.Workdir, &final, terminalState); persistErr != nil {
 			err = errors.Join(err, persistErr)
@@ -113,6 +127,9 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 			return final, err
 		}
 		phase = PhaseImplementing
+		// Planning adapters are read-only. A resumed plan can retain an old diff
+		// hash, so start implementation from the verified live worktree instead.
+		state = resumeStateAfterPlanning(state, currentDiffHash)
 	}
 
 	if opts.Mode == ModeSolo {
@@ -125,6 +142,16 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 	}
 	runCompleted = true
 	return final, err
+}
+
+func resumeStateAfterPlanning(state RunState, currentDiffHash string) RunState {
+	state.Phase = string(PhaseImplementing)
+	state.DiffHash = currentDiffHash
+	state.InvocationID = ""
+	state.Role = ""
+	state.Adapter = ""
+	state.Model = ""
+	return state
 }
 
 func prepareResumedFinal(saved FinalRun, opts RunOptions, meta Meta, state RunState, runDir string) FinalRun {
@@ -371,7 +398,8 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 			return &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
 		path := filepath.Join(runDir, "scout-round-1.json")
-		result, err := a.runAdapter(ctx, runtime.scout, RoleScout, Request{Context: ctx, Prompt: withRepoInstructions(BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", ""), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Scout.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: path, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed scout", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
+		setRoleStatus(final, "scout", opts.Scout, "running", "", "")
+		result, err := a.runAdapter(ctx, runtime.scout, RoleScout, Request{Context: ctx, Prompt: withAdapterRepoInstructions(runtime.scout, BuildScoutPrompt(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", "", final.BaselineTest), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Scout.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: path, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed scout", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 		if err != nil {
 			return err
 		}
@@ -380,6 +408,7 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 		}
 	}
 	if opts.Mode == ModeSupervisor && opts.SupervisorSlicing && runtime.workPlan == nil {
+		setRoleStatus(final, "supervisor", opts.Adversary, "running", "", "")
 		plan, err := a.resumeWorkPlan(ctx, opts, runDir, *runtime)
 		if err != nil {
 			return err
@@ -418,7 +447,8 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 			if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "supervisor-brief.md"); err != nil {
 				return &ExitError{Code: ExitPreflightFailed, Err: err}
 			}
-			result, err := a.runAdapter(ctx, runtime.reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{Context: ctx, Prompt: withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-brief.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed supervisor brief", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
+			setRoleStatus(final, "supervisor", opts.Adversary, "running", "", "")
+			result, err := a.runAdapter(ctx, runtime.reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{Context: ctx, Prompt: withAdapterRepoInstructions(runtime.reviewer, BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-brief.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed supervisor brief", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 			if err != nil {
 				return err
 			}
@@ -430,7 +460,8 @@ func (a *App) resumePlanning(ctx context.Context, opts RunOptions, runDir string
 		if runDir, err = rebindControlResumeRunDir(gate, runDir, final, "supervisor-instructions.md"); err != nil {
 			return &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
-		result, err := a.runAdapter(ctx, runtime.reviewer, RoleSupervisor, Request{Context: ctx, Prompt: withRepoInstructions(BuildRelaySupervisorInstructionsPrompt(opts.Prompt, runtime.relay.Brief, runtime.relay.Scout), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-instructions.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed relay instructions", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
+		setRoleStatus(final, "supervisor", opts.Adversary, "running", "", "")
+		result, err := a.runAdapter(ctx, runtime.reviewer, RoleSupervisor, Request{Context: ctx, Prompt: withAdapterRepoInstructions(runtime.reviewer, BuildRelaySupervisorInstructionsPrompt(opts.Prompt, runtime.relay.Brief, runtime.relay.Scout, final.BaselineTest), runtime.repoInstructions), EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: filepath.Join(runDir, "supervisor-instructions.md"), Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed relay instructions", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 		if err != nil {
 			return err
 		}
@@ -450,7 +481,7 @@ func (a *App) resumeWorkPlan(ctx context.Context, opts RunOptions, runDir string
 	if err := writeFileDurable(schemaPath, []byte(WorkPlanSchema), 0o644, true); err != nil {
 		return WorkPlan{}, err
 	}
-	prompt := withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package), runtime.repoInstructions)
+	prompt := withAdapterRepoInstructions(runtime.reviewer, BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package, workPlanBudgetSeconds(opts.Timeout)), runtime.repoInstructions)
 	result, err := a.runAdapter(ctx, runtime.reviewer, RoleSupervisor, Request{Context: ctx, Prompt: prompt, EnvOverlay: opts.EnvOverlay, Model: opts.Adversary.Model, Workdir: opts.Workdir, RunDir: runDir, OutputPath: path, SchemaPath: schemaPath, Timeout: opts.Timeout, WatchdogTimeout: opts.WatchdogTimeout, Phase: "planning resumed work plan", Budget: opts.InvocationBudget, MaxOutputBytes: opts.MaxOutputBytes, controlResumeGate: gate}, opts.DryRun)
 	if err != nil {
 		return WorkPlan{}, err
@@ -459,7 +490,7 @@ func (a *App) resumeWorkPlan(ctx context.Context, opts RunOptions, runDir string
 	if err != nil {
 		return WorkPlan{}, err
 	}
-	if err := validateWorkPlanBudget(plan, int64(opts.Timeout.Seconds()*0.8)); err != nil {
+	if err := validateWorkPlanBudget(plan, workPlanBudgetSeconds(opts.Timeout), opts.AutoNextPackage); err != nil {
 		return WorkPlan{}, err
 	}
 	if runDir, err = rebindControlResumeRunDir(gate, runDir, nil, "supervisor-work-plan.json"); err != nil {

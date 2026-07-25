@@ -532,8 +532,44 @@ func (a *App) Run(ctx context.Context, opts RunOptions) (FinalRun, error) {
 	if err := validateRunRoles(opts); err != nil {
 		return FinalRun{}, err
 	}
+	if err := validateInvocationBudget(opts); err != nil {
+		return FinalRun{}, err
+	}
 	if opts.Mode == ModeSolo {
 		return a.runSolo(ctx, opts)
 	}
 	return a.runLoop(ctx, opts, nil)
+}
+
+func validateInvocationBudget(opts RunOptions) error {
+	if opts.MaxRoleInvocations == 0 {
+		return nil
+	}
+	rounds := opts.Rounds
+	if rounds <= 0 {
+		rounds = 1
+	}
+	minimum, description := plannedInvocationMinimum(opts.Mode, rounds)
+	if opts.MaxRoleInvocations >= minimum {
+		return nil
+	}
+	return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf(
+		"max-role-invocations=%d is too small for %s mode with %d round(s): at least %d planned provider invocations are required (%s); use 0 for unlimited or increase the cap",
+		opts.MaxRoleInvocations, opts.Mode, rounds, minimum, description,
+	)}
+}
+
+func plannedInvocationMinimum(mode Mode, rounds int) (int, string) {
+	switch mode {
+	case ModeSolo:
+		return rounds, "one implementation call per round"
+	case ModeSupervisor:
+		return 1 + (2 * rounds), "supervisor plan or brief, worker, and supervisor review"
+	case ModeRelay:
+		return 3 + (3 * rounds), "pre-scout, supervisor brief, relay instructions, coder, post-scout, and supervisor review"
+	case ModeAdversarial:
+		return 2 * rounds, "coder and adversarial review per round"
+	default:
+		return 2 * rounds, "implementation and review per round"
+	}
 }

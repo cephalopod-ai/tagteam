@@ -418,7 +418,7 @@ func TestRunLoop_SupervisorModeDryRun(t *testing.T) {
 		Prompt:    "add a feature",
 		Workdir:   repo,
 		Mode:      ModeSupervisor,
-		Coder:     RoleTarget{Adapter: "agy"},
+		Coder:     RoleTarget{Adapter: "codex"},
 		Adversary: RoleTarget{Adapter: "claude"},
 		Rounds:    2,
 		DryRun:    true,
@@ -434,7 +434,7 @@ func TestRunLoop_SupervisorModeDryRun(t *testing.T) {
 	if final.RoundsCompleted != 1 {
 		t.Fatalf("rounds completed = %d", final.RoundsCompleted)
 	}
-	if final.Adapters["worker"] != "agy" || final.Adapters["supervisor"] != "claude" {
+	if final.Adapters["worker"] != "codex" || final.Adapters["supervisor"] != "claude" {
 		t.Fatalf("adapters = %#v", final.Adapters)
 	}
 	if _, ok := final.Adapters["coder"]; ok {
@@ -577,7 +577,7 @@ func TestRun_NormalizesEmptyModeToSupervisor(t *testing.T) {
 	final, err := app.Run(context.Background(), RunOptions{
 		Prompt:    "add a feature",
 		Workdir:   repo,
-		Coder:     RoleTarget{Adapter: "agy"},
+		Coder:     RoleTarget{Adapter: "codex"},
 		Adversary: RoleTarget{Adapter: "claude"},
 		Rounds:    1,
 		DryRun:    true,
@@ -589,7 +589,7 @@ func TestRun_NormalizesEmptyModeToSupervisor(t *testing.T) {
 	if final.Mode != ModeSupervisor {
 		t.Fatalf("empty mode should normalize to supervisor, got %q", final.Mode)
 	}
-	if final.Adapters["worker"] != "agy" || final.Adapters["supervisor"] != "claude" {
+	if final.Adapters["worker"] != "codex" || final.Adapters["supervisor"] != "claude" {
 		t.Fatalf("expected supervisor-mode labels, got %#v", final.Adapters)
 	}
 }
@@ -623,7 +623,7 @@ func TestRunLoop_SupervisorCanEditUsesCoderRoleForBrief(t *testing.T) {
 		Prompt:            "add a feature",
 		Workdir:           repo,
 		Mode:              ModeSupervisor,
-		Coder:             RoleTarget{Adapter: "agy"},
+		Coder:             RoleTarget{Adapter: "codex"},
 		Adversary:         RoleTarget{Adapter: "claude"},
 		SupervisorCanEdit: true,
 		Rounds:            1,

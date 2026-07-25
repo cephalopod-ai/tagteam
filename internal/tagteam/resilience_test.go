@@ -78,6 +78,54 @@ func TestResumeQuarantinesBaselineMismatch(t *testing.T) {
 	}
 }
 
+func TestApplySavedResumeTargetsHonorsExplicitCompatibleOverrides(t *testing.T) {
+	opts := RunOptions{
+		Mode:                  ModeRelay,
+		Coder:                 RoleTarget{Adapter: "grok", Model: "grok-4.5"},
+		Adversary:             RoleTarget{Adapter: "codex", Model: "gpt-5.6-sol"},
+		AdversaryExplicit:     true,
+		AdversaryExplicitMode: ModeRelay,
+	}
+	saved := FinalRun{
+		Mode:      ModeRelay,
+		Coder:     RoleTarget{Adapter: "grok", Model: "grok-4.5"},
+		Adversary: RoleTarget{Adapter: "claude", Model: "claude-sonnet-5"},
+		Scout:     RoleTarget{Adapter: "agy", Model: "gemini-3.6-flash-medium"},
+	}
+	if err := applySavedResumeTargets(&opts, saved); err != nil {
+		t.Fatal(err)
+	}
+	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-sol" {
+		t.Fatalf("explicit supervisor override was replaced: %#v", opts.Adversary)
+	}
+	if opts.Coder != saved.Coder || opts.Scout != saved.Scout {
+		t.Fatalf("non-explicit roles were not restored: %#v", opts)
+	}
+}
+
+func TestApplySavedResumeTargetsRejectsIncompatibleOverride(t *testing.T) {
+	opts := RunOptions{Mode: ModeRelay, AdversaryExplicit: true, AdversaryExplicitMode: ModeAdversarial}
+	if err := applySavedResumeTargets(&opts, FinalRun{Mode: ModeRelay}); err == nil {
+		t.Fatal("expected incompatible reviewer override to be rejected")
+	}
+}
+
+func TestRestoreTargetsFromMetaDoesNotReplaceExplicitResumeTarget(t *testing.T) {
+	opts := RunOptions{
+		Mode:              ModeRelay,
+		Adversary:         RoleTarget{Adapter: "codex", Model: "gpt-5.6-sol"},
+		AdversaryExplicit: true,
+	}
+	meta := Meta{Adapters: map[string]string{"coder": "grok", "supervisor": "claude", "scout": "agy"}, Models: map[string]string{"coder": "grok-4.5", "supervisor": "claude-sonnet-5", "scout": "gemini-3.6-flash-medium"}}
+	restoreTargetsFromMeta(&opts, meta)
+	if opts.Coder.Adapter != "grok" || opts.Scout.Adapter != "agy" {
+		t.Fatalf("missing legacy roles were not restored: %#v", opts)
+	}
+	if opts.Adversary.Adapter != "codex" || opts.Adversary.Model != "gpt-5.6-sol" {
+		t.Fatalf("explicit replacement was overwritten: %#v", opts.Adversary)
+	}
+}
+
 func TestResumeContinuesSameRunFromFirstIncompletePhase(t *testing.T) {
 	installFakeClaudeBinary(t)
 	for _, phase := range []RunPhase{PhasePlanning, PhaseImplementing, PhaseTesting, PhaseReviewing, PhaseRepairing} {
@@ -183,6 +231,32 @@ func TestResumeRoutesInterruptedPartialDiffThroughRecovery(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(repo, "README.md")); err != nil || string(data) != "partial worker edit\n" {
 		t.Fatalf("partial work was not preserved: %q err=%v", data, err)
+	}
+}
+
+func TestResumeStateAfterPlanningUsesVerifiedWorktree(t *testing.T) {
+	state := RunState{
+		Phase:        string(PhasePlanning),
+		DiffHash:     "stale-diff",
+		InvocationID: "planning-invocation",
+		Role:         string(RoleSupervisor),
+		Adapter:      "claude",
+		Model:        "sonnet",
+	}
+
+	got := resumeStateAfterPlanning(state, "verified-diff")
+	if got.Phase != string(PhaseImplementing) || got.DiffHash != "verified-diff" {
+		t.Fatalf("resume state did not begin implementation from verified worktree: %#v", got)
+	}
+	if got.InvocationID != "" || got.Role != "" || got.Adapter != "" || got.Model != "" {
+		t.Fatalf("planning invocation leaked into editor recovery state: %#v", got)
+	}
+}
+
+func TestInterruptedEditorFailureUsesPhaseWithoutInvocation(t *testing.T) {
+	err := interruptedEditorFailure(RunState{}, PhaseImplementing)
+	if got := err.Error(); got != "uncheckpointed worktree diff found while resuming implementing; no active invocation was recorded" {
+		t.Fatalf("error = %q", got)
 	}
 }
 

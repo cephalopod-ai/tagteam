@@ -202,9 +202,10 @@ func IsOutputContractError(err error) bool {
 }
 
 type CapabilitySet struct {
-	SupportsSchema bool
-	SupportsResume bool
-	SupportsStdin  bool
+	SupportsSchema           bool
+	SupportsResume           bool
+	SupportsStdin            bool
+	LoadsProjectInstructions bool
 	// SerializeInvocations requests the cross-process invocation lock for
 	// CLIs that misbehave when multiple copies run concurrently.
 	SerializeInvocations bool
@@ -242,10 +243,15 @@ type Request struct {
 	Verbose               bool
 	Budget                *InvocationBudget
 	RequireWorkerContract bool
-	InvocationID          string
-	ProgressStdout        *invocationStream
-	ProgressStderr        *invocationStream
-	ProgressLastActivity  *time.Time
+	// AllowedScope is the host-derived intersection of operator and package
+	// limits. EnforceAllowedScope distinguishes an intentional empty
+	// intersection (deny all writes) from legacy requests without a policy.
+	AllowedScope         []string
+	EnforceAllowedScope  bool
+	InvocationID         string
+	ProgressStdout       *invocationStream
+	ProgressStderr       *invocationStream
+	ProgressLastActivity *time.Time
 	// controlResumeGate is set only for MCP ResumeControl adapter requests.
 	// When non-nil, shared mutation helpers re-resolve the runs-root boundary
 	// immediately before host writes and dispatch. Nil for normal CLI resume.

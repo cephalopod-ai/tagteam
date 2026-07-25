@@ -137,6 +137,9 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		if profile.TestIdentityRegex != "" {
 			testIdentityRegex = profile.TestIdentityRegex
 		}
+		if profile.GitSafety != "" {
+			gitSafety = profile.GitSafety
+		}
 		mergeChurnThresholds(&churn, profile.Churn)
 		if profile.ScoutMode != "" {
 			scoutMode = profile.ScoutMode
@@ -466,7 +469,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	if changed["autostash"] {
 		gitSafety = "autostash"
 	}
-	if gitSafety != "clean" && gitSafety != "autostash" && gitSafety != "branch" && gitSafety != "allow-dirty" {
+	if gitSafety != "clean" && gitSafety != "autostash" && gitSafety != "branch" && gitSafety != "allow-dirty" && gitSafety != "sync" && gitSafety != "integrate" {
 		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("invalid git_safety %q", gitSafety)}
 	}
 	if testIdentityRegex != "" {
@@ -672,6 +675,12 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		OpenAICompatibleArgs:      openAICompatibleArgs,
 		EnvOverlay:                cloneStringMap(cfg.EnvOverlay),
 		ConfigSources:             sources,
+	}
+	if err := validateRunRoles(opts); err != nil {
+		return RunOptions{}, err
+	}
+	if err := validateRunFallbacks(opts); err != nil {
+		return RunOptions{}, err
 	}
 	if err := validateClaudeRoleAssignments(opts); err != nil {
 		return RunOptions{}, err

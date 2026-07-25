@@ -131,9 +131,11 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		if final.FinishedAt.IsZero() {
 			final.FinishedAt = time.Now().UTC()
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		cancelled := errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled)
+		if cancelled {
 			final.Status = RunStatusCancelled
 			final.BlockingReason = string(ReasonCancelled)
+			final.Verdict = "cancelled"
 			if artifact, captureErr := captureDiffArtifact(context.Background(), opts.Workdir, baseline, runDir, max(1, final.RoundsCompleted+1)); captureErr == nil {
 				final.LatestDiffPath = artifact.PatchPath
 				final.LatestDiffSHA256 = artifact.Metadata.DiffSHA256
@@ -144,10 +146,15 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			final.Status = RunStatusQuarantined
 			final.BlockingReason = string(ReasonQuarantined)
 		}
-		setFinalBlocking(&final, classifyRoleFailure(currentRole, err), err.Error())
+		reason := classifyRoleFailure(currentRole, err)
+		if cancelled {
+			reason = ReasonCancelled
+			setRoleStatus(&final, currentRole, RoleTarget{Adapter: final.Adapters[currentRole], Model: final.Models[currentRole]}, string(RunStatusCancelled), reason, err.Error())
+		}
+		setFinalBlocking(&final, reason, err.Error())
 		applyInvocationBudget(&final, budget)
 		finalizeRunState(&final)
-		state := runStateForFinal(final, opts.Mode, terminalPhaseForFailure(runDir, final.Phase), "")
+		state := runStateForFinal(final, opts.Mode, synchronizeFinalFailurePhase(runDir, &final), "")
 		if persistErr := a.persistTerminalRun(opts.Workdir, &final, state); persistErr != nil {
 			err = errors.Join(err, persistErr)
 		}
@@ -302,26 +309,28 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 				if err := writeFileDurable(planSchemaPath, []byte(WorkPlanSchema), 0o644, true); err != nil {
 					return final, err
 				}
-				planPrompt := withRepoInstructions(BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package), repoInstructions)
-				if !reviewer.Capabilities().SupportsSchema {
-					planPrompt += "\n\nJSON schema:\n" + WorkPlanSchema
-				}
-				planResult, err := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
-					Context:         ctx,
-					Prompt:          planPrompt,
-					EnvOverlay:      opts.EnvOverlay,
-					Model:           opts.Adversary.Model,
-					Workdir:         opts.Workdir,
-					RunDir:          runDir,
-					OutputPath:      planOutputPath,
-					SchemaPath:      planSchemaPath,
-					Timeout:         opts.Timeout,
-					WatchdogTimeout: opts.WatchdogTimeout,
-					Phase:           fmt.Sprintf("supervisor slicing %s", reviewer.ID()),
-					Quiet:           opts.Quiet,
-					Verbose:         opts.Verbose,
-					Budget:          opts.InvocationBudget,
-				}, false)
+				planResult, err := a.runSupervisorWithFallback(ctx, &opts, registry, runDir, reviewerLabel, &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+					planPrompt := withAdapterRepoInstructions(adapter, BuildSupervisorWorkPlanPrompt(opts.Workdir, opts.Prompt, opts.MaxPackages, opts.Package, workPlanBudgetSeconds(opts.Timeout)), repoInstructions)
+					if !adapter.Capabilities().SupportsSchema {
+						planPrompt += "\n\nJSON schema:\n" + WorkPlanSchema
+					}
+					return a.runAdapter(ctx, adapter, RoleSupervisor, Request{
+						Context:         ctx,
+						Prompt:          planPrompt,
+						EnvOverlay:      opts.EnvOverlay,
+						Model:           target.Model,
+						Workdir:         opts.Workdir,
+						RunDir:          runDir,
+						OutputPath:      planOutputPath,
+						SchemaPath:      planSchemaPath,
+						Timeout:         opts.Timeout,
+						WatchdogTimeout: opts.WatchdogTimeout,
+						Phase:           fmt.Sprintf("supervisor slicing %s", adapter.ID()),
+						Quiet:           opts.Quiet,
+						Verbose:         opts.Verbose,
+						Budget:          opts.InvocationBudget,
+					}, false)
+				})
 				if err != nil {
 					if repairedPlan, repairCost, ok, rerr := a.tryWorkPlanRepair(ctx, opts, registry, runDir, planOutputPath, nil, true, err, &final, reviewerLabel); rerr != nil {
 						return final, rerr
@@ -348,7 +357,7 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 					planCost += planResult.CostUSD
 				}
 			}
-			if err := validateWorkPlanBudget(plan, int64(opts.Timeout.Seconds()*0.8)); err != nil {
+			if err := validateWorkPlanBudget(plan, workPlanBudgetSeconds(opts.Timeout), opts.AutoNextPackage); err != nil {
 				return final, &ExitError{Code: ExitAdapterFailure, Err: err}
 			}
 			pkg, ok := plan.Selected()
@@ -380,21 +389,23 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		} else {
 			logProgress(opts, "supervisor brief started adapter=%s", reviewer.ID())
 			briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
-			briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
-				Context:         ctx,
-				Prompt:          withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), repoInstructions),
-				EnvOverlay:      opts.EnvOverlay,
-				Model:           opts.Adversary.Model,
-				Workdir:         opts.Workdir,
-				RunDir:          runDir,
-				OutputPath:      briefOutputPath,
-				Timeout:         opts.Timeout,
-				WatchdogTimeout: opts.WatchdogTimeout,
-				Phase:           fmt.Sprintf("supervisor brief %s", reviewer.ID()),
-				Quiet:           opts.Quiet,
-				Verbose:         opts.Verbose,
-				Budget:          opts.InvocationBudget,
-			}, opts.DryRun)
+			briefResult, err := a.runSupervisorWithFallback(ctx, &opts, registry, runDir, reviewerLabel, &reviewer, &meta, &final, func(target RoleTarget, adapter Adapter) (Result, error) {
+				return a.runAdapter(ctx, adapter, supervisorBriefRole(opts.SupervisorCanEdit), Request{
+					Context:         ctx,
+					Prompt:          withAdapterRepoInstructions(adapter, BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit, final.BaselineTest), repoInstructions),
+					EnvOverlay:      opts.EnvOverlay,
+					Model:           target.Model,
+					Workdir:         opts.Workdir,
+					RunDir:          runDir,
+					OutputPath:      briefOutputPath,
+					Timeout:         opts.Timeout,
+					WatchdogTimeout: opts.WatchdogTimeout,
+					Phase:           fmt.Sprintf("supervisor brief %s", adapter.ID()),
+					Quiet:           opts.Quiet,
+					Verbose:         opts.Verbose,
+					Budget:          opts.InvocationBudget,
+				}, opts.DryRun)
+			})
 			if err != nil {
 				return final, err
 			}
@@ -404,209 +415,11 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		}
 	}
 	if opts.Mode == ModeRelay && initialReview == nil {
-		scoutOutputPath := filepath.Join(runDir, "scout-round-1.json")
-		scoutStatusPath := filepath.Join(runDir, "scout-execution-round-1.json")
-		scoutStatus := newScoutExecutionArtifact(opts.ScoutMode, opts.ScoutFailurePolicy, opts.ScoutRetrieval && opts.ScoutMode == "recon")
-		skipScout := !scoutAvailable
-		retrievalContext := ""
-		codeIntelContext := ""
-		var retrieval RetrievalArtifact
-		var codeIntel CodeIntelArtifact
-		if (opts.CodeIntelCommand != "" || len(opts.CodeIntel.Providers) > 0) && !opts.DryRun {
-			codeIntel, _ = runConfiguredCodeIntel(ctx, opts, runDir)
-			codeIntelContext = CompactCodeIntelForPrompt(codeIntel)
+		var relayErr error
+		opts, relayErr = a.runRelayScoutPhase(ctx, opts, runDir, registry, scout, reviewer, &meta, reviewerLabel, repoInstructions, scoutAvailable, &relay, &brief, &final)
+		if relayErr != nil {
+			return final, relayErr
 		}
-		symlinkTopology := collectScopeSymlinkTopology(opts.Workdir, allowedScopeForRound(opts, nil))
-		if opts.ScoutRetrieval && opts.ScoutMode == "recon" && scoutAvailable {
-			logProgress(opts, "scout retrieval started")
-			var err error
-			if retrieval, err = runScoutRetrieval(ctx, opts.Workdir, opts.Prompt, runDir, true); err != nil {
-				return final, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("write retrieval artifact: %w", err)}
-			}
-			retrievalContext = CompactRetrievalForPrompt(retrieval)
-			scoutStatus.RetrievalRan = true
-			scoutStatus.RetrievalStatus = retrieval.Status
-			scoutStatus.RetrievalDegraded = retrievalStatusIsDegraded(retrieval.Status)
-			logProgress(opts, "scout retrieval completed status=%s evidence=%d", retrieval.Status, len(retrieval.Evidence))
-		}
-		if sc := CompactSymlinkTopologyForPrompt(symlinkTopology); sc != "" {
-			retrievalContext = strings.TrimSpace(sc + "\n" + retrievalContext)
-		}
-		scoutPrompt := withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext), repoInstructions)
-		if opts.ScoutMode == "recon" {
-			contextBudgetPath := filepath.Join(runDir, "scout-context-round-1.json")
-			limit := scoutContextLimitForAdapter(a.Config, opts.Scout.Adapter)
-			contextBudget := estimateScoutPromptBudget(scoutPrompt, limit)
-			contextBudget.Adapter = opts.Scout.Adapter
-			contextBudget.Model = opts.Scout.Model
-			if contextBudget.Status == scoutContextStatusNearLimit && (retrievalContext != "" || codeIntelContext != "") {
-				logProgress(opts, "scout context near configured limit; compacting derived context estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
-				compactedRetrieval := CompactRetrievalForPromptAggressive(retrieval)
-				compactedCodeIntel := CompactCodeIntelForPromptAggressive(codeIntel)
-				if (compactedRetrieval != "" && len(compactedRetrieval) < len(retrievalContext)) || (compactedCodeIntel != "" && len(compactedCodeIntel) < len(codeIntelContext)) {
-					retrievalContext = compactedRetrieval
-					codeIntelContext = compactedCodeIntel
-					scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", retrievalContext, codeIntelContext), repoInstructions)
-					contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
-					contextBudget.Adapter = opts.Scout.Adapter
-					contextBudget.Model = opts.Scout.Model
-					contextBudget.RetrievalCompacted = true
-				}
-			}
-			if contextBudget.Status == scoutContextStatusExceeds && (retrievalContext != "" || codeIntelContext != "") {
-				logProgress(opts, "scout context exceeds configured limit; disabling derived context estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
-				retrievalContext = ""
-				codeIntelContext = ""
-				scoutPrompt = withRepoInstructions(BuildScoutPromptWithCodeIntel(opts.Workdir, opts.Prompt, "", opts.ScoutMode, "pre", "", "", "", ""), repoInstructions)
-				contextBudget = estimateScoutPromptBudget(scoutPrompt, limit)
-				contextBudget.Adapter = opts.Scout.Adapter
-				contextBudget.Model = opts.Scout.Model
-				contextBudget.RetrievalDisabledDueBudget = true
-				scoutStatus.RetrievalDisabledByBudget = true
-			}
-			if contextBudget.Status == scoutContextStatusNearLimit {
-				logProgress(opts, "scout context near configured limit estimated=%d usable=%d", contextBudget.EstimatedInputTokens, contextBudget.UsableContextTokens)
-				if opts.ScoutContextPolicy == "skip" {
-					setFinalDegraded(&final, ReasonScoutContextTooSmall, "scout context near configured limit; skipping scout")
-					appendRoleLoss(&final, "scout", opts.LossPolicy.Scout, "context-budget", "degraded", ReasonScoutContextTooSmall, "near configured scout context limit")
-					scoutStatus.ContinuedWithoutScoutContext = true
-					skipScout = true
-				}
-				if opts.ScoutContextPolicy == "block" {
-					err := &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("scout context near configured limit and scout_context_policy=block")}
-					setFinalBlocking(&final, ReasonScoutContextTooSmall, err.Error())
-					_ = writeJSONWithNewline(contextBudgetPath, contextBudget)
-					_ = writeJSONWithNewline(scoutStatusPath, scoutStatus)
-					return final, err
-				}
-			}
-			if err := writeJSONWithNewline(contextBudgetPath, contextBudget); err != nil {
-				return final, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("write scout context artifact: %w", err)}
-			}
-			if contextBudget.Status == scoutContextStatusExceeds {
-				budgetErr := invalidScoutContextBudgetError(contextBudget)
-				scoutStatus.FailureClass = scoutFailureClassContextBudget
-				scoutStatus.Failure = budgetErr.Error()
-				if opts.ScoutContextPolicy == "block" || policyBlocks(opts.LossPolicy.Scout) {
-					setFinalBlocking(&final, ReasonScoutContextTooSmall, budgetErr.Error())
-					_ = writeJSONWithNewline(scoutStatusPath, scoutStatus)
-					return final, &ExitError{Code: ExitPreflightFailed, Err: fmt.Errorf("scout failed and scout_failure_policy=fail; aborting relay run: %w", budgetErr)}
-				}
-				setFinalDegraded(&final, ReasonScoutContextTooSmall, "scout context too small; continuing without scout context")
-				appendRoleLoss(&final, "scout", opts.LossPolicy.Scout, "context-budget", "degraded", ReasonScoutContextTooSmall, budgetErr.Error())
-				scoutStatus.ContinuedWithoutScoutContext = true
-				skipScout = true
-				logProgress(opts, "scout prompt exceeds configured budget; continuing without scout context")
-			}
-		}
-		var scoutResult Result
-		if !skipScout {
-			logProgress(opts, "scout %s started adapter=%s", opts.ScoutMode, scout.ID())
-			scoutStatus.ScoutRan = true
-			var err error
-			scoutResult, err = a.runAdapter(ctx, scout, RoleScout, Request{
-				Context:         ctx,
-				Prompt:          scoutPrompt,
-				EnvOverlay:      opts.EnvOverlay,
-				Model:           opts.Scout.Model,
-				Workdir:         opts.Workdir,
-				RunDir:          runDir,
-				OutputPath:      scoutOutputPath,
-				Timeout:         opts.Timeout,
-				WatchdogTimeout: opts.WatchdogTimeout,
-				Phase:           fmt.Sprintf("scout %s %s", opts.ScoutMode, scout.ID()),
-				Quiet:           opts.Quiet,
-				Verbose:         opts.Verbose,
-				Budget:          opts.InvocationBudget,
-			}, opts.DryRun)
-			if err != nil && IsOutputContractError(err) {
-				if repaired, ok, rerr := a.tryScoutContractRepair(ctx, opts, registry, runDir, scoutOutputPath, "scout", "scout JSON repaired by worker", err, &final); rerr != nil {
-					return final, rerr
-				} else if ok {
-					scoutResult = repaired
-					err = nil
-				}
-			}
-			if err != nil {
-				scoutStatus.FailureClass = classifyScoutFailure(err)
-				scoutStatus.Failure = err.Error()
-				if shouldBlockScoutFailure(opts.LossPolicy.Scout, err) {
-					_ = writeJSONWithNewline(scoutStatusPath, scoutStatus)
-					return final, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("scout failed and scout_failure_policy=fail; aborting relay run: %w", err)}
-				}
-				setFinalDegraded(&final, ReasonScoutUnavailable, "scout failed; continuing without scout context")
-				appendRoleLoss(&final, "scout", opts.LossPolicy.Scout, "invoke", "degraded", classifyRoleFailure("scout", err), err.Error())
-				scoutStatus.ContinuedWithoutScoutContext = true
-				logProgress(opts, "scout failed; continuing without scout context error=%q", err.Error())
-			} else {
-				scoutStatus.ScoutSucceeded = true
-				setRoleStatus(&final, "scout", opts.Scout, "completed", "", "")
-				if scoutResult.Scout != nil {
-					if retrieval.Status != "" && scoutResult.Scout.RetrievalStatus == "" {
-						scoutResult.Scout.RetrievalQueries = append([]string{}, retrieval.Queries...)
-						scoutResult.Scout.Evidence = retrievalScoutEvidence(retrieval.Evidence)
-						scoutResult.Scout.RetrievalStatus = retrieval.Status
-						scoutResult.Scout.RetrievalTruncated = retrieval.Truncated
-					}
-					scoutResult.Scout.Evidence = mergeSymlinkTopologyEvidence(scoutResult.Scout.Evidence, symlinkTopology)
-					relay.Scout = *scoutResult.Scout
-				}
-				final.Costs["scout"] += scoutResult.CostUSD
-				logProgress(opts, "scout %s completed output=%s", opts.ScoutMode, scoutOutputPath)
-			}
-		}
-		if err := writeJSONWithNewline(scoutStatusPath, scoutStatus); err != nil {
-			return final, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("write scout execution artifact: %w", err)}
-		}
-
-		logProgress(opts, "supervisor brief started adapter=%s", reviewer.ID())
-		briefOutputPath := filepath.Join(runDir, "supervisor-brief.md")
-		briefResult, err := a.runAdapter(ctx, reviewer, supervisorBriefRole(opts.SupervisorCanEdit), Request{
-			Context:         ctx,
-			Prompt:          withRepoInstructions(BuildSupervisorBriefPrompt(opts.Workdir, opts.Prompt, opts.SupervisorCanEdit), repoInstructions),
-			EnvOverlay:      opts.EnvOverlay,
-			Model:           opts.Adversary.Model,
-			Workdir:         opts.Workdir,
-			RunDir:          runDir,
-			OutputPath:      briefOutputPath,
-			Timeout:         opts.Timeout,
-			WatchdogTimeout: opts.WatchdogTimeout,
-			Phase:           fmt.Sprintf("supervisor brief %s", reviewer.ID()),
-			Quiet:           opts.Quiet,
-			Verbose:         opts.Verbose,
-			Budget:          opts.InvocationBudget,
-		}, opts.DryRun)
-		if err != nil {
-			return final, err
-		}
-		final.Costs[reviewerLabel] += briefResult.CostUSD
-		brief = briefResult.Text
-		relay.Brief = brief
-		logProgress(opts, "supervisor brief completed output=%s", briefOutputPath)
-
-		instructionsPath := filepath.Join(runDir, "supervisor-instructions.md")
-		logProgress(opts, "supervisor relay instructions started adapter=%s", reviewer.ID())
-		instructionsResult, err := a.runAdapter(ctx, reviewer, RoleSupervisor, Request{
-			Context:         ctx,
-			Prompt:          withRepoInstructions(BuildRelaySupervisorInstructionsPrompt(opts.Prompt, brief, relay.Scout), repoInstructions),
-			EnvOverlay:      opts.EnvOverlay,
-			Model:           opts.Adversary.Model,
-			Workdir:         opts.Workdir,
-			RunDir:          runDir,
-			OutputPath:      instructionsPath,
-			Timeout:         opts.Timeout,
-			WatchdogTimeout: opts.WatchdogTimeout,
-			Phase:           fmt.Sprintf("relay supervisor instructions %s", reviewer.ID()),
-			Quiet:           opts.Quiet,
-			Verbose:         opts.Verbose,
-			Budget:          opts.InvocationBudget,
-		}, opts.DryRun)
-		if err != nil {
-			return final, err
-		}
-		relay.Instructions = instructionsResult.Text
-		final.Costs[reviewerLabel] += instructionsResult.CostUSD
-		logProgress(opts, "supervisor relay instructions completed output=%s", instructionsPath)
 	}
 
 	editorSystemPrompt := editorSystemPromptForMode(opts.Mode)
@@ -633,11 +446,11 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 		}); stateErr != nil {
 			return final, mandatoryPersistenceError("round implementation state", stateErr)
 		}
-		editorPrompt, err := buildRoundEditorPrompt(ctx, opts, round, runDir, baseline, latestDiff, latestReview, initialReview, relay, selectedPackage, workPlan, brief, implementSelectedPackage)
+		editorPrompt, err := buildRoundEditorPrompt(ctx, opts, round, runDir, baseline, final.BaselineTest, latestDiff, latestReview, initialReview, relay, selectedPackage, workPlan, brief, implementSelectedPackage)
 		if err != nil {
 			return final, err
 		}
-		editorPrompt = workerContractPrompt(withRepoInstructions(editorPrompt, repoInstructions))
+		editorPrompt = workerContractPrompt(withAdapterRepoInstructions(editor, editorPrompt, repoInstructions))
 		implementSelectedPackage = false
 		editorOutputPath := filepath.Join(runDir, fmt.Sprintf("%s-round-%d.md", editorLabel, round))
 		if selectedPackage != nil {
@@ -670,6 +483,8 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			Verbose:               opts.Verbose,
 			Budget:                opts.InvocationBudget,
 			RequireWorkerContract: true,
+			AllowedScope:          allowedScopeForRound(opts, selectedPackage),
+			EnforceAllowedScope:   true,
 		}
 		editorResult, err := a.runEditorWithContractRetry(ctx, opts, editor, editorRequest, beforeEditor)
 		if err != nil {

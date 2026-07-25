@@ -53,8 +53,8 @@ func TestNewRootCommandHelpIncludesModeModelAndFlags(t *testing.T) {
 		"--scout",
 		"--no-scout-retrieval",
 		"tagteam --solo codex:gpt-5.6-terra",
-		"tagteam run -m agy:gemini-3.6-flash-medium",
-		"tagteam --relay --scout openai-compatible:gemma4:latest",
+		"tagteam run -m codex:gpt-5.6-terra",
+		"tagteam --relay --scout agy:gemini-3.6-flash-medium",
 		"tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma codex:gpt-5.6-sol",
 	}
 	for _, want := range checks {
@@ -108,6 +108,15 @@ func TestMCPCommandUsesLocalStdioSurface(t *testing.T) {
 	}
 	if mcp == nil || mcp.Use != "mcp" {
 		t.Fatalf("mcp command = %#v", mcp)
+	}
+}
+
+func TestFindingsResolveRequiresEvidence(t *testing.T) {
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"findings", "resolve", "run-1", "finding-1", "--allow-dev-build"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "required flag(s) \"evidence\" not set") {
+		t.Fatalf("resolve error = %v", err)
 	}
 }
 
@@ -259,5 +268,20 @@ func TestRenderRunSnapshotIncludesHostActivity(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("status output missing %q\nfull output:\n%s", want, got)
 		}
+	}
+}
+
+func TestRenderRunSnapshotIncludesQualityGateBlockers(t *testing.T) {
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	renderRunSnapshot(cmd, tagteam.RunSnapshot{QualityGateBlockers: []tagteam.GateFinding{{
+		ID:       "CHURN-LINES",
+		Severity: "major",
+		Gate:     "churn",
+		Message:  "diff changes 5815 lines; threshold is 5000",
+	}}}, false)
+	if got := out.String(); !strings.Contains(got, "quality_gate_blocker=CHURN-LINES severity=major gate=churn message=diff changes 5815 lines; threshold is 5000") {
+		t.Fatalf("quality gate blocker missing from status output:\n%s", got)
 	}
 }

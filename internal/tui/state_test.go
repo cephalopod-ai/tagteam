@@ -139,7 +139,7 @@ func TestTargetChoicesIncludeAgyGemini36FlashTiers(t *testing.T) {
 	}
 }
 
-func TestModelPickerIncludesAgyGemini36FlashTiers(t *testing.T) {
+func TestModelPickerRestrictsAgyGemini36FlashToScout(t *testing.T) {
 	m, err := newModel(RunOptions{Workdir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("newModel() error = %v", err)
@@ -149,6 +149,18 @@ func TestModelPickerIncludesAgyGemini36FlashTiers(t *testing.T) {
 	matches := m.matchingSlashCommands()
 	for _, model := range tagteam.AgyGemini36FlashModelChoices() {
 		want := "/model worker agy:" + model
+		for _, match := range matches {
+			if match.Name == want {
+				t.Fatalf("worker model picker includes Gemini target %q", want)
+			}
+		}
+	}
+
+	m.applyCommand(nil, "/mode relay")
+	m.commandBuffer = "model scout "
+	matches = m.matchingSlashCommands()
+	for _, model := range tagteam.AgyGemini36FlashModelChoices() {
+		want := "/model scout agy:" + model
 		found := false
 		for _, match := range matches {
 			if match.Name == want {
@@ -157,7 +169,7 @@ func TestModelPickerIncludesAgyGemini36FlashTiers(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatalf("model picker does not include %q: %#v", want, matches)
+			t.Fatalf("scout model picker does not include %q: %#v", want, matches)
 		}
 	}
 }
@@ -421,6 +433,10 @@ func TestRoleFirstModelCommandAssignsSelectedRole(t *testing.T) {
 	}
 	if m.compose.EditorTarget != worker {
 		t.Fatalf("supervisor assignment changed worker from %q to %q", worker, m.compose.EditorTarget)
+	}
+	m.applyCommand(nil, "/worker agy:gemini-3.6-flash-medium")
+	if m.compose.EditorTarget != worker || !strings.Contains(m.statusMessage, "supported only as scouts") {
+		t.Fatalf("Agy worker assignment = target:%q status:%q", m.compose.EditorTarget, m.statusMessage)
 	}
 
 	m.applyCommand(nil, "/mode relay")

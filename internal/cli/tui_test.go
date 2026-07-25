@@ -116,6 +116,7 @@ func TestTUICommand_MissingRunReturnsError(t *testing.T) {
 
 func TestTUICommand_ResolvesCompletedLatestRunAndReturns(t *testing.T) {
 	workdir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	runDir := writeRunFixture(t, workdir, "run-cli-latest")
 	writeLatestPointer(t, workdir, "run-cli-latest", runDir)
 

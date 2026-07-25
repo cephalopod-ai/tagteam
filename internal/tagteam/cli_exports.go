@@ -33,6 +33,19 @@ func RunDirForCLI(workdir, runID string) (string, error) {
 	return runDirForWorkdir(workdir, runID)
 }
 
+// RunDirForCLIAtStateRoot resolves a run in an explicitly selected
+// authoritative state root rather than inferring the repository pointer.
+func RunDirForCLIAtStateRoot(workdir, stateRoot, runID string) (string, error) {
+	if stateRoot == "" {
+		return runDirForWorkdir(workdir, runID)
+	}
+	locator, err := resolveStateLocator(workdir, stateRoot)
+	if err != nil {
+		return "", err
+	}
+	return locator.RunDir(runID)
+}
+
 func RunsRootForCLI(workdir string) string {
 	if locator, ok := existingStateLocator(workdir); ok {
 		return locator.RunsRoot

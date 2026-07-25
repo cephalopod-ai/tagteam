@@ -341,6 +341,54 @@ func TestBuildRunSnapshot_ExposesDegradedAndBlockingReasonConsistently(t *testin
 	}
 }
 
+// Quality gates are independently authoritative: a reviewer may dispute the
+// matching ledger entry, but status must still identify the actual hard gate
+// that caused a terminal run to block.
+func TestBuildRunSnapshotProjectsQualityGateBlockersOutsideFindingsLedger(t *testing.T) {
+	workdir, runDir, runID := newRunDirForSnapshotTest(t)
+	finding := GateFinding{
+		ID:       "CHURN-LINES",
+		Gate:     "churn",
+		Severity: "major",
+		Message:  "diff changes 5815 lines; threshold is 5000",
+	}
+	if err := writeJSONWithNewline(filepath.Join(runDir, "quality-gates-round-2.json"), QualityGateResult{
+		SchemaVersion: ArtifactSchemaVersion,
+		Round:         2,
+		Blocking:      true,
+		Findings:      []GateFinding{finding},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONWithNewline(filepath.Join(runDir, findingsLedgerFilename), FindingsLedger{
+		SchemaVersion: ArtifactSchemaVersion,
+		RunID:         runID,
+		Entries: []FindingEntry{{
+			ID:       stableGateFindingID(finding),
+			Source:   "quality_gate",
+			Severity: "major",
+			Issue:    finding.Message,
+			Status:   "disputed_with_evidence",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "quality-gates-round-3.json"), []byte("not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := BuildRunSnapshot(workdir, runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.OpenMajorCount != 0 {
+		t.Fatalf("open_major_count = %d, want 0 after evidence-based dispute", snapshot.OpenMajorCount)
+	}
+	if len(snapshot.QualityGateBlockers) != 1 || snapshot.QualityGateBlockers[0] != finding {
+		t.Fatalf("quality gate blockers = %#v, want %#v; malformed newer artifact must not hide the prior valid gate", snapshot.QualityGateBlockers, []GateFinding{finding})
+	}
+}
+
 // TestBuildRunSnapshot_ActiveJSONFailedOverridesStaleRunningState is a
 // regression test for a bug where BuildRunSnapshot let a stale state.json
 // "running" status clobber a correctly-marked "failed" active.json. This is

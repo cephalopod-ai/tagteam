@@ -590,6 +590,20 @@ func boundControlSnapshot(snapshot RunSnapshot) (RunSnapshot, bool) {
 	snapshot.RoleStatuses = roleStatuses
 	snapshot.ChangedFiles, truncated = boundControlTextList(snapshot.ChangedFiles, controlMaxChangedFiles, truncated)
 	snapshot.PreexistingFiles, truncated = boundControlTextList(snapshot.PreexistingFiles, controlMaxChangedFiles, truncated)
+	if len(snapshot.QualityGateBlockers) > controlMaxChangedFiles {
+		snapshot.QualityGateBlockers = snapshot.QualityGateBlockers[:controlMaxChangedFiles]
+		truncated = true
+	}
+	gateBlockers := make([]GateFinding, len(snapshot.QualityGateBlockers))
+	for i, finding := range snapshot.QualityGateBlockers {
+		bound(&finding.ID)
+		bound(&finding.Gate)
+		bound(&finding.Severity)
+		bound(&finding.Message)
+		bound(&finding.Path)
+		gateBlockers[i] = finding
+	}
+	snapshot.QualityGateBlockers = gateBlockers
 	for role, status := range snapshot.RoleStatuses {
 		bound(&status.Role)
 		bound(&status.Adapter)
