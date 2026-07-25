@@ -138,6 +138,72 @@ func TestRunAdversaryRepairsReviewJSONWithWorker(t *testing.T) {
 	}
 }
 
+func TestRunAdversaryEmbedsOpenFindingsWithoutExternalBundlePath(t *testing.T) {
+	installFakeBinaries(t, map[string]string{"claude": fakeClaudeScript})
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "before\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+	mustWriteFile(t, filepath.Join(repo, "README.md"), "after\n")
+
+	runDir := filepath.Join(repo, ".tagteam", "runs", "findings-context")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONWithNewline(filepath.Join(runDir, findingsLedgerFilename), FindingsLedger{
+		SchemaVersion: ArtifactSchemaVersion,
+		Entries: []FindingEntry{{
+			ID:       "finding-open-major",
+			Severity: "major",
+			File:     "README.md",
+			Line:     1,
+			Issue:    "preserve the documented contract",
+			Fix:      "add evidence",
+			Status:   "open",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	schemaPath := filepath.Join(runDir, "review-schema.json")
+	if err := os.WriteFile(schemaPath, []byte(ReviewSchema), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diffPath := filepath.Join(runDir, "diff.patch")
+	if err := os.WriteFile(diffPath, []byte("diff --git a/README.md b/README.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	argsLog := filepath.Join(t.TempDir(), "claude-args.log")
+	final := FinalRun{Adapters: map[string]string{"adversary": "claude"}, Models: map[string]string{"adversary": "sonnet"}}
+	initFinalState(&final, RunOptions{EnvOverlay: map[string]string{}})
+	opts := RunOptions{
+		Prompt:         "review",
+		Workdir:        repo,
+		Mode:           ModeAdversarial,
+		Adversary:      RoleTarget{Adapter: "claude", Model: "sonnet"},
+		Timeout:        5 * time.Second,
+		MaxOutputBytes: 2 * 1024 * 1024,
+		EnvOverlay:     map[string]string{"CLAUDE_ARGS_LOG": argsLog},
+	}
+
+	if _, _, _, err := NewApp(DefaultConfig()).runAdversary(context.Background(), opts, 1, runDir, schemaPath, opts.Prompt, "HEAD", "diff --git a/README.md b/README.md\n", diffPath, "", "", nil, RelayContext{}, "", &final); err != nil {
+		t.Fatalf("runAdversary() error = %v", err)
+	}
+	data, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := string(data)
+	if !strings.Contains(prompt, "finding-open-major") {
+		t.Fatalf("review prompt omitted the open finding:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "bundle-adversary-round-1/bundle.json") {
+		t.Fatalf("review prompt exposes an inaccessible bundle path:\n%s", prompt)
+	}
+}
+
 func TestRunAdapterSurfacesClaudeErrorEnvelopeOnNonzeroExit(t *testing.T) {
 	installFakeBinaries(t, map[string]string{
 		"claude": `#!/bin/sh
