@@ -13,8 +13,8 @@ import (
 // fakeClaudeScript returns a shell script that emulates the parts of the
 // `claude` CLI tagteam depends on: --version for Detect, and, for -p
 // invocations, a coder-style "ok" result unless the prompt identifies an
-// review prompt. Read-only Claude roles use plan mode, which is shared with
-// planning and reporting and therefore cannot identify review calls by argv.
+// review prompt. Read-only Claude roles use an inspection-only tool set, so
+// the prompt identifies review calls without granting a shell.
 const fakeClaudeScript = `#!/bin/sh
 if [ "$1" = "--version" ]; then
   echo "1.0.0"

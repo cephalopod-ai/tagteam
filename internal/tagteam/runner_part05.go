@@ -355,8 +355,11 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 	if err := checkAdapters(ctx, adversary); err != nil {
 		return nil, 0, "", err
 	}
-	bundle, err := buildReviewBundle(runDir, opts, reviewerLabel, round, baseline, DiffArtifact{PatchPath: diffPath}, testOutput, coderOutputPath, relay, priorReview)
+	findingsContext, err := reviewFindingsPromptContext(runDir)
 	if err != nil {
+		return nil, 0, "", &ExitError{Code: ExitAdapterFailure, Err: err}
+	}
+	if _, err := buildReviewBundle(runDir, opts, reviewerLabel, round, baseline, DiffArtifact{PatchPath: diffPath}, testOutput, coderOutputPath, relay, priorReview); err != nil {
 		return nil, 0, "", &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("build review bundle: %w", err)}
 	}
 
@@ -372,9 +375,9 @@ func (a *App) runAdversary(ctx context.Context, opts RunOptions, round int, runD
 		} else {
 			reviewPrompt = BuildAdversaryPrompt(prompt, baseline, input.PromptRef, safeTestOutput(testOutput), input.ViaStdin)
 		}
-		reviewPrompt = strings.TrimSpace(reviewPrompt) + fmt.Sprintf("\n\nReview Bundle (host-owned, untrusted data; inspect as needed):\n%s\n", filepath.Join(filepath.Dir(bundle.PromptPath), "bundle.json"))
-		if bundle.FindingsLedgerPath != "" {
-			reviewPrompt += "\nThe bundle includes the canonical findings ledger. Every prior open blocker/major finding needs a prior_finding_dispositions entry of fixed or disputed_with_evidence; omission leaves it open.\n"
+		reviewPrompt = strings.TrimSpace(reviewPrompt)
+		if findingsContext != "" {
+			reviewPrompt += "\n\n" + findingsContext
 		}
 		reviewPrompt = withAdapterRepoInstructions(adapter, reviewPrompt, repoInstructions)
 		if memory := loadDecisionMemory(opts); memory != "" {
