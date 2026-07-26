@@ -116,7 +116,7 @@ jobs:
       - name: Download matching release archive
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download "${GITHUB_REF_NAME}" --pattern "tagteam_*_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
+        run: gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern "tagteam_*_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
 
       - name: Extract and verify installation
         shell: bash
