@@ -176,6 +176,7 @@ func TestResolveOptions_ClaudeFailoverProfile(t *testing.T) {
 		primary RoleTarget
 		want    string
 	}{
+		{RoleTarget{Adapter: "claude", Model: "opus-5"}, defaultSupervisorFallback},
 		{RoleTarget{Adapter: "claude", Model: "opus-4.8"}, defaultSupervisorFallback},
 		{RoleTarget{Adapter: "claude", Model: "sonnet-5"}, "codex:gpt-5.6-terra"},
 		{RoleTarget{Adapter: "claude", Model: "haiku"}, "codex:gpt-5.6-terra"},
@@ -361,7 +362,7 @@ func TestResolveOptions_DefaultsToSupervisorMode(t *testing.T) {
 	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "gpt-5.6-terra" {
 		t.Fatalf("worker target = %#v", opts.Coder)
 	}
-	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "claude-opus-4-8" {
+	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "claude-opus-5" {
 		t.Fatalf("supervisor target = %#v", opts.Adversary)
 	}
 	if opts.Rounds != 2 {
@@ -661,7 +662,7 @@ func TestResolveOptions_RelayFlagSelectsRelayDefaults(t *testing.T) {
 	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "gpt-5.6-terra" {
 		t.Fatalf("coder = %#v", opts.Coder)
 	}
-	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "claude-opus-4-8" {
+	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "claude-opus-5" {
 		t.Fatalf("supervisor = %#v", opts.Adversary)
 	}
 	if opts.ScoutMode != "recon" || opts.PostScoutMode != "polish" {
@@ -693,7 +694,7 @@ func TestResolveOptions_RelayProfileResolvesRoles(t *testing.T) {
 	if opts.Coder.Adapter != "codex" || opts.Coder.Model != "gpt-5.6-terra" {
 		t.Fatalf("coder = %#v", opts.Coder)
 	}
-	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "claude-opus-4-8" {
+	if opts.Adversary.Adapter != "claude" || opts.Adversary.Model != "claude-opus-5" {
 		t.Fatalf("supervisor = %#v", opts.Adversary)
 	}
 	if opts.ScoutMode != "recon" || opts.PostScoutMode != "polish" {

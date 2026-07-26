@@ -111,9 +111,11 @@ func DefaultConfig() Config {
 					Supervisor: LossPolicyReplaceThenBlock,
 				},
 				FallbacksByTarget: TargetFallbacks{
+					"claude:claude-opus-5":   []string{defaultSupervisorFallback},
 					"claude:claude-opus-4-8": []string{defaultSupervisorFallback},
 					"claude:claude-sonnet-5": []string{defaultAdversarialCoderTarget},
 					"claude:opus":            []string{defaultSupervisorFallback},
+					"claude:opus-5":          []string{defaultSupervisorFallback},
 					"claude:opus-4.8":        []string{defaultSupervisorFallback},
 					"claude:sonnet":          []string{defaultAdversarialCoderTarget},
 					"claude:sonnet-5":        []string{defaultAdversarialCoderTarget},

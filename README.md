@@ -409,13 +409,21 @@ go run . --allow-dev-build "add OAuth login"
 
 ## Quick start
 
-Default run (supervisor mode, `codex:gpt-5.6-terra` worker and `claude:claude-opus-4-8` supervisor):
+Default run (supervisor mode, `codex:gpt-5.6-terra` worker and `claude:claude-opus-5` supervisor):
 
 ```bash
 tagteam "add OAuth login"
 # Equivalent explicit role spelling:
-tagteam run --worker codex:gpt-5.6-terra --supervisor claude:claude-opus-4-8 "add OAuth login"
+tagteam run --worker codex:gpt-5.6-terra --supervisor claude:claude-opus-5 "add OAuth login"
 ```
+
+> **Claude Code v2.1.219+ required for the default supervisor.** `claude-opus-5`
+> is passed straight through to `claude --model`, and older Claude Code builds do
+> not know that id — the run fails at the first supervisor turn rather than at
+> preflight, since `tagteam doctor` only checks that `claude` is runnable. Run
+> `claude update`, or point the supervisor at a model your CLI has:
+> `--supervisor claude:claude-opus-4-8` (or `claude:opus`, which resolves to
+> whatever your CLI treats as newest).
 
 That's the whole thing — no flags, no config. From your repo root you just describe the change:
 
@@ -549,7 +557,7 @@ For finer control, `loss_policy` can be configured per non-primary role: `block`
 The built-in `claude-failover` profile enables a small Claude-to-Codex fallback ladder for review/supervision failures:
 
 ```bash
-tagteam -P claude-failover --mode supervisor --worker codex:gpt-5.6-terra --supervisor claude:claude-opus-4-8 "fix the bug"
+tagteam -P claude-failover --mode supervisor --worker codex:gpt-5.6-terra --supervisor claude:claude-opus-5 "fix the bug"
 ```
 
 It maps the current Opus target to `codex:gpt-5.6-sol` and the current Sonnet target to `codex:gpt-5.6-terra`; compatibility aliases for older Claude CLI model names remain available. Target-specific fallbacks run before role-level fallback lists.
@@ -563,7 +571,7 @@ Adversarial mode keeps implementation and independent audit/review explicitly se
 ```bash
 tagteam --mode adversarial \
   -mc codex:gpt-5.6-terra \
-  -ma claude:claude-opus-4-8 \
+  -ma claude:claude-opus-5 \
   -r 3 \
   -t "go test ./..." \
   "refactor billing flow"
@@ -572,7 +580,7 @@ tagteam --mode adversarial \
 `--reviewer` is an adversarial-mode-flavored alias for `-ma`/`--supervisor`:
 
 ```bash
-tagteam --mode adversarial -mc codex:gpt-5.6-terra --reviewer claude:claude-opus-4-8 "audit the CLI cleanup"
+tagteam --mode adversarial -mc codex:gpt-5.6-terra --reviewer claude:claude-opus-5 "audit the CLI cleanup"
 ```
 
 Use Agy as a scout under the maintained operator roster:
@@ -747,10 +755,10 @@ Profiles may override `mode`, `state_root`, `watchdog_timeout`, `scout`, `scout_
 [defaults]
 mode = "supervisor"
 worker = "codex:gpt-5.6-terra"
-supervisor = "claude:claude-opus-4-8"
+supervisor = "claude:claude-opus-5"
 coder = "codex:gpt-5.6-terra"
 relay_coder = "codex:gpt-5.6-terra"
-adversary = "claude:claude-opus-4-8"
+adversary = "claude:claude-opus-5"
 scout = "openai-compatible:gemma4:latest"
 scout_retrieval = false
 supervisor_slicing = true
@@ -765,14 +773,14 @@ supervisor = "block"
 
 [profiles.relay.fallbacks]
 scout = ["openai-compatible:gpt-oss-120b"]
-supervisor = ["claude:claude-opus-4-8"]
+supervisor = ["claude:claude-opus-5"]
 
 [profiles.claude-failover.loss_policy]
 reviewer = "replace_then_block"
 supervisor = "replace_then_block"
 
 [profiles.claude-failover.fallbacks_by_target]
-"claude:claude-opus-4-8" = ["codex:gpt-5.6-sol"]
+"claude:claude-opus-5" = ["codex:gpt-5.6-sol"]
 "claude:claude-sonnet-5" = ["codex:gpt-5.6-terra"]
 "claude:haiku" = ["codex:gpt-5.6-terra"]
 
