@@ -357,7 +357,19 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 		argv = append(argv, "--rules", req.SystemPrompt)
 	}
 	argv = append(argv, a.ExtraArgs...)
-	return &CommandSpec{Argv: argv, Dir: req.Workdir, Output: req.OutputPath}, nil
+	// Grok otherwise imports every Claude-compatible MCP server from the
+	// operator's ambient configuration. Tagteam runs should use only Grok's
+	// native, explicitly configured integrations; inherited MCP startup can
+	// consume an entire worker invocation before the task begins.
+	return &CommandSpec{
+		Argv: argv,
+		Dir:  req.Workdir,
+		Env: []string{
+			"GROK_CLAUDE_MCPS_ENABLED=false",
+			"GROK_CURSOR_MCPS_ENABLED=false",
+		},
+		Output: req.OutputPath,
+	}, nil
 }
 
 func (a *GrokAdapter) ParseResult(role Role, raw []byte) (Result, error) {
