@@ -36,7 +36,18 @@ func mergeCommandEnv(overlay map[string]string, extra []string) []string {
 		}
 	}
 	if len(extra) > 0 {
-		env = append(env, extra...)
+		// Adapter-supplied process settings are explicit invocation policy, not
+		// an ambient convenience value. Replace inherited values rather than
+		// appending duplicate keys: some provider CLIs use the first duplicate
+		// value and would silently bypass the adapter's safety settings.
+		overrides := make(map[string]string, len(extra))
+		for _, item := range extra {
+			key, value, ok := strings.Cut(item, "=")
+			if ok && key != "" {
+				overrides[key] = value
+			}
+		}
+		env = overrideCommandEnv(env, overrides)
 	}
 	return env
 }

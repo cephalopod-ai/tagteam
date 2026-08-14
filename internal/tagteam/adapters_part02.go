@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -361,15 +363,32 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	// operator's ambient configuration. Tagteam runs should use only Grok's
 	// native, explicitly configured integrations; inherited MCP startup can
 	// consume an entire worker invocation before the task begins.
-	return &CommandSpec{
-		Argv: argv,
-		Dir:  req.Workdir,
-		Env: []string{
-			"GROK_CLAUDE_MCPS_ENABLED=false",
-			"GROK_CURSOR_MCPS_ENABLED=false",
-		},
-		Output: req.OutputPath,
-	}, nil
+	env := []string{
+		"GROK_CLAUDE_MCPS_ENABLED=false",
+		"GROK_CURSOR_MCPS_ENABLED=false",
+	}
+	if strings.TrimSpace(req.RunDir) != "" {
+		invocationID := strings.TrimSpace(req.InvocationID)
+		if invocationID == "" {
+			invocationID = string(role)
+		}
+		// commandEnvForInvocation creates this directory before process launch.
+		// Retain Grok's authenticated/configured home explicitly while giving
+		// compatibility discovery an empty HOME, which prevents the Grok CLI
+		// from adopting ambient ~/.claude.json MCPs even when it ignores the
+		// compatibility toggle in headless mode.
+		env = append(env, "HOME="+filepath.Join(req.RunDir, "tmp", "invocations", invocationID))
+		grokHome := strings.TrimSpace(os.Getenv("GROK_HOME"))
+		if grokHome == "" {
+			if userHome, err := os.UserHomeDir(); err == nil {
+				grokHome = filepath.Join(userHome, ".grok")
+			}
+		}
+		if grokHome != "" {
+			env = append(env, "GROK_HOME="+grokHome)
+		}
+	}
+	return &CommandSpec{Argv: argv, Dir: req.Workdir, Env: env, Output: req.OutputPath}, nil
 }
 
 func (a *GrokAdapter) ParseResult(role Role, raw []byte) (Result, error) {
