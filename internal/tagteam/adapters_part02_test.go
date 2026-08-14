@@ -161,6 +161,9 @@ func TestGrokBuildCmdCoder(t *testing.T) {
 	if !reflect.DeepEqual(spec.Argv, want) {
 		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
 	}
+	if !reflect.DeepEqual(spec.Env, []string{"GROK_CLAUDE_MCPS_ENABLED=false", "GROK_CURSOR_MCPS_ENABLED=false"}) {
+		t.Fatalf("env = %#v, want compatibility MCP discovery disabled", spec.Env)
+	}
 	if len(spec.Stdin) != 0 {
 		t.Fatalf("stdin = %q, want empty", string(spec.Stdin))
 	}
