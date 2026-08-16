@@ -58,6 +58,11 @@ Role flags by mode
   --scout
     Relay-mode scout slot only. The built-in local Gemma scout runs without retrieval; prefer a 256k+ scout when enabling retrieval or handling large repository context.
 
+Capability-routed jobs
+
+  --job <name>
+    Selects a job instead of a mode: the job picks the workflow, and the capability router staffs every slot you left open. Run "tagteam route --list" for the catalog and "tagteam route --job <name>" to see a decision without running it. Explicit role/mode/rounds flags and profiles always win over routing; add --explain-route to print the decision, --route-probe to require detected adapter availability, and --route-exclude to take an agent, adapter, or target out of selection.
+
 Operational behavior
 
   Supervisor and relay runs may make one host-controlled mode adjustment before implementation: relay can simplify to supervisor, and supervisor can escalate to relay when both worker and supervisor advisory signals agree. Runs persist final.json and state.json with degraded/blocking reason codes, role statuses, budgets, and artifact paths.
@@ -65,6 +70,8 @@ Operational behavior
   Claude supervisors have a known JSON-output rough edge. tagteam does not silently repair that output; use --repair-json-with-worker to explicitly allow the selected worker to act as a read-only parser for invalid JSON contract artifacts.
 `,
 		Example: `tagteam "add OAuth login"
+tagteam run --job scoped_patch "fix the retry backoff"
+tagteam route --job audit
 tagteam run -m codex:gpt-5.6-terra "add OAuth login"
 tagteam --worker codex:gpt-5.6-terra --supervisor codex:gpt-5.6-sol "refactor billing flow"
 tagteam --solo codex:gpt-5.6-terra "plan a migration and record the result"
@@ -91,6 +98,7 @@ tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma codex:gpt-5.6-sol "audit 
 	root.AddCommand(newResumeCommand(flags))
 	root.AddCommand(newFindingsCommand(flags))
 	root.AddCommand(newTransferCommand(flags))
+	root.AddCommand(newRouteCommand(flags))
 	root.AddCommand(newStatusCommand(flags))
 	root.AddCommand(newPlanCommand(flags))
 	root.AddCommand(newTranscriptCommand(flags))
@@ -172,6 +180,10 @@ func bindSharedFlags(cmd *cobra.Command, flags *flagState) {
 	flagSet.IntVar(&flags.MaxRoleInvocations, "max-role-invocations", 0, "Maximum adapter invocations for one run (0 means unlimited)")
 	flagSet.BoolVar(&flags.RepairJSONWithWorker, "repair-json-with-worker", false, "Explicitly allow the selected worker to repair invalid JSON contract output in read-only parser mode")
 	flagSet.StringVarP(&flags.Profile, "profile", "P", "", "Named profile")
+	flagSet.StringVar(&flags.Job, "job", "", "Capability-routed job (see tagteam route --list): the router picks the workflow and staffs every slot the operator left open")
+	flagSet.StringArrayVar(&flags.RouteExclude, "route-exclude", nil, "Exclude an agent key, adapter id, or adapter:model target from routing (repeatable)")
+	flagSet.BoolVar(&flags.RouteProbe, "route-probe", false, "Detect adapter availability before routing instead of assuming every configured adapter is available")
+	flagSet.BoolVar(&flags.ExplainRoute, "explain-route", false, "Print the routing decision before the run starts")
 	flagSet.StringVarP(&flags.Workdir, "workdir", "C", ".", "Working directory")
 	flagSet.StringVar(&flags.StateRoot, "state-root", "", "Override authoritative run-state root (default ~/.local/state/tagteam)")
 	flagSet.StringSliceVar(&flags.AllowedPaths, "allow-path", nil, "Allow an exact repo-relative file or directory prefix ending in / (repeatable; required for solo)")
@@ -223,6 +235,9 @@ func runDefault(cmd *cobra.Command, flags *flagState, prompt string) error {
 	opts, cfg, err := resolve(cmd, flags, prompt)
 	if err != nil {
 		return err
+	}
+	if flags.ExplainRoute && opts.Routing != nil {
+		fmt.Fprint(cmd.OutOrStdout(), tagteam.FormatRoutingDecision(*opts.Routing))
 	}
 	app := tagteam.NewApp(cfg)
 	ctx, stop := commandSignalContext(context.Background())
@@ -661,6 +676,20 @@ func resolve(cmd *cobra.Command, flags *flagState, prompt string) (tagteam.RunOp
 	})
 	if err != nil {
 		return tagteam.RunOptions{}, tagteam.Config{}, err
+	}
+	// Routing is deterministic and offline unless the operator asks for a
+	// probe, so availability detection happens here rather than inside
+	// option resolution.
+	if strings.TrimSpace(flags.Job) != "" && flags.RouteProbe {
+		probeCtx := cmd.Context()
+		if probeCtx == nil {
+			probeCtx = context.Background()
+		}
+		availability, probeErr := tagteam.ProbeAdapterAvailability(probeCtx, cfg, tagteam.RunOptions{EnvOverlay: cfg.EnvOverlay})
+		if probeErr != nil {
+			return tagteam.RunOptions{}, tagteam.Config{}, probeErr
+		}
+		flags.RouteAvailability = availability
 	}
 	opts, err := tagteam.ResolveOptions(cfg, sources, flags.FlagInputs, changed, prompt)
 	if err != nil {

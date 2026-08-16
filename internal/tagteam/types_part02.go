@@ -210,6 +210,20 @@ type FlagInputs struct {
 	MaxRoleInvocations      int
 	RepairJSONWithWorker    bool
 	Profile                 string
+	// Job selects a capability-routed job from the job catalog. The router
+	// picks the workflow and the agents for the slots the operator left open.
+	Job string
+	// RouteExclude removes agent cards from routing by agent key, adapter id,
+	// or full adapter:model target.
+	RouteExclude []string
+	// RouteProbe requests adapter availability detection before routing.
+	RouteProbe bool
+	// ExplainRoute prints the routing decision before the run starts.
+	ExplainRoute bool
+	// RouteAvailability is host-supplied rather than flag-parsed: the CLI
+	// fills it from ProbeAdapterAvailability when RouteProbe is set, so
+	// ResolveOptions itself stays deterministic and offline.
+	RouteAvailability       map[string]AdapterAvailability
 	Workdir                 string
 	StateRoot               string
 	AllowedPaths            []string
@@ -325,6 +339,10 @@ type RunOptions struct {
 	Baseline                  string
 	SkipDirtyCheck            bool
 	InvocationBudget          *InvocationBudget
+	// Job and Routing are set only when the run was composed by the job
+	// router. Routing is persisted as routing.json and echoed in final.json.
+	Job     string
+	Routing *RoutingDecision
 }
 
 type Meta struct {
@@ -395,9 +413,13 @@ type FinalRun struct {
 	// empty in solo mode. `tagteam fix` uses these saved targets to resume
 	// with the same mode and adapters instead of re-resolving from current
 	// defaults/flags.
-	Coder             RoleTarget            `json:"coder,omitempty"`
-	Adversary         RoleTarget            `json:"adversary,omitempty"`
-	Scout             RoleTarget            `json:"scout,omitempty"`
+	Coder     RoleTarget `json:"coder,omitempty"`
+	Adversary RoleTarget `json:"adversary,omitempty"`
+	Scout     RoleTarget `json:"scout,omitempty"`
+	// Job and Routing record how a capability-routed team was composed. They
+	// are empty for runs that selected their targets directly.
+	Job               string                `json:"job,omitempty"`
+	Routing           *RoutingDecision      `json:"routing,omitempty"`
 	SupervisorCanEdit bool                  `json:"supervisor_can_edit,omitempty"`
 	WorkPlan          *WorkPlan             `json:"work_plan,omitempty"`
 	Plan              *PlanSummary          `json:"plan,omitempty"`

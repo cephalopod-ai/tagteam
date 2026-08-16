@@ -21,6 +21,7 @@ orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`
 | App / run loop | `internal/tagteam/runner.go` | `App` type; `Run`, `Review`, `Fix`, `Doctor`; the round loop, role dispatch, env policy, artifact writing. |
 | Config resolution | `internal/tagteam/config.go` | Layered config (flags > shell env > `.env` overlay > repo `.tagteam.toml` > user config > defaults), profiles, `ResolveOptions`. |
 | Adapters | `internal/tagteam/adapters.go`, `internal/tagteam/adapters_part02.go` | Adapter interface + `codex`, `codex-oss`, `claude`, `agy`, `gosling`, `grok`, `openai-compatible`; `Registry`, command construction, capability sets. |
+| Capability routing | `internal/tagteam/routing_types.go`, `routing_defaults.go`, `routing_config.go`, `routing_select.go`, `routing_probe.go`, `routing_apply.go`, `internal/cli/route.go` | Job taxonomy, agent capability cards, constrained selection with ranked fallbacks, opt-in availability probing, `ResolveOptions` wiring, and the `routing.json` decision artifact. |
 | Types | `internal/tagteam/types.go` | `Mode`, `Role`, `ReasonCode`, `RunOptions`, `FinalRun`, `RunState`, exit codes, JSON contracts. |
 | Artifact store | `internal/tagteam/artifact_store.go`, `durable_io.go` | Derives repository identity, maintains `.tagteam/repo.json`, migrates legacy state, and atomically persists external artifacts. |
 | Active run pointer | `internal/tagteam/active_run.go` | Persists external `active.json` for in-flight run discovery and failure cleanup. |
@@ -78,7 +79,7 @@ inherit the runner's restricted environment and provider-auth forwarding.
 Per run, authoritative artifacts are written under
 `~/.local/state/tagteam/<repo-id>/runs/<run-id>/` (briefs, streams, diffs,
 reviews, tests, recovery and gate artifacts, `final.json`, `state.json`, optional
-`plan.json`). `.tagteam/repo.json` is the only in-worktree runtime pointer;
+`plan.json`, and `routing.json` for capability-routed runs). `.tagteam/repo.json` is the only in-worktree runtime pointer;
 `active.json` and `latest.json` live beside the external `runs/` directory.
 Diffs are captured through a temporary Git index, always excluding `.tagteam/`.
 `final.json` / `state.json` carry machine-readable `status`, `degraded`,
@@ -126,6 +127,11 @@ as the TUI. See the README
 - New mode/role: extend `Mode`/`Role` and the run-loop dispatch.
 - New reason code: extend the `ReasonCode` enum and the classifiers in
   `run_state.go`.
+- New job or agent card: add a `[jobs.<name>]` / `[agents.<key>]` entry (config
+  or `routing_defaults.go`); requirements are stated against the closed
+  capability vocabulary in `routing_types.go`. A routed team is still validated
+  by `ValidateRoleTarget` / `validateClaudeRoleAssignments`, so routing can
+  never widen the adapter role boundary.
 - New live status consumer: prefer reading `RunSnapshot` instead of reverse-
   engineering `final.json` / `state.json` directly.
 - New control transport: adapt the versioned control-plane operations; do not
