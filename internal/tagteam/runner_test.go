@@ -599,6 +599,19 @@ func TestMergeCommandEnvOverlayDoesNotOverrideShell(t *testing.T) {
 	}
 }
 
+func TestMergeCommandEnvExtraOverridesShell(t *testing.T) {
+	t.Setenv("TAGTEAM_TEST_ENV", "shell")
+	env := mergeCommandEnv(nil, []string{"TAGTEAM_TEST_ENV=adapter"})
+	values := map[string]string{}
+	for _, item := range env {
+		key, value, _ := strings.Cut(item, "=")
+		values[key] = value
+	}
+	if values["TAGTEAM_TEST_ENV"] != "adapter" {
+		t.Fatalf("TAGTEAM_TEST_ENV = %q, want adapter override", values["TAGTEAM_TEST_ENV"])
+	}
+}
+
 func TestMergeCommandEnvForRoleRestrictsReadOnlySecrets(t *testing.T) {
 	t.Setenv("TAGTEAM_SECRET_TOKEN", "secret")
 	t.Setenv("PATH", "/safe/path")

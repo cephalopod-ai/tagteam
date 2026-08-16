@@ -141,12 +141,13 @@ func TestDecodeEmbeddedJSONReturnsBaseErrorWhenNothingMatches(t *testing.T) {
 }
 
 func TestGrokBuildCmdCoder(t *testing.T) {
+	t.Setenv("GROK_HOME", "/configured/grok")
 	schemaPath := filepath.Join(t.TempDir(), "schema.json")
 	if err := os.WriteFile(schemaPath, []byte(`{"type":"object"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	adapter := &GrokAdapter{DefaultModel: "grok-4.5", ReasoningEffort: "high", ExtraArgs: []string{"--verbatim"}}
-	spec, err := adapter.BuildCmd(RoleCoder, Request{Prompt: "make it work", Workdir: "/repo", SchemaPath: schemaPath})
+	spec, err := adapter.BuildCmd(RoleCoder, Request{Prompt: "make it work", Workdir: "/repo", RunDir: "/run", InvocationID: "worker-1", SchemaPath: schemaPath})
 	if err != nil {
 		t.Fatalf("BuildCmd() error = %v", err)
 	}
@@ -161,8 +162,13 @@ func TestGrokBuildCmdCoder(t *testing.T) {
 	if !reflect.DeepEqual(spec.Argv, want) {
 		t.Fatalf("argv mismatch\nwant: %#v\ngot:  %#v", want, spec.Argv)
 	}
-	if !reflect.DeepEqual(spec.Env, []string{"GROK_CLAUDE_MCPS_ENABLED=false", "GROK_CURSOR_MCPS_ENABLED=false"}) {
-		t.Fatalf("env = %#v, want compatibility MCP discovery disabled", spec.Env)
+	if !reflect.DeepEqual(spec.Env, []string{
+		"GROK_CLAUDE_MCPS_ENABLED=false",
+		"GROK_CURSOR_MCPS_ENABLED=false",
+		"HOME=/run/tmp/invocations/worker-1",
+		"GROK_HOME=/configured/grok",
+	}) {
+		t.Fatalf("env = %#v, want isolated compatibility home", spec.Env)
 	}
 	if len(spec.Stdin) != 0 {
 		t.Fatalf("stdin = %q, want empty", string(spec.Stdin))
