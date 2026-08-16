@@ -3,7 +3,7 @@
 [![CI](https://github.com/cephalopod-ai/tagteam/actions/workflows/ci.yml/badge.svg)](https://github.com/cephalopod-ai/tagteam/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/cephalopod-ai/tagteam)](https://github.com/cephalopod-ai/tagteam/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8.svg)](go.mod)
+[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8.svg)](go.mod)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey.svg)](#install)
 
 **A standalone Go CLI that runs one or more headless coding agents as one command.**
@@ -15,7 +15,7 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 | | |
 |---|---|
 | **Default flow** | `supervisor` writes a brief + reviews → `worker` implements, loops until it passes |
-| **Language / runtime** | Go 1.23+, single static binary |
+| **Language / runtime** | Go 1.25+, single static binary |
 | **Platforms** | macOS (`amd64`/`arm64`), Linux (`amd64`/`arm64`) |
 | **Requires** | Git + at least one supported agent CLI already logged in |
 | **License** | MIT |
@@ -246,9 +246,9 @@ Full documentation — architecture, more diagrams, and the test ledger — is i
 
 ## Status
 
-This repository reflects the `v1.2.1` release surface: the core run loop, adapter abstraction, persisted run artifacts, live status plumbing, role policy, dirty-worktree checkpointing, and the full command set are implemented and covered by the test ledger. The remaining rough edges are adapter-behavior issues and general ergonomics rather than missing core workflow support.
+This repository tracks the `v1.2.1` release surface plus post-release development on `main`: the core run loop, adapter abstraction, persisted run artifacts, live status plumbing, role policy, dirty-worktree checkpointing, the full command set, and capability-aware job routing are implemented and covered by the test ledger. The remaining rough edges are adapter-behavior issues and general ergonomics rather than missing core workflow support.
 
-Included in the `v1.2.1` surface:
+Included in the `v1.2.1` surface and the development tree that follows it:
 
 - supervisor/worker mode is now the default flow
 - relay scout/coder/supervisor mode is available with `--relay`
@@ -256,7 +256,8 @@ Included in the `v1.2.1` surface:
 - adversarial coder/adversary mode supports audits and independent review
 - saved run artifacts include briefs, diffs, reviews, tests, and final summaries
 - active runs publish external `active.json` so live views can discover in-flight work without exposing host state to workers
-- command surface now includes `run`, `review`, `fix`, `resume`, `status`, `plan`, `transcript`, `findings`, `transfer`, `tui`, `mcp`, `doctor`, and `init`
+- command surface now includes `run`, `review`, `fix`, `resume`, `status`, `plan`, `transcript`, `findings`, `transfer`, `route`, `tui`, `mcp`, `doctor`, `init`, `version`, `verify-install`, `intel`, and `integrate`
+- capability-aware job routing (`--job` / `tagteam route`) selects the workflow and staffs every slot the operator left open; see [Capability-aware job routing](#capability-aware-job-routing)
 - config layering supports repo config, user config, env overrides, flags, and named profiles
 - explicit JSON repair is available through `--repair-json-with-worker` / `json_repair = "worker"`
 - explicit repo instruction files are loaded by default and appended to role prompts
@@ -277,10 +278,16 @@ tagteam findings [--all]
 tagteam findings defer RUN_ID FINDING_ID --reason "..."
 tagteam findings resolve RUN_ID FINDING_ID --evidence "commit and verification"
 tagteam transfer RUN_ID --test "..." --lint "..."
+tagteam route --list
+tagteam route --job <name>
 tagteam tui [RUN_ID]
 tagteam mcp
 tagteam doctor
 tagteam init
+tagteam version
+tagteam verify-install
+tagteam intel <op>
+tagteam integrate
 ```
 
 `tagteam run` is an explicit alias for the default positional run path. Like
@@ -308,7 +315,7 @@ Tagteam's existing mutation gate.
 
 ## Requirements
 
-- Go 1.23+
+- Go 1.25+
 - Git
 - At least one supported agent CLI on `PATH`
 
@@ -510,7 +517,7 @@ does not override host validation or count as a successful run.
 
 ## Install
 
-With a Go toolchain (1.23+):
+With a Go toolchain (1.25+):
 
 ```bash
 go install github.com/cephalopod-ai/tagteam@latest
@@ -574,7 +581,7 @@ cd my-project
 tagteam "add a --json flag to the export command and cover it with a test"
 ```
 
-With no other options, `tagteam` uses the default supervisor mode: Claude Opus 4.8 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `codex:gpt-5.6-sol`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
+With no other options, `tagteam` uses the default supervisor mode: Claude Opus 5 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `codex:gpt-5.6-sol`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
 
 Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. Package estimates are capped at 80% of the per-invocation timeout; deferred packages do not block a normal one-package run, while `--auto-next-package` requires every planned package to fit that cap. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
 
