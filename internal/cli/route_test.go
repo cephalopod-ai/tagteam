@@ -22,8 +22,11 @@ func runRouteCommand(t *testing.T, workdir string, args ...string) (string, erro
 func isolatedWorkdir(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
-	// Keep the test off the operator's real user config.
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	// Keep the test off the operator's real user config. HOME matters too:
+	// os.UserConfigDir resolves under $HOME on macOS and ignores
+	// XDG_CONFIG_HOME there.
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "home", ".config"))
 	return tmp
 }
 

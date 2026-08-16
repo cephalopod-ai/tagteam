@@ -7,15 +7,28 @@ import (
 	"testing"
 )
 
+// writeUserConfig writes a user-level config and returns an isolated repo
+// directory to load from. The path comes from userConfigPath() rather than
+// being assembled by hand: os.UserConfigDir is platform-specific (macOS uses
+// $HOME/Library/Application Support and ignores XDG_CONFIG_HOME), so hardcoding
+// the XDG layout would write a file the loader never reads.
 func writeUserConfig(t *testing.T, body string) string {
 	t.Helper()
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
-	t.Setenv("XDG_CONFIG_HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, "tagteam"), 0o755); err != nil {
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	path, err := userConfigPath()
+	if err != nil {
+		t.Fatalf("userConfigPath() error = %v", err)
+	}
+	if !strings.HasPrefix(path, home) {
+		t.Fatalf("user config path %q is not isolated under %q", path, home)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "tagteam", "config.toml"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	repo := filepath.Join(tmp, "repo")
@@ -168,7 +181,8 @@ func TestRoutingAdaptersListsDistinctAdapters(t *testing.T) {
 // silently in either direction.
 func TestUntrustedRepoConfigMayContributeRoutingButNotCommands(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "home", ".config"))
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
