@@ -11,9 +11,9 @@ implementations, precise completion language) that this repo expects.
 
 ## What this project is
 
-`tagteam` is a standalone Go CLI (Go 1.23+, single static binary, no CGO) that
+`tagteam` is a standalone Go CLI (Go 1.25+, single static binary, no CGO) that
 orchestrates one or more headless coding-agent CLIs (`claude`, `codex`, `agy`,
-`gosling`, `openai-compatible`) through an implement → diff → test → review
+`gosling`, `grok`, `openai-compatible`) through an implement → diff → test → review
 loop. It is an orchestration CLI, not a vendor CLI shim — avoid cloning vendor
 flag surfaces unless `tagteam` owns the concept.
 
@@ -78,7 +78,7 @@ reason code → extend `ReasonCode` and the classifiers in `run_state.go`.
 
 - **800-line hard cap per `.go` file** (CI-enforced). When a file grows past
   it, split into `<name>_partNN.go` siblings in the same package — this is the
-  established pattern (`runner_part02.go`–`runner_part08.go`,
+  established pattern (`runner_part02.go`–`runner_part10.go`,
   `config_part02.go`–`config_part04.go`, etc.), not new sub-packages.
 - Keep dependencies minimal: currently only cobra/pflag, BurntSushi/toml,
   google/shlex, golang.org/x/term. The only network client is the

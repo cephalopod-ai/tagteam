@@ -1,6 +1,6 @@
 # Test Ledger
 
-Derived from the current test files. 585 test functions across 66 files (large
+Derived from the current test files. 684 test functions across 83 files (large
 suites are mechanically split to keep every Go source file within the 800-line
 gate). The full local suite and focused repeated/race MCP repair tests were
 re-validated on 2026-07-16 on branch `repair/audit-2026-07-16`; that branch was
