@@ -14,6 +14,10 @@ func initFinalState(final *FinalRun, opts RunOptions) {
 	final.Status = RunStatusRunning
 	final.Phase = "preflight"
 	final.envOverlay = opts.EnvOverlay
+	// A capability-routed run carries its decision record into final.json so
+	// the composed team is auditable from the same artifact as the outcome.
+	final.Job = opts.Job
+	final.Routing = opts.Routing
 	final.RoleStatuses = map[string]RoleStatus{}
 	final.RoleLosses = []RoleLossRecord{}
 	final.Budgets = BudgetState{

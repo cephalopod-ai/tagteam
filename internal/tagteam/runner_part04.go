@@ -85,6 +85,9 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 	if err := writeJSON(filepath.Join(runDir, "meta.json"), meta); err != nil {
 		return FinalRun{}, err
 	}
+	if err := persistRoutingDecision(ctx, opts, runDir); err != nil {
+		return FinalRun{}, err
+	}
 	final = FinalRun{
 		SchemaVersion:     ArtifactSchemaVersion,
 		RunID:             runID,

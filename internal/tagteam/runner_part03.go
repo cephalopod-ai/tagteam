@@ -77,6 +77,9 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (final FinalRun, err
 	if err := writeJSON(filepath.Join(runDir, "meta.json"), meta); err != nil {
 		return FinalRun{}, err
 	}
+	if err := persistRoutingDecision(ctx, opts, runDir); err != nil {
+		return FinalRun{}, err
+	}
 	logProgress(opts, "run %s started mode=%s baseline=%s run-dir=%s", runID, opts.Mode, baseline, runDir)
 
 	registry := Registry(a.Config, opts)

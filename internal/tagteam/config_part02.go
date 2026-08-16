@@ -447,6 +447,9 @@ func validateConfig(cfg Config) error {
 	if err := validateTestPresets(cfg.TestPresets); err != nil {
 		return err
 	}
+	if err := validateRoutingConfig(cfg); err != nil {
+		return err
+	}
 	if cfg.Steward.TimeoutSeconds < 0 {
 		return fmt.Errorf("steward.timeout_seconds must be >= 0")
 	}

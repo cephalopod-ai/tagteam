@@ -241,6 +241,25 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		mode = ModeSolo
 	}
 
+	// A job selects the workflow, and the workflow selects the agents. An
+	// explicit --mode/--solo/--relay or a profile that pins the mode still
+	// wins: routing only fills what the operator left open.
+	jobSpec, jobEnabled, err := resolveJobForFlags(cfg, flags)
+	if err != nil {
+		return RunOptions{}, err
+	}
+	roundsExplicit := changed["rounds"] || (hasProfile && profile.Rounds != 0)
+	if jobEnabled {
+		if !modeExplicit {
+			mode = jobSpec.Mode
+			modeRaw = string(jobSpec.Mode)
+			modeExplicit = true
+		}
+		if !roundsExplicit && jobSpec.Rounds > 0 {
+			rounds = jobSpec.Rounds
+		}
+	}
+
 	targets := configuredTargetsForMode(cfg.Defaults, mode)
 	editorRaw, reviewerRaw, scoutRaw := targets.Editor, targets.Reviewer, targets.Scout
 	editorExplicit := false
@@ -551,6 +570,30 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("invalid json_repair %q (want off or worker)", jsonRepair)}
 	}
 
+	var routingDecision *RoutingDecision
+	if jobEnabled {
+		pinned := pinnedRoutingSlots(mode, editorRaw, reviewerRaw, scoutRaw, editorExplicit, reviewerExplicit, scoutExplicit)
+		routed, routeErr := routeJob(cfg, jobSpec, flags, mode, pinned)
+		if routeErr != nil {
+			return RunOptions{}, routeErr
+		}
+		applyRoutedTargets(routed, &editorRaw, &reviewerRaw, &scoutRaw)
+		mergeRoutingFallbacks(&fallbacks, mode, routed.Fallbacks)
+		decision := routed.Decision
+		decision.Rounds = rounds
+		switch {
+		case roundsExplicit:
+			decision.RoundsSource = RoutingSourceOperator
+		case jobSpec.Rounds == 0:
+			// The job states no round budget, so the resolved value came from
+			// config defaults rather than from routing.
+			decision.RoundsSource = RoutingSourceConfig
+		default:
+			decision.RoundsSource = RoutingSourceJob
+		}
+		routingDecision = &decision
+	}
+
 	editorLabel, reviewerLabel := roleLabels(mode)
 	editorTarget, err := ParseRoleTarget(editorRaw)
 	if err != nil {
@@ -675,6 +718,8 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		OpenAICompatibleArgs:      openAICompatibleArgs,
 		EnvOverlay:                cloneStringMap(cfg.EnvOverlay),
 		ConfigSources:             sources,
+		Job:                       strings.TrimSpace(flags.Job),
+		Routing:                   routingDecision,
 	}
 	if err := validateRunRoles(opts); err != nil {
 		return RunOptions{}, err

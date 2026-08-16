@@ -25,6 +25,7 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 - [Highlights](#highlights)
 - [What's New In v1.2.1](#whats-new-in-v121)
 - [Modes](#modes)
+- [Capability-aware job routing](#capability-aware-job-routing)
 - [Architecture at a glance](#architecture-at-a-glance)
 - [Status](#status)
 - [Requirements](#requirements)
@@ -79,6 +80,147 @@ Highlights in `v1.2.1`:
 
 > [!TIP]
 > In every reviewed mode (supervisor, relay, adversarial), findings loop back into the editor role until the change passes review, tests fail, or the round limit is reached. When the limit hits with unresolved blocker/major findings, `tagteam` stops asking for edits and instead asks both agents for final "what remains incomplete / what do you dispute" reports. Solo mode runs once and never pretends to be reviewed.
+
+## Capability-aware job routing
+
+Modes answer *how* a team works. A **job** answers *what kind of work this is*,
+and lets Tagteam pick both the workflow and the agents:
+
+```text
+job  →  workflow (mode)  →  agent per slot
+```
+
+```bash
+tagteam route --list                       # jobs and agent cards
+tagteam route --job audit                  # explain a decision without running anything
+tagteam run --job scoped_patch "fix the retry backoff"
+tagteam run --job audit --explain-route "audit the billing refactor"
+```
+
+Routing is **advisory over the same role boundaries every other path enforces**:
+a routed team is validated exactly like a hand-selected one, so Claude is still
+review-only, `agy`/Gemini is still scout-only, and an operator flag always wins.
+
+| Job | Workflow | Shape |
+|---|---|---|
+| `scoped_patch` | supervisor | high-coding editor, independent-family reviewer |
+| `problem_solving` | supervisor | reasoning-first editor and reviewer, 3 rounds |
+| `audit` | adversarial | any competent editor, high-audit reviewer from another family |
+| `research` | relay | cheap scout, strong planner as supervisor |
+| `deep_scan` | relay | large-context scout (>= 200k tokens), planning-heavy supervisor |
+
+**Precedence.** `--job` fills only what you left open. An explicit `--mode`,
+`--solo`, `--relay`, `--rounds`, `--worker`, `--supervisor`, `--reviewer`,
+`-mc`, `-ma`, or `--scout` — or a profile that sets the same key — is recorded
+as `source: "operator"` and never re-selected. Router-chosen alternates are
+*appended* behind configured fallbacks; routing never removes a fallback you
+configured.
+
+**Availability.** Routing is deterministic and offline by default and records
+`availability_mode: "assumed"`. Add `--route-probe` to detect installed and
+runnable adapters first (the same detection `tagteam doctor` uses) and have
+unavailable adapters rejected with a reason. Use `--route-exclude` to take an
+agent key, an adapter id, or a full `adapter:model` target out of routing —
+that is the honest way to express "this provider is out of quota right now",
+since Tagteam does not guess quota state.
+
+**Failure is loud.** If no candidate can staff a slot, the run stops with
+exit code 4 and lists every rejection reason. Family diversity is a stated job
+requirement, so an audit never quietly falls back to a same-family reviewer;
+the error tells you to pin the slot, exclude fewer agents, or set
+`diverse_reviewer = false`.
+
+### Capability vocabulary
+
+Agent cards rate targets on a closed vocabulary at levels
+`none | low | medium | high | max` (equivalently `0`-`4`):
+
+`coding`, `reasoning`, `research`, `planning`, `audit`, `context`, `tool_use`,
+`autonomy`, `speed`, `reliability`, `cost` (cost rates *cost efficiency* —
+higher means cheaper).
+
+The built-in roster and job catalog are editorial priors for the maintained
+operator roster, not measurements. Retune them, and add your own providers, in
+user config; entries overlay the built-ins field by field:
+
+```toml
+# A Mistral endpoint behind the openai-compatible adapter, review-only.
+[agents.mistral-audit]
+target = "openai-compatible:mistral-large"
+family = "mistral"
+roles = ["reviewer"]
+context_tokens = 128000
+capabilities = { audit = "high", reasoning = "high", coding = "medium", cost = "high" }
+
+# Retune one built-in level without restating the card.
+[agents.grok]
+capabilities = { audit = "high" }
+
+# Take a card out of routing entirely.
+[agents.gemma-local]
+disabled = true
+
+[jobs.vendor_audit]
+description = "Audit with an independent vendor"
+mode = "adversarial"
+rounds = 1
+diverse_reviewer = true
+
+[jobs.vendor_audit.roles.editor]
+require = { coding = "high" }
+prefer = ["coding", "reliability"]
+
+[jobs.vendor_audit.roles.reviewer]
+require = { audit = "high", reasoning = "high" }
+prefer = ["audit", "cost"]
+min_context_tokens = 100000
+candidates = ["mistral-audit"]           # optional allow-list of agent keys
+```
+
+`require` is a hard floor, `prefer` is an ordered weighting (first entry counts
+most), `min_context_tokens` is a hard context floor, and `candidates` restricts
+a slot to named cards. Unknown capability names, levels, slots, or modes fail
+at config load rather than at selection time.
+
+Repo-local `.tagteam.toml` may contribute `[agents]` and `[jobs]` without
+`--trust-repo-config`, at the same authority level as repo-local profiles and
+role defaults: these tables name models and requirements, never commands,
+endpoints, or credentials.
+
+### The decision is an artifact
+
+A routed run writes `routing.json` before any agent starts and echoes the same
+record in `final.json`, so a heterogeneous team's composition can be audited
+independently of its outcome:
+
+```json
+{
+  "schema_version": 1,
+  "job": "scoped_patch",
+  "workflow": "supervisor",
+  "workflow_source": "job",
+  "availability_mode": "assumed",
+  "roles": [
+    {
+      "slot": "reviewer",
+      "label": "supervisor",
+      "role": "supervisor",
+      "source": "router",
+      "agent": "opus",
+      "selected": "claude:claude-opus-5",
+      "family": "anthropic",
+      "reasons": [
+        "audit=max meets required medium",
+        "independent model family (anthropic, not openai)"
+      ],
+      "fallbacks": ["claude:claude-sonnet-5", "grok:grok-4.5"],
+      "rejected": [
+        {"agent": "gpt-terra", "reason": "job requires a reviewer outside the \"openai\" family"}
+      ]
+    }
+  ]
+}
+```
 
 ## Architecture at a glance
 
@@ -881,6 +1023,7 @@ role for the recovery attempt.
 <summary><strong>Typical contents</strong></summary>
 
 - `meta.json`
+- `routing.json` (only when the run was composed with `--job`)
 - `input.md`
 - `repo-instructions.md`
 - `repo-instructions.json`

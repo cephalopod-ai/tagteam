@@ -101,7 +101,7 @@ func captureIntegritySnapshot(req Request) (integritySnapshot, error) {
 }
 
 func protectedRunArtifact(name string) bool {
-	if name == "meta.json" || name == "state.json" || name == "events.jsonl" || name == findingsLedgerFilename || name == "review-schema.json" || name == "worker-schema.json" || name == "plan.json" {
+	if name == "meta.json" || name == "state.json" || name == "events.jsonl" || name == findingsLedgerFilename || name == "review-schema.json" || name == "worker-schema.json" || name == "plan.json" || name == routingArtifactName {
 		return true
 	}
 	return strings.HasPrefix(name, "diff-round-") || strings.HasPrefix(name, "quality-gates-") || strings.HasPrefix(name, "review-bundle-")

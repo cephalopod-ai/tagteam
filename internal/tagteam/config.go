@@ -748,6 +748,7 @@ func mergeConfig(dst *Config, src Config) {
 	if len(src.Adapters.OpenAICompatible.ExtraArgs) > 0 {
 		dst.Adapters.OpenAICompatible.ExtraArgs = append([]string{}, src.Adapters.OpenAICompatible.ExtraArgs...)
 	}
+	mergeRoutingConfig(dst, src)
 	mergeStewardConfig(&dst.Steward, src.Steward)
 	if src.TestPresets != nil {
 		if dst.TestPresets == nil {

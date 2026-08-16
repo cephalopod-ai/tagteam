@@ -643,8 +643,13 @@ type TestPresetConfig struct {
 }
 
 type Config struct {
-	Defaults    DefaultsConfig              `toml:"defaults"`
-	Profiles    map[string]ProfileConfig    `toml:"profiles"`
+	Defaults DefaultsConfig           `toml:"defaults"`
+	Profiles map[string]ProfileConfig `toml:"profiles"`
+	// Agents and Jobs are the capability-routing layer: agent cards rate
+	// targets against the capability vocabulary, jobs state what a kind of
+	// work needs. Both overlay the built-in roster and job catalog.
+	Agents      map[string]AgentCardConfig  `toml:"agents,omitempty"`
+	Jobs        map[string]JobConfig        `toml:"jobs,omitempty"`
 	Adapters    AdapterConfigSet            `toml:"adapters"`
 	CodeIntel   CodeIntelConfig             `toml:"code_intel"`
 	TestPresets map[string]TestPresetConfig `toml:"test_presets"`
