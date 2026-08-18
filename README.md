@@ -831,6 +831,8 @@ tagteam \
 
 This adapter deliberately mirrors the fleet's other two working ACP integrations — gosling's Rust `vibe_acp` provider (`crates/gosling/src/providers/vibe_acp.rs`) and cuttlefish's TypeScript `VibeAcpEngine` (`packages/cuttlefish/src/engines/vibe-acp.ts`) — rather than inventing new wire behavior, so a `vibe-acp` compatibility fix made in one repo is easy to carry over to the others. See `docs/ARCHITECTURE.md` for the transport details.
 
+Equivalent environment overrides: `TAGTEAM_MISTRAL_ACP_BINARY`, `TAGTEAM_MISTRAL_ACP_SESSION_MODE`, `TAGTEAM_MISTRAL_ACP_MODEL`, `TAGTEAM_MISTRAL_ACP_MAX_CONTEXT_TOKENS`, `TAGTEAM_MISTRAL_ACP_RESERVED_OUTPUT_TOKENS`, and `TAGTEAM_MISTRAL_ACP_ARGS` (also settable per run via `--mistral-acp-args`). Failing to enter the configured `session_mode` (e.g. an older `vibe-acp` that rejects `session/set_mode`) is a fatal preflight error rather than a silent fallback into an unrecognized, possibly mutation-capable mode.
+
 </details>
 
 Review the current diff only:
@@ -852,7 +854,7 @@ tagteam fix
 
 If a `.env` file exists in the selected workdir, `tagteam` parses it as a small, line-oriented dotenv subset: `KEY=VALUE`, optional `export`, inline comments outside quotes, single-quoted raw values, and double-quoted escape sequences such as `\n`. `.env` is a convenience source for local development; it is not a full shell parser, and explicit shell exports still win.
 
-Repo-local `.tagteam.toml` is loaded in untrusted mode by default. It can set ordinary role/model defaults, but high-authority settings such as `defaults.test`, `git_safety`, `code_intel_command`, `[test_presets]`, adapter `extra_args`, Claude `coder_allowed_tools` / `bare` / `serialize`, and `openai-compatible` `base_url`, `api_key_env`, `extra_headers`, or `extra_args` require `--trust-repo-config`. Untrusted repo config never contributes `[test_presets]` entries (they are stripped entirely).
+Repo-local `.tagteam.toml` is loaded in untrusted mode by default. It can set ordinary role/model defaults, but high-authority settings such as `defaults.test`, `git_safety`, `code_intel_command`, `[test_presets]`, adapter `extra_args`, Claude `coder_allowed_tools` / `bare` / `serialize`, `openai-compatible` `base_url`, `api_key_env`, `extra_headers`, or `extra_args`, and `mistral-acp` `binary`, require `--trust-repo-config`. Untrusted repo config never contributes `[test_presets]` entries (they are stripped entirely).
 
 ### Trusted test presets (MCP / control plane)
 

@@ -111,6 +111,12 @@ func hasTagteamEnv(overlay map[string]string) bool {
 		"TAGTEAM_OPENAI_COMPATIBLE_RESERVED_OUTPUT_TOKENS",
 		"TAGTEAM_OPENAI_COMPATIBLE_HEADERS",
 		"TAGTEAM_OPENAI_COMPATIBLE_ARGS",
+		"TAGTEAM_MISTRAL_ACP_BINARY",
+		"TAGTEAM_MISTRAL_ACP_SESSION_MODE",
+		"TAGTEAM_MISTRAL_ACP_MODEL",
+		"TAGTEAM_MISTRAL_ACP_MAX_CONTEXT_TOKENS",
+		"TAGTEAM_MISTRAL_ACP_RESERVED_OUTPUT_TOKENS",
+		"TAGTEAM_MISTRAL_ACP_ARGS",
 	} {
 		if overlay != nil {
 			if _, ok := overlay[key]; ok {
@@ -394,6 +400,36 @@ func mergeEnvConfig(cfg *Config, overlay map[string]string) error {
 		}
 		cfg.Adapters.OpenAICompatible.ExtraArgs = parsed
 	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MISTRAL_ACP_BINARY"); ok {
+		cfg.Adapters.MistralAcp.Binary = value
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MISTRAL_ACP_SESSION_MODE"); ok {
+		cfg.Adapters.MistralAcp.SessionMode = value
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MISTRAL_ACP_MODEL"); ok {
+		cfg.Adapters.MistralAcp.DefaultModel = value
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MISTRAL_ACP_MAX_CONTEXT_TOKENS"); ok {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_MISTRAL_ACP_MAX_CONTEXT_TOKENS must be an integer: %w", err)
+		}
+		cfg.Adapters.MistralAcp.MaxContextTokens = &parsed
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MISTRAL_ACP_RESERVED_OUTPUT_TOKENS"); ok {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_MISTRAL_ACP_RESERVED_OUTPUT_TOKENS must be an integer: %w", err)
+		}
+		cfg.Adapters.MistralAcp.ReservedOutputTokens = &parsed
+	}
+	if value, ok := envLookupNonEmpty(overlay, "TAGTEAM_MISTRAL_ACP_ARGS"); ok {
+		parsed, err := shlex.Split(value)
+		if err != nil {
+			return fmt.Errorf("TAGTEAM_MISTRAL_ACP_ARGS is not a valid argument list: %w", err)
+		}
+		cfg.Adapters.MistralAcp.ExtraArgs = parsed
+	}
 	return nil
 }
 
@@ -427,6 +463,7 @@ func validateConfig(cfg Config) error {
 		{"adapters.gosling", cfg.Adapters.Gosling.MaxContextTokens, cfg.Adapters.Gosling.ReservedOutputTokens},
 		{"adapters.grok", cfg.Adapters.Grok.MaxContextTokens, cfg.Adapters.Grok.ReservedOutputTokens},
 		{"adapters.openai_compatible", cfg.Adapters.OpenAICompatible.MaxContextTokens, cfg.Adapters.OpenAICompatible.ReservedOutputTokens},
+		{"adapters.mistral_acp", cfg.Adapters.MistralAcp.MaxContextTokens, cfg.Adapters.MistralAcp.ReservedOutputTokens},
 	} {
 		if err := check(item.name, item.max, item.reserved); err != nil {
 			return err

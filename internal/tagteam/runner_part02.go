@@ -495,6 +495,9 @@ func ValidateRoleTarget(role Role, target RoleTarget) error {
 	if role != RoleAdversary && role != RoleScout && (target.Adapter == "openai-compatible" || target.Adapter == "oai") {
 		return &ExitError{Code: ExitInvalidArguments, Err: unsupportedOpenAICompatibleRoleError()}
 	}
+	if role != RoleAdversary && role != RoleScout && target.Adapter == "mistral-acp" {
+		return &ExitError{Code: ExitInvalidArguments, Err: unsupportedMistralAcpRoleError()}
+	}
 	if role == RoleAdversary && target.Adapter == "gosling" {
 		return &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("gosling is not supported as an adversary adapter")}
 	}

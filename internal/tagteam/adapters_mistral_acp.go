@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // MistralAcpAdapter drives Mistral's `vibe-acp` binary — the ACP-over-stdio
@@ -182,6 +183,48 @@ func selectACPPermissionOutcome(params json.RawMessage) map[string]any {
 	return map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": optionID}}
 }
 
+// acpBoundedTranscript accumulates streamed session/update text under the
+// request's output-byte limit, the same ceiling OpenAICompatibleAdapter
+// enforces on its response body via io.LimitReader. append reports whether
+// the chunk fit; once the limit is exceeded no further text is retained and
+// the caller is expected to cancel the subprocess rather than let a verbose
+// or malfunctioning agent keep streaming into memory.
+type acpBoundedTranscript struct {
+	mu       sync.Mutex
+	buf      strings.Builder
+	limit    int64
+	exceeded bool
+}
+
+func (t *acpBoundedTranscript) append(s string) bool {
+	if s == "" {
+		return true
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.exceeded {
+		return false
+	}
+	if int64(t.buf.Len())+int64(len(s)) > t.limit {
+		t.exceeded = true
+		return false
+	}
+	t.buf.WriteString(s)
+	return true
+}
+
+func (t *acpBoundedTranscript) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.buf.String()
+}
+
+func (t *acpBoundedTranscript) Exceeded() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.exceeded
+}
+
 func (a *MistralAcpAdapter) RunDirect(role Role, req Request) (Result, error) {
 	if role != RoleAdversary && role != RoleScout {
 		return Result{}, &ExitError{Code: ExitInvalidArguments, Err: unsupportedMistralAcpRoleError()}
@@ -218,7 +261,7 @@ func (a *MistralAcpAdapter) RunDirect(role Role, req Request) (Result, error) {
 	}
 
 	rpc := newACPRPC(stdin)
-	var transcript strings.Builder
+	transcript := &acpBoundedTranscript{limit: maxOutputBytes(req)}
 	rpc.onNotify = func(method string, params json.RawMessage) {
 		if method != "session/update" {
 			return
@@ -227,7 +270,12 @@ func (a *MistralAcpAdapter) RunDirect(role Role, req Request) (Result, error) {
 		if err := json.Unmarshal(params, &update); err != nil {
 			return
 		}
-		transcript.WriteString(acpMessageChunkText(update))
+		if text := acpMessageChunkText(update); text != "" && !transcript.append(text) {
+			// Output limit exceeded: stop the agent rather than let it keep
+			// streaming into memory. This unblocks the pending session/prompt
+			// call in runACPTurn, which reports Exceeded() as the real cause.
+			stopProc()
+		}
 	}
 	rpc.onServerRequest = func(method string, params json.RawMessage) (any, error) {
 		if method == "session/request_permission" {
@@ -239,7 +287,7 @@ func (a *MistralAcpAdapter) RunDirect(role Role, req Request) (Result, error) {
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- rpc.serve(stdout) }()
 
-	result, runErr := a.runACPTurn(procCtx, rpc, role, req, &transcript)
+	result, runErr := a.runACPTurn(procCtx, rpc, role, req, transcript)
 
 	stopProc()
 	_ = stdin.Close()
@@ -252,13 +300,19 @@ func (a *MistralAcpAdapter) RunDirect(role Role, req Request) (Result, error) {
 	return result, nil
 }
 
-// runACPTurn drives the initialize -> session/new -> (best-effort
-// session/set_mode / session/set_model) -> session/prompt handshake and
-// returns the parsed Result. session/set_mode and session/set_model are
-// tolerated failures (matches cuttlefish's `.catch(() => {})`): Vibe's own
-// session/new response does not name protocol-version-guaranteed support
-// for either, only that a live vibe-acp session accepts them.
-func (a *MistralAcpAdapter) runACPTurn(ctx context.Context, rpc *acpRPC, role Role, req Request, transcript *strings.Builder) (Result, error) {
+// runACPTurn drives the initialize -> session/new -> session/set_mode ->
+// (best-effort session/set_model) -> session/prompt handshake and returns
+// the parsed Result.
+//
+// Unlike cuttlefish's `.catch(() => {})` on session/set_mode, a failure to
+// enter the configured read-only session mode here is fatal: this adapter
+// is never used as a coder, and RunDirect's session/request_permission
+// handler auto-approves whatever the agent asks for (see
+// selectACPPermissionOutcome), so silently continuing in an unknown
+// (possibly mutation-capable) mode would defeat that read-only boundary.
+// session/set_model stays best-effort: losing model selection is a quality
+// issue, not a safety one.
+func (a *MistralAcpAdapter) runACPTurn(ctx context.Context, rpc *acpRPC, role Role, req Request, transcript *acpBoundedTranscript) (Result, error) {
 	if _, err := rpc.call(ctx, "initialize", map[string]any{
 		"protocolVersion":    1,
 		"clientCapabilities": map[string]any{},
@@ -281,7 +335,9 @@ func (a *MistralAcpAdapter) runACPTurn(ctx context.Context, rpc *acpRPC, role Ro
 	}
 	sessionID := newSession.SessionID
 
-	_, _ = rpc.call(ctx, "session/set_mode", map[string]any{"sessionId": sessionID, "modeId": a.sessionMode()})
+	if _, err := rpc.call(ctx, "session/set_mode", map[string]any{"sessionId": sessionID, "modeId": a.sessionMode()}); err != nil {
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp could not enter read-only session mode %q, refusing to prompt in an unknown mode: %w", a.sessionMode(), redactACPError(err, req.EnvOverlay))}
+	}
 
 	model := req.Model
 	if model == "" {
@@ -296,7 +352,16 @@ func (a *MistralAcpAdapter) runACPTurn(ctx context.Context, rpc *acpRPC, role Ro
 		"prompt":    []map[string]string{{"type": "text", "text": string(promptStdin(req))}},
 	})
 	if err != nil {
+		if transcript.Exceeded() {
+			// The subprocess was deliberately killed once streaming exceeded
+			// the output limit; report that, not the resulting call error
+			// (context canceled / peer stream ended).
+			return Result{}, &ExitError{Code: ExitAdapterFailure, Err: outputLimitError("mistral-acp", transcript.limit)}
+		}
 		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp session/prompt failed: %w", redactACPError(err, req.EnvOverlay))}
+	}
+	if transcript.Exceeded() {
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: outputLimitError("mistral-acp", transcript.limit)}
 	}
 	var promptResult struct {
 		StopReason string `json:"stopReason"`

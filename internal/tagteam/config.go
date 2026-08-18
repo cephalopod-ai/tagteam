@@ -438,6 +438,7 @@ func sanitizeUntrustedRepoConfig(src Config) Config {
 	src.Adapters.OpenAICompatible.APIKeyEnv = ""
 	src.Adapters.OpenAICompatible.ExtraHeaders = nil
 	src.Adapters.OpenAICompatible.ExtraArgs = nil
+	sanitizeUntrustedMistralAcpConfig(&src.Adapters.MistralAcp)
 	// A steward endpoint and API-key selector cross a network/auth boundary.
 	// Repo-local config may set them only after explicit trust.
 	src.Steward = StewardConfig{}
@@ -748,6 +749,7 @@ func mergeConfig(dst *Config, src Config) {
 	if len(src.Adapters.OpenAICompatible.ExtraArgs) > 0 {
 		dst.Adapters.OpenAICompatible.ExtraArgs = append([]string{}, src.Adapters.OpenAICompatible.ExtraArgs...)
 	}
+	mergeMistralAcpConfig(&dst.Adapters.MistralAcp, src.Adapters.MistralAcp)
 	mergeRoutingConfig(dst, src)
 	mergeStewardConfig(&dst.Steward, src.Steward)
 	if src.TestPresets != nil {

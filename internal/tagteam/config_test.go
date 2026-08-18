@@ -495,6 +495,20 @@ func TestValidateRoleTargetRejectsGeminiModelOutsideScout(t *testing.T) {
 	}
 }
 
+func TestValidateRoleTargetRejectsMistralAcpOutsideReviewerScout(t *testing.T) {
+	for _, role := range []Role{RoleCoder, RoleSupervisor} {
+		err := ValidateRoleTarget(role, RoleTarget{Adapter: "mistral-acp"})
+		if err == nil || !strings.Contains(err.Error(), "not as coder/worker") {
+			t.Fatalf("ValidateRoleTarget(%s) error = %v, want read-only rejection", role, err)
+		}
+	}
+	for _, role := range []Role{RoleAdversary, RoleScout} {
+		if err := ValidateRoleTarget(role, RoleTarget{Adapter: "mistral-acp"}); err != nil {
+			t.Fatalf("ValidateRoleTarget(%s) error = %v, want no rejection", role, err)
+		}
+	}
+}
+
 func TestValidateRunRolesAllowsAgyScout(t *testing.T) {
 	opts := RunOptions{
 		Mode:          ModeRelay,

@@ -262,7 +262,13 @@ func runMistralAcpFakeAgent(mode string) {
 			write(map[string]any{"id": req.ID, "result": map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}})
 		case "session/new":
 			write(map[string]any{"id": req.ID, "result": map[string]any{"sessionId": "fake-session-1"}})
-		case "session/set_mode", "session/set_model":
+		case "session/set_mode":
+			if mode == "set_mode_error" {
+				write(map[string]any{"id": req.ID, "error": map[string]any{"code": -32001, "message": "set_mode not supported"}})
+				continue
+			}
+			write(map[string]any{"id": req.ID, "result": map[string]any{}})
+		case "session/set_model":
 			write(map[string]any{"id": req.ID, "result": map[string]any{}})
 		case "session/prompt":
 			fakeAgentRespondToPrompt(mode, req.ID, scanner, write)
@@ -280,6 +286,12 @@ func fakeAgentRespondToPrompt(mode string, promptID *int64, scanner *bufio.Scann
 	switch mode {
 	case "refusal":
 		write(map[string]any{"id": promptID, "result": map[string]any{"stopReason": "refusal"}})
+	case "flood":
+		// One chunk, deliberately far larger than the tiny MaxOutputBytes the
+		// flood test configures, so the client's bounded transcript trips on
+		// the first update and kills this process before any reply is sent.
+		update(map[string]any{"type": "text", "text": strings.Repeat("x", 64*1024)})
+		write(map[string]any{"id": promptID, "result": map[string]any{"stopReason": "end_turn"}})
 	case "permission":
 		write(map[string]any{"id": int64(9001), "method": "session/request_permission", "params": map[string]any{
 			"sessionId": "fake-session-1",
@@ -379,5 +391,38 @@ func TestMistralAcpRunDirectSurfacesRefusal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "refusal") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestMistralAcpRunDirectFailsWhenReadOnlyModeCannotBeSelected(t *testing.T) {
+	adapter := fakeMistralAcpAdapter(t, "set_mode_error")
+	_, err := adapter.RunDirect(RoleAdversary, Request{
+		Context: context.Background(),
+		Prompt:  "review this change",
+		Workdir: t.TempDir(),
+		Timeout: 10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected an error when session/set_mode fails")
+	}
+	if !strings.Contains(err.Error(), "read-only session mode") {
+		t.Fatalf("error = %v, want a read-only-mode failure, not a silent fallback into an unknown mode", err)
+	}
+}
+
+func TestMistralAcpRunDirectBoundsStreamedTranscript(t *testing.T) {
+	adapter := fakeMistralAcpAdapter(t, "flood")
+	_, err := adapter.RunDirect(RoleAdversary, Request{
+		Context:        context.Background(),
+		Prompt:         "review this change",
+		Workdir:        t.TempDir(),
+		Timeout:        10 * time.Second,
+		MaxOutputBytes: 256,
+	})
+	if err == nil {
+		t.Fatal("expected an output-limit error for a flooding agent")
+	}
+	if !strings.Contains(err.Error(), "mistral-acp") || !strings.Contains(err.Error(), "max_output_bytes") {
+		t.Fatalf("error = %v, want an output-limit error naming mistral-acp", err)
 	}
 }
