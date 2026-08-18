@@ -195,7 +195,7 @@ func TestRelaySimplificationConstraintPreservesCallerOwnedScoutTopology(t *testi
 }
 
 func TestDoctorAdapterIDsIncludeEveryReportedProvider(t *testing.T) {
-	want := []string{"codex", "codex-oss", "claude", "agy", "gosling", "grok", "openai-compatible"}
+	want := []string{"codex", "codex-oss", "claude", "agy", "gosling", "grok", "openai-compatible", "mistral-acp"}
 	got := DoctorAdapterIDs()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("doctor adapter IDs = %#v, want %#v", got, want)

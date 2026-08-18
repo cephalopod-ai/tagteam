@@ -103,6 +103,35 @@ func roleTargetString(target RoleTarget) string {
 	return target.Adapter + ":" + target.Model
 }
 
+// sanitizeUntrustedMistralAcpConfig strips the fields that cross the same
+// authority boundary as openai-compatible's base_url/extra_args in
+// sanitizeUntrustedRepoConfig: Binary changes which local executable a role
+// invokes, and ExtraArgs are arbitrary passthrough flags.
+func sanitizeUntrustedMistralAcpConfig(cfg *MistralAcpConfig) {
+	cfg.Binary = ""
+	cfg.ExtraArgs = nil
+}
+
+// mergeMistralAcpConfig applies src.Adapters.MistralAcp onto dst, the same
+// field-by-field precedence every other adapter config uses in mergeConfig.
+// Pulled into its own function (rather than inlined in mergeConfig) purely
+// to keep config.go under the 800-line file cap.
+func mergeMistralAcpConfig(dst *MistralAcpConfig, src MistralAcpConfig) {
+	if src.Binary != "" {
+		dst.Binary = src.Binary
+	}
+	if src.SessionMode != "" {
+		dst.SessionMode = src.SessionMode
+	}
+	if src.DefaultModel != "" {
+		dst.DefaultModel = src.DefaultModel
+	}
+	mergeContextBudget(&dst.MaxContextTokens, &dst.ReservedOutputTokens, src.MaxContextTokens, src.ReservedOutputTokens)
+	if len(src.ExtraArgs) > 0 {
+		dst.ExtraArgs = append([]string{}, src.ExtraArgs...)
+	}
+}
+
 func EncodeConfig(cfg Config) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {

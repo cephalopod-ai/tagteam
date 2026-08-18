@@ -53,6 +53,8 @@ func scoutContextLimitForAdapter(cfg Config, adapter string) ScoutContextLimit {
 		return contextLimitFromConfig(cfg.Adapters.Grok.MaxContextTokens, cfg.Adapters.Grok.ReservedOutputTokens)
 	case "openai-compatible", "oai":
 		return contextLimitFromConfig(cfg.Adapters.OpenAICompatible.MaxContextTokens, cfg.Adapters.OpenAICompatible.ReservedOutputTokens)
+	case "mistral-acp":
+		return contextLimitFromConfig(cfg.Adapters.MistralAcp.MaxContextTokens, cfg.Adapters.MistralAcp.ReservedOutputTokens)
 	default:
 		return ScoutContextLimit{}
 	}

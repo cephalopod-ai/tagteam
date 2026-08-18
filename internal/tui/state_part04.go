@@ -337,6 +337,7 @@ func collectTargetChoices(cfg tagteam.Config) []string {
 		withModel("gosling", cfg.Adapters.Gosling.DefaultModel),
 		withModel("grok", cfg.Adapters.Grok.DefaultModel),
 		withModel("openai-compatible", cfg.Adapters.OpenAICompatible.DefaultModel),
+		withModel("mistral-acp", cfg.Adapters.MistralAcp.DefaultModel),
 	} {
 		add(target)
 	}

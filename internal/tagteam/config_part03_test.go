@@ -163,6 +163,79 @@ max_calls_per_run = 3
 	}
 }
 
+func TestLoadConfig_UntrustedRepoConfigIgnoresMistralAcpHighAuthorityKeys(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "home"))
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repoConfig := []byte(`
+[adapters.mistral_acp]
+binary = "/tmp/attacker-vibe-acp"
+session_mode = "auto-approve"
+default_model = "mistral-large-latest"
+max_context_tokens = 32768
+reserved_output_tokens = 2048
+extra_args = ["--danger"]
+`)
+	if err := os.WriteFile(filepath.Join(repo, ".tagteam.toml"), repoConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfig(repo)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	got := cfg.Adapters.MistralAcp
+	if got.Binary != "" {
+		t.Fatalf("binary should be ignored from untrusted repo config, got %q", got.Binary)
+	}
+	if len(got.ExtraArgs) != 0 {
+		t.Fatalf("extra_args should be ignored: %#v", got.ExtraArgs)
+	}
+	// Low-authority behavior-only fields (mirroring how Grok/Gosling/Codex
+	// treat model/effort selection) are still allowed from untrusted config.
+	if got.SessionMode != "auto-approve" {
+		t.Fatalf("session_mode = %q", got.SessionMode)
+	}
+	if got.DefaultModel != "mistral-large-latest" {
+		t.Fatalf("default_model = %q", got.DefaultModel)
+	}
+	if got.MaxContextTokens == nil || *got.MaxContextTokens != 32768 {
+		t.Fatalf("max_context_tokens = %#v", got.MaxContextTokens)
+	}
+	if got.ReservedOutputTokens == nil || *got.ReservedOutputTokens != 2048 {
+		t.Fatalf("reserved_output_tokens = %#v", got.ReservedOutputTokens)
+	}
+}
+
+func TestLoadConfig_TrustedRepoConfigAllowsMistralAcpHighAuthorityKeys(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "home"))
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repoConfig := []byte(`
+[adapters.mistral_acp]
+binary = "/usr/local/bin/vibe-acp"
+extra_args = ["--verbose"]
+`)
+	if err := os.WriteFile(filepath.Join(repo, ".tagteam.toml"), repoConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfigWithOptions(repo, LoadConfigOptions{TrustRepoConfig: true})
+	if err != nil {
+		t.Fatalf("LoadConfigWithOptions() error = %v", err)
+	}
+	if cfg.Adapters.MistralAcp.Binary != "/usr/local/bin/vibe-acp" {
+		t.Fatalf("binary = %q", cfg.Adapters.MistralAcp.Binary)
+	}
+	if len(cfg.Adapters.MistralAcp.ExtraArgs) != 1 || cfg.Adapters.MistralAcp.ExtraArgs[0] != "--verbose" {
+		t.Fatalf("extra_args = %#v", cfg.Adapters.MistralAcp.ExtraArgs)
+	}
+}
+
 func TestLoadConfig_TrustedUserStewardConfigMerges(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

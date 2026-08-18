@@ -98,6 +98,7 @@ type AdapterConfigSet struct {
 	Gosling          GoslingConfig          `toml:"gosling"`
 	Grok             GrokConfig             `toml:"grok"`
 	OpenAICompatible OpenAICompatibleConfig `toml:"openai_compatible"`
+	MistralAcp       MistralAcpConfig       `toml:"mistral_acp"`
 }
 
 type CodexConfig struct {
@@ -151,6 +152,21 @@ type OpenAICompatibleConfig struct {
 	ReservedOutputTokens *int              `toml:"reserved_output_tokens"`
 	ExtraHeaders         map[string]string `toml:"extra_headers"`
 	ExtraArgs            []string          `toml:"extra_args"`
+}
+
+// MistralAcpConfig configures the mistral-acp adapter, which drives
+// Mistral's `vibe-acp` binary as an Agent Client Protocol (ACP) client. Auth
+// is the CLI's own session (`vibe --setup`), not an API key passed by
+// tagteam — see MistralAcpAdapter's doc comment.
+type MistralAcpConfig struct {
+	// Binary overrides the resolved executable name; defaults to "vibe-acp".
+	Binary string `toml:"binary"`
+	// SessionMode overrides Vibe's session/set_mode value; defaults to "plan".
+	SessionMode          string   `toml:"session_mode"`
+	DefaultModel         string   `toml:"default_model"`
+	MaxContextTokens     *int     `toml:"max_context_tokens"`
+	ReservedOutputTokens *int     `toml:"reserved_output_tokens"`
+	ExtraArgs            []string `toml:"extra_args"`
 }
 
 // CodeIntelConfig contains only local subprocess and file-contract settings.
@@ -250,6 +266,7 @@ type FlagInputs struct {
 	GoslingArgsRaw          string
 	GrokArgsRaw             string
 	OpenAICompatibleArgsRaw string
+	MistralAcpArgsRaw       string
 }
 
 type RunOptions struct {
@@ -334,6 +351,7 @@ type RunOptions struct {
 	GoslingArgs               []string
 	GrokArgs                  []string
 	OpenAICompatibleArgs      []string
+	MistralAcpArgs            []string
 	EnvOverlay                map[string]string
 	ConfigSources             []string
 	Baseline                  string
