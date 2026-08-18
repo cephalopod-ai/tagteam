@@ -556,5 +556,5 @@ func (a *App) Doctor(ctx context.Context, opts RunOptions) (map[string]VersionIn
 // doctor surfaces. Keep the list centralized so a probed provider is never
 // hidden from the operator report.
 func DoctorAdapterIDs() []string {
-	return []string{"codex", "codex-oss", "claude", "agy", "gosling", "grok", "openai-compatible"}
+	return []string{"codex", "codex-oss", "claude", "agy", "gosling", "grok", "openai-compatible", "mistral-acp"}
 }

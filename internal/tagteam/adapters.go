@@ -61,6 +61,13 @@ func Registry(cfg Config, opts RunOptions) map[string]Adapter {
 		},
 		"openai-compatible": openAICompatible,
 		"oai":               openAICompatible,
+		"mistral-acp": &MistralAcpAdapter{
+			Binary:       cfg.Adapters.MistralAcp.Binary,
+			SessionMode:  cfg.Adapters.MistralAcp.SessionMode,
+			DefaultModel: cfg.Adapters.MistralAcp.DefaultModel,
+			ExtraArgs:    opts.MistralAcpArgs,
+			EnvOverlay:   opts.EnvOverlay,
+		},
 	}
 	for id, adapter := range testRegistryOverrides {
 		reg[id] = adapter

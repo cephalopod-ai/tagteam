@@ -638,6 +638,10 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 	if err != nil {
 		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("parse --openai-compatible-args: %w", err)}
 	}
+	mistralAcpArgs, err := mergePassthrough(cfg.Adapters.MistralAcp.ExtraArgs, flags.MistralAcpArgsRaw)
+	if err != nil {
+		return RunOptions{}, &ExitError{Code: ExitInvalidArguments, Err: fmt.Errorf("parse --mistral-acp-args: %w", err)}
+	}
 
 	workdir := flags.Workdir
 	if workdir == "" {
@@ -716,6 +720,7 @@ func ResolveOptions(cfg Config, sources []string, flags FlagInputs, changed map[
 		GoslingArgs:               goslingArgs,
 		GrokArgs:                  grokArgs,
 		OpenAICompatibleArgs:      openAICompatibleArgs,
+		MistralAcpArgs:            mistralAcpArgs,
 		EnvOverlay:                cloneStringMap(cfg.EnvOverlay),
 		ConfigSources:             sources,
 		Job:                       strings.TrimSpace(flags.Job),

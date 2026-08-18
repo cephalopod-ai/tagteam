@@ -335,6 +335,7 @@ Supported adapters in this repo today:
 | `gosling` | coder-only |
 | `grok` | all roles exposed; do not use Grok 4.5 as an unattended supervisor or worker/coder |
 | `openai-compatible` / `oai` | read-only reviewer/scout (first cut) |
+| `mistral-acp` | read-only reviewer/scout; speaks the Agent Client Protocol to Mistral's `vibe-acp` binary |
 
 The Grok CLI integration is verified against Grok Build 0.2.93. It invokes
 root-level headless `grok --single <prompt> --cwd <dir>` with optional `--model` and
@@ -795,6 +796,40 @@ extra_headers = { "HTTP-Referer" = "https://github.com/your/repo", "X-Title" = "
 ```
 
 Equivalent environment overrides are available for `base_url`, `api_key_env`, model, and simple comma-separated headers via `TAGTEAM_OPENAI_COMPATIBLE_BASE_URL`, `TAGTEAM_OPENAI_COMPATIBLE_API_KEY_ENV`, `TAGTEAM_OPENAI_COMPATIBLE_MODEL`, and `TAGTEAM_OPENAI_COMPATIBLE_HEADERS`.
+
+</details>
+
+### Mistral (Agent Client Protocol)
+
+<details>
+<summary><strong>Mistral's <code>vibe-acp</code> binary via the Agent Client Protocol</strong></summary>
+
+`mistral-acp` drives Mistral's `vibe-acp` binary — the ACP-over-stdio entrypoint shipped by the `mistral-vibe` package — as a review-only [Agent Client Protocol](https://agentclientprotocol.com) client. Like `openai-compatible`, this is read-only in this release: use it as the adversary/reviewer or relay scout, not as the coder/worker. Unlike `openai-compatible`, authentication is the CLI's own session (`vibe --setup`), not an API key passed by tagteam.
+
+Install and authenticate once:
+
+```bash
+uv tool install mistral-vibe
+vibe --setup
+vibe-acp --version   # confirm the ACP adapter is on PATH
+```
+
+```toml
+[adapters.mistral_acp]
+# binary = "vibe-acp"   # default; override to pin an absolute path
+# session_mode = "plan" # default; Vibe's most restrictive, read-only-exploration mode
+```
+
+```bash
+tagteam \
+  --mode adversarial \
+  -mc codex:gpt-5.6-terra \
+  -ma mistral-acp \
+  --show-review \
+  "make a tiny README wording cleanup"
+```
+
+This adapter deliberately mirrors the fleet's other two working ACP integrations — gosling's Rust `vibe_acp` provider (`crates/gosling/src/providers/vibe_acp.rs`) and cuttlefish's TypeScript `VibeAcpEngine` (`packages/cuttlefish/src/engines/vibe-acp.ts`) — rather than inventing new wire behavior, so a `vibe-acp` compatibility fix made in one repo is easy to carry over to the others. See `docs/ARCHITECTURE.md` for the transport details.
 
 </details>
 
