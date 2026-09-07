@@ -370,8 +370,7 @@ func TestAgyBuildCmdScout(t *testing.T) {
 
 func TestInlinePromptAdaptersRejectOversizedArguments(t *testing.T) {
 	for name, adapter := range map[string]Adapter{
-		"agy":  &AgyAdapter{},
-		"grok": &GrokAdapter{},
+		"agy": &AgyAdapter{},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := adapter.BuildCmd(RoleScout, Request{Prompt: strings.Repeat("x", maxInlinePromptArgumentBytes+1), Workdir: "/repo"})

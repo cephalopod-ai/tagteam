@@ -256,7 +256,7 @@ Included in the `v1.2.1` surface and the development tree that follows it:
 - adversarial coder/adversary mode supports audits and independent review
 - saved run artifacts include briefs, diffs, reviews, tests, and final summaries
 - active runs publish external `active.json` so live views can discover in-flight work without exposing host state to workers
-- command surface now includes `run`, `review`, `fix`, `resume`, `status`, `plan`, `transcript`, `findings`, `transfer`, `route`, `tui`, `mcp`, `doctor`, `init`, `version`, `verify-install`, `intel`, and `integrate`
+- command surface now includes `run`, `review`, `fix`, `resume`, `status`, `plan`, `transcript`, `findings`, `transfer`, `route`, `models`, `tui`, `mcp`, `doctor`, `init`, `version`, `verify-install`, `intel`, and `integrate`
 - capability-aware job routing (`--job` / `tagteam route`) selects the workflow and staffs every slot the operator left open; see [Capability-aware job routing](#capability-aware-job-routing)
 - config layering supports repo config, user config, env overrides, flags, and named profiles
 - explicit JSON repair is available through `--repair-json-with-worker` / `json_repair = "worker"`
@@ -280,6 +280,7 @@ tagteam findings resolve RUN_ID FINDING_ID --evidence "commit and verification"
 tagteam transfer RUN_ID --test "..." --lint "..."
 tagteam route --list
 tagteam route --job <name>
+tagteam models [--json]
 tagteam tui [RUN_ID]
 tagteam mcp
 tagteam doctor
@@ -333,27 +334,35 @@ Supported adapters in this repo today:
 | `claude` / Claude Code | read-only supervisor or adversary; worker/coder and scout assignments are rejected |
 | `agy` / Gemini | scout only; worker/coder, supervisor, and reviewer targets are rejected |
 | `gosling` | coder-only |
-| `grok` | all roles exposed; do not use Grok 4.5 as an unattended supervisor or worker/coder |
+| `grok` | all roles exposed; keep implementation and supervision monitored until the selected model is validated for that workflow |
 | `openai-compatible` / `oai` | read-only reviewer/scout (first cut) |
 | `mistral-acp` | read-only reviewer/scout; speaks the Agent Client Protocol to Mistral's `vibe-acp` binary |
 
-The Grok CLI integration is verified against Grok Build 0.2.93. It invokes
-root-level headless `grok --single <prompt> --cwd <dir>` with optional `--model` and
+`tagteam models` concurrently queries `agy models`, `grok models`, and Mistral's
+ACP `session/new` model config. Codex, Claude, Agy, and Grok fall back to
+`maintained`; other adapters fall back to `config`, and errors stay visible.
+
+The Grok CLI integration is verified against Grok CLI 1.0.13. It invokes
+root-level headless `grok --prompt-file /dev/stdin --cwd <dir>` with optional `--model` and
 `--reasoning-effort`, `--output-format json`, and explicit role permissions:
 coders use `acceptEdits` with `read_file,list_dir,write_file,search_replace,run_terminal_cmd`;
 all read-only roles use `dontAsk` with `read_file,list_dir`. System prompts use
 the verified `--rules` flag. `--json-schema` is emitted only for coder,
 adversary, and supervisor roles; Grok's JSON mode returns one JSON object at
 the end of the headless run, and Tagteam parses the review/scout contracts
-from that object. The prompt is a positional argument, so Grok receives no
-stdin prompt.
+from that object. On macOS and Linux, the task prompt is streamed through
+standard input so it is not exposed in the process argument list. Windows
+retains the bounded positional compatibility path until Grok offers a portable
+stdin sentinel there.
 
 > [!WARNING]
 > This verifies the CLI integration, not reliable end-to-end implementation.
-> Grok worker/coder runs remain experimental, and `grok-4.5` at `medium` or
-> `low` reasoning effort is not reliable. A live supervisor trial also selected
-> a read-only triage package for an implementation request. Prefer Codex for
-> routine implementation and unattended supervision.
+> Grok worker/coder runs remain experimental. Historical `grok-4.5` runs at
+> `medium` or `low` reasoning effort were not reliable, and no equivalent
+> implementation-reliability claim has been established for the new
+> `grok-4.6` default. A live 4.5 supervisor trial also selected a read-only
+> triage package for an implementation request. Prefer Codex for routine
+> implementation and unattended supervision.
 
 ### Maintained Operator Roster
 
@@ -364,11 +373,11 @@ profiles must follow the remaining roster constraints.
 
 | Model family | Allowed roles |
 |---|---|
-| GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.5, GPT-5.4 (non-mini) | supervisor, worker/coder, adversary, scout |
+| GPT-6 Astra, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.5, GPT-5.4 (non-mini) | supervisor, worker/coder, adversary, scout |
 | GPT-5.6 Luna, GPT-5.3 Spark-Codex | worker/coder or scout |
 | Gemini (including `agy`) | scout only |
-| Grok 4.5 | monitored worker/coder or scout only; never unattended supervisor |
-| Claude | excluded from automatic rotation; never worker/coder or scout |
+| Grok 4.6 / 4.5 | monitored worker/coder or scout; never unattended supervisor |
+| Claude Fable 5.1, Opus 5, Sonnet 5 | read-only supervisor/adversary only; never worker/coder or scout |
 
 Probe the selected provider CLI before a live run. A parsed model name is not
 proof that the logged-in account has access to it. Rotate eligible roles across
@@ -996,18 +1005,19 @@ reasoning_effort = "high"
 effort = "high"
 
 [adapters.grok]
-default_model = "grok-4.5"
+default_model = "grok-4.6"
 reasoning_effort = "high"
 ```
 
 The equivalent environment variables are `TAGTEAM_CODEX_REASONING_EFFORT`, `TAGTEAM_CLAUDE_EFFORT`, `TAGTEAM_GROK_MODEL`, and `TAGTEAM_GROK_REASONING_EFFORT`. Grok passthrough arguments can be supplied with `adapters.grok.extra_args`, `TAGTEAM_GROK_ARGS`, or `--grok-args`.
 
 Grok reasoning effort accepts `low`, `medium`, `high`, or `xhigh`; the
-default `grok-4.5` model supports `low`, `medium`, and `high`, while `xhigh`
-is available only on Grok models that advertise it. Although `low` and
-`medium` are valid settings, `grok-4.5` at either setting is unreliable for
-worker/coder assignments, and Grok implementation in general remains
-experimental. Grok targets can be set as `grok:<model>` through `--worker`,
+maintained `grok-4.6` model supports the values advertised by the installed
+CLI, while `xhigh` is available only on Grok models that advertise it.
+Historical `grok-4.5` worker/coder runs at `low` and `medium` were unreliable;
+`grok-4.6` has not yet established a comparable implementation-reliability
+record, so Grok implementation in general remains experimental. Grok targets
+can be set as `grok:<model>` through `--worker`,
 `--coder`, `--supervisor`, `--reviewer`, or `--scout`; the same targets are
 available in the TUI `/model` picker and named profiles.
 

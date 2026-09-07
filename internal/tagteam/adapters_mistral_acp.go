@@ -115,6 +115,67 @@ type acpSessionUpdate struct {
 	} `json:"update"`
 }
 
+// acpNewSessionResult includes the session configuration advertised by current
+// Vibe ACP builds. Model selection is a regular session config option rather
+// than a dedicated session/set_model method.
+type acpNewSessionResult struct {
+	SessionID     string                   `json:"sessionId"`
+	ConfigOptions []acpSessionConfigOption `json:"configOptions"`
+}
+
+type acpSessionConfigOption struct {
+	ID           string                   `json:"id"`
+	CurrentValue string                   `json:"currentValue"`
+	Options      []acpSessionConfigChoice `json:"options"`
+}
+
+type acpSessionConfigChoice struct {
+	Value string `json:"value"`
+	Name  string `json:"name"`
+}
+
+func acpModelConfig(options []acpSessionConfigOption) (string, []string) {
+	for _, option := range options {
+		if option.ID != "model" {
+			continue
+		}
+		models := make([]string, 0, len(option.Options))
+		for _, choice := range option.Options {
+			if value := strings.TrimSpace(choice.Value); value != "" {
+				models = append(models, value)
+			}
+		}
+		return strings.TrimSpace(option.CurrentValue), models
+	}
+	return "", nil
+}
+
+func acpModelAdvertised(models []string, wanted string) bool {
+	for _, model := range models {
+		if model == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *MistralAcpAdapter) newACPSession(ctx context.Context, rpc *acpRPC, workdir string, overlay map[string]string) (acpNewSessionResult, error) {
+	if _, err := rpc.call(ctx, "initialize", map[string]any{
+		"protocolVersion": 1, "clientCapabilities": map[string]any{},
+	}); err != nil {
+		return acpNewSessionResult{}, fmt.Errorf("initialize failed: %w", redactACPError(err, overlay))
+	}
+	raw, err := rpc.call(ctx, "session/new", map[string]any{"cwd": workdir, "mcpServers": []any{}})
+	if err != nil {
+		return acpNewSessionResult{}, fmt.Errorf("session/new failed: %w", redactACPError(err, overlay))
+	}
+	var session acpNewSessionResult
+	if err := json.Unmarshal(raw, &session); err != nil || strings.TrimSpace(session.SessionID) == "" {
+		return acpNewSessionResult{}, fmt.Errorf("session/new returned no sessionId")
+	}
+	return session, nil
+}
+
 func acpMessageChunkText(u acpSessionUpdate) string {
 	if u.Update.Kind != "agent_message_chunk" && u.Update.Kind != "agent_message_text" {
 		return ""
@@ -301,7 +362,7 @@ func (a *MistralAcpAdapter) RunDirect(role Role, req Request) (Result, error) {
 }
 
 // runACPTurn drives the initialize -> session/new -> session/set_mode ->
-// (best-effort session/set_model) -> session/prompt handshake and returns
+// session/set_config_option(model) -> session/prompt handshake and returns
 // the parsed Result.
 //
 // Unlike cuttlefish's `.catch(() => {})` on session/set_mode, a failure to
@@ -310,41 +371,36 @@ func (a *MistralAcpAdapter) RunDirect(role Role, req Request) (Result, error) {
 // handler auto-approves whatever the agent asks for (see
 // selectACPPermissionOutcome), so silently continuing in an unknown
 // (possibly mutation-capable) mode would defeat that read-only boundary.
-// session/set_model stays best-effort: losing model selection is a quality
-// issue, not a safety one.
+// A requested model is also part of the operator's execution contract, so a
+// failure to apply it is fatal instead of silently running an unknown model.
 func (a *MistralAcpAdapter) runACPTurn(ctx context.Context, rpc *acpRPC, role Role, req Request, transcript *acpBoundedTranscript) (Result, error) {
-	if _, err := rpc.call(ctx, "initialize", map[string]any{
-		"protocolVersion":    1,
-		"clientCapabilities": map[string]any{},
-	}); err != nil {
-		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp initialize failed: %w", redactACPError(err, req.EnvOverlay))}
-	}
-
-	newSessionRaw, err := rpc.call(ctx, "session/new", map[string]any{
-		"cwd":        req.Workdir,
-		"mcpServers": []any{},
-	})
+	overlay := joinEnvOverlay(a.EnvOverlay, req.EnvOverlay)
+	newSession, err := a.newACPSession(ctx, rpc, req.Workdir, overlay)
 	if err != nil {
-		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp session/new failed: %w", redactACPError(err, req.EnvOverlay))}
-	}
-	var newSession struct {
-		SessionID string `json:"sessionId"`
-	}
-	if err := json.Unmarshal(newSessionRaw, &newSession); err != nil || strings.TrimSpace(newSession.SessionID) == "" {
-		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp session/new returned no sessionId")}
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp %w", err)}
 	}
 	sessionID := newSession.SessionID
 
 	if _, err := rpc.call(ctx, "session/set_mode", map[string]any{"sessionId": sessionID, "modeId": a.sessionMode()}); err != nil {
-		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp could not enter read-only session mode %q, refusing to prompt in an unknown mode: %w", a.sessionMode(), redactACPError(err, req.EnvOverlay))}
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp could not enter read-only session mode %q, refusing to prompt in an unknown mode: %w", a.sessionMode(), redactACPError(err, overlay))}
 	}
 
 	model := req.Model
 	if model == "" {
 		model = a.DefaultModel
 	}
-	if model != "" {
-		_, _ = rpc.call(ctx, "session/set_model", map[string]any{"sessionId": sessionID, "modelId": model})
+	currentModel, availableModels := acpModelConfig(newSession.ConfigOptions)
+	if model != "" && len(availableModels) > 0 && !acpModelAdvertised(availableModels, model) {
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp model %q is not advertised by the current session", model)}
+	}
+	if model != "" && model != currentModel {
+		if _, err := rpc.call(ctx, "session/set_config_option", map[string]any{
+			"sessionId": sessionID,
+			"configId":  "model",
+			"value":     model,
+		}); err != nil {
+			return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp could not select model %q: %w", model, redactACPError(err, overlay))}
+		}
 	}
 
 	promptRaw, err := rpc.call(ctx, "session/prompt", map[string]any{
@@ -358,7 +414,7 @@ func (a *MistralAcpAdapter) runACPTurn(ctx context.Context, rpc *acpRPC, role Ro
 			// (context canceled / peer stream ended).
 			return Result{}, &ExitError{Code: ExitAdapterFailure, Err: outputLimitError("mistral-acp", transcript.limit)}
 		}
-		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp session/prompt failed: %w", redactACPError(err, req.EnvOverlay))}
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("mistral-acp session/prompt failed: %w", redactACPError(err, overlay))}
 	}
 	if transcript.Exceeded() {
 		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: outputLimitError("mistral-acp", transcript.limit)}

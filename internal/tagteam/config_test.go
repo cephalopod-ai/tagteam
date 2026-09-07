@@ -63,7 +63,7 @@ func TestDefaultConfig_SupervisorDefaults(t *testing.T) {
 	if cfg.Adapters.Codex.ReasoningEffort != "high" || cfg.Adapters.Claude.Effort != "high" {
 		t.Fatalf("effort defaults = codex=%q claude=%q", cfg.Adapters.Codex.ReasoningEffort, cfg.Adapters.Claude.Effort)
 	}
-	if cfg.Adapters.Agy.DefaultModel != agyGemini36FlashMedium {
+	if cfg.Adapters.Agy.DefaultModel != agyGemini38FlashMedium {
 		t.Fatalf("agy default model = %q", cfg.Adapters.Agy.DefaultModel)
 	}
 	if cfg.Defaults.LossPolicy.Scout != LossPolicyDegrade || cfg.Defaults.LossPolicy.Supervisor != LossPolicyBlock {

@@ -26,6 +26,9 @@ Canonical entry point for `tagteam` documentation.
 - [Defect Repair Campaign — 2026-07-16](REPAIR_CAMPAIGN_2026-07-16.md) — gated
   inventory, locality-grouped repair stages, validation evidence, adversarial
   review dispositions, and stage commit checkpoints for AUD-001–AUD-012.
+- [Model and Provider Compatibility Repair — 2026-09-06](MODEL_PROVIDER_REPAIR_2026-09-06.md) —
+  provider-contract audit, model-catalog refresh, live playtests, and repair
+  verification for current Codex, Claude, Grok, Agy, and Mistral ACP clients.
 - [Test Ledger](TEST_LEDGER.md) — test areas, evidence, latest results, and
   known gaps.
 - [Release Security](RELEASE_SECURITY.md) — published checksums, SBOMs,

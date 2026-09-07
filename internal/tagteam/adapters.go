@@ -393,6 +393,7 @@ func parseReviewPayloadLabeled(raw []byte, label string) (*Review, error) {
 type AgyAdapter struct {
 	DefaultModel string
 	ExtraArgs    []string
+	EnvOverlay   map[string]string
 }
 
 func (a *AgyAdapter) ID() string {

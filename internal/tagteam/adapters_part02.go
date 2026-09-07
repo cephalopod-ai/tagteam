@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -283,13 +284,14 @@ func (a *GoslingAdapter) ParseResult(role Role, raw []byte) (Result, error) {
 	return result, nil
 }
 
-// GrokAdapter invokes Grok's root-level single-turn mode. The root command's
-// --single mode is headless and accepts the prompt as an argument, so Grok
-// does not receive a stdin prompt like the other CLI adapters.
+// GrokAdapter invokes Grok's root-level single-turn mode. Current Grok builds
+// accept a prompt file in headless mode, so supported Unix platforms read the
+// prompt through /dev/stdin instead of exposing it in the process arguments.
 type GrokAdapter struct {
 	DefaultModel    string
 	ReasoningEffort string
 	ExtraArgs       []string
+	EnvOverlay      map[string]string
 }
 
 type grokEnvelope struct {
@@ -314,11 +316,21 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	if model == "" {
 		model = a.DefaultModel
 	}
-	prompt := strings.TrimSuffix(string(promptStdin(req)), "\n")
-	if err := validateInlinePromptArgument("grok", prompt); err != nil {
-		return nil, err
+	argv := []string{"grok"}
+	var stdin []byte
+	if runtime.GOOS == "windows" {
+		// /dev/stdin is unavailable on Windows. Retain the bounded legacy
+		// transport there until Grok exposes a portable stdin sentinel.
+		promptArgs, err := grokWindowsPromptArgs(req)
+		if err != nil {
+			return nil, err
+		}
+		argv = append(argv, promptArgs...)
+	} else {
+		argv = append(argv, "--prompt-file", "/dev/stdin")
+		stdin = promptStdin(req)
 	}
-	argv := []string{"grok", "--single", prompt, "--cwd", req.Workdir}
+	argv = append(argv, "--cwd", req.Workdir)
 	if model != "" {
 		argv = append(argv, "--model", model)
 	}
@@ -334,9 +346,10 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 	)
 	switch role {
 	case RoleCoder:
-		// Grok 0.2.93 rejects filtered coder toolsets when its terminal tool has
-		// background execution disabled. Use its complete coder toolset and rely
-		// on Tagteam's write-scope and integrity gates for repository boundaries.
+		// Grok 1.0.13's headless coder path is compatible with
+		// --always-approve and its complete toolset. Tagteam still enforces the
+		// requested repository boundary through its live write-scope guard and
+		// post-invocation integrity gates.
 		argv = append(argv, "--always-approve")
 	case RoleAdversary, RoleSupervisor, RoleReporter, RoleScout:
 		argv = append(argv,
@@ -388,7 +401,15 @@ func (a *GrokAdapter) BuildCmd(role Role, req Request) (*CommandSpec, error) {
 			env = append(env, "GROK_HOME="+grokHome)
 		}
 	}
-	return &CommandSpec{Argv: argv, Dir: req.Workdir, Env: env, Output: req.OutputPath}, nil
+	return &CommandSpec{Argv: argv, Dir: req.Workdir, Env: env, Stdin: stdin, Output: req.OutputPath}, nil
+}
+
+func grokWindowsPromptArgs(req Request) ([]string, error) {
+	prompt := strings.TrimSuffix(string(promptStdin(req)), "\n")
+	if err := validateInlinePromptArgument("grok", prompt); err != nil {
+		return nil, err
+	}
+	return []string{"--single", prompt}, nil
 }
 
 func (a *GrokAdapter) ParseResult(role Role, raw []byte) (Result, error) {

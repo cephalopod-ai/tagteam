@@ -139,6 +139,15 @@ func TestTargetChoicesIncludeAgyGemini36FlashTiers(t *testing.T) {
 	}
 }
 
+func TestTargetChoicesIncludeCurrentFrontierModels(t *testing.T) {
+	choices := collectTargetChoices(tagteam.DefaultConfig())
+	for _, want := range []string{"codex:gpt-6-astra", "claude:claude-fable-5-1", "grok:grok-4.6", "agy:gemini-3.8-flash-medium"} {
+		if !contains(choices, want) {
+			t.Fatalf("target choices do not include %q: %#v", want, choices)
+		}
+	}
+}
+
 func TestModelPickerRestrictsAgyGemini36FlashToScout(t *testing.T) {
 	m, err := newModel(RunOptions{Workdir: t.TempDir()})
 	if err != nil {

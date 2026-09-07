@@ -608,7 +608,13 @@ func (r Review) ValidateCurrent() error {
 	if r.SchemaVersion != ReviewSchemaVersion {
 		return fmt.Errorf("live review requires schema_version %d", ReviewSchemaVersion)
 	}
-	return r.Validate()
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	if r.Verdict == "needs_changes" && len(r.Findings) == 0 {
+		return fmt.Errorf("needs_changes verdict requires at least one finding")
+	}
+	return nil
 }
 
 type RoleTarget struct {

@@ -226,7 +226,7 @@ func TestRouteMinContextTokensFiltersSmallWindows(t *testing.T) {
 	spec := jobOrFatal(t, cfg, "deep_scan")
 	decision := routeOrFatal(t, cfg, RoutingRequest{Job: spec, Mode: spec.Mode})
 	scout := roleFor(t, decision, SlotScout)
-	if scout.Selected != "agy:"+agyGemini36FlashMedium {
+	if scout.Selected != "agy:"+agyGemini38FlashMedium {
 		t.Fatalf("deep_scan scout = %q, want the large-context scout", scout.Selected)
 	}
 	found := false

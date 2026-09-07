@@ -47,6 +47,16 @@ func TestValidateReviewFindingGroundingAllowsReviewOnlyDiff(t *testing.T) {
 	}
 }
 
+func TestValidateReviewForDiffRejectsNeedsChangesWithoutFindings(t *testing.T) {
+	review := groundedReviewForTest("README.md")
+	review.Findings = nil
+
+	err := validateReviewForDiff(review, 10, filepath.Join(t.TempDir(), "diff-round-1.patch"))
+	if err == nil || !strings.Contains(err.Error(), "requires at least one finding") {
+		t.Fatalf("validateReviewForDiff() error = %v", err)
+	}
+}
+
 func TestRunAdversaryRetriesUngroundedReviewFinding(t *testing.T) {
 	runDir := t.TempDir()
 	diffPath := filepath.Join(runDir, "diff-round-1.patch")
