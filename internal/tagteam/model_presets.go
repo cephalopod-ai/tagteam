@@ -1,5 +1,12 @@
 package tagteam
 
+import "github.com/cephalopod-ai/tagteam/internal/sharedcatalog"
+
+// The model IDs below are the compile-time names the run loop, config
+// defaults, and roster refer to. They must exist in the vendored shared
+// catalog (internal/sharedcatalog), which is the fleet-wide roster Tribunal
+// and control-hooks read from the same canonical source;
+// TestModelPresetConstantsExistInSharedCatalog enforces that.
 const (
 	openAIGPT6Astra        = "gpt-6-astra"
 	claudeFable51          = "claude-fable-5-1"
@@ -24,36 +31,20 @@ const (
 )
 
 // MaintainedModelTargets returns current first-party picker choices plus the
-// pinned compatibility models Tagteam ships by default. Provider model-list
-// commands remain the source of truth when live discovery is available.
+// pinned compatibility models Tagteam ships by default, read from the shared
+// fleet roster so Tagteam, Tribunal, and control-hooks cannot disagree about
+// which models exist. Provider model-list commands remain the source of truth
+// when live discovery is available.
 func MaintainedModelTargets() []string {
-	return []string{
-		"codex:" + openAIGPT6Astra,
-		"codex:gpt-5.6-sol",
-		"codex:gpt-5.6-terra",
-		"claude:" + claudeFable51,
-		"claude:claude-opus-5",
-		"claude:claude-sonnet-5",
-		"grok:" + grok46,
-		"grok:grok-4.5",
-		"agy:" + agyGemini38FlashHigh,
-		"agy:" + agyGemini38FlashMedium,
-		"agy:" + agyGemini38FlashLow,
-		"agy:" + agyGemini36FlashHigh,
-		"agy:" + agyGemini36FlashMedium,
-		"agy:" + agyGemini36FlashLow,
-	}
+	return sharedcatalog.MaintainedTargets(":")
 }
 
 // AgyGemini36FlashModelChoices returns the Agy Gemini 3.6 Flash tiers that
-// Tagteam exposes in interactive model selection. Target parsing remains
-// open-ended so user-configured or newer Agy models continue to work.
+// Tagteam exposes in interactive model selection, ordered weakest effort
+// first by the shared roster. Target parsing remains open-ended so
+// user-configured or newer Agy models continue to work.
 func AgyGemini36FlashModelChoices() []string {
-	return []string{
-		agyGemini36FlashLow,
-		agyGemini36FlashMedium,
-		agyGemini36FlashHigh,
-	}
+	return sharedcatalog.SeriesModels("gemini-3.6-flash")
 }
 
 type modeRoleTargets struct {
