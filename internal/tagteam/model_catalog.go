@@ -251,12 +251,16 @@ func (a *MistralAcpAdapter) DiscoverModels(ctx context.Context, workdir string) 
 	rpc := newACPRPC(stdin)
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- rpc.serve(stdout) }()
-	defer func() {
-		stopProc()
-		_ = stdin.Close()
-		<-serveDone
-		_ = cmd.Wait()
-	}()
+	var reapOnce sync.Once
+	reap := func() {
+		reapOnce.Do(func() {
+			stopProc()
+			_ = stdin.Close()
+			<-serveDone
+			_ = cmd.Wait()
+		})
+	}
+	defer reap()
 
 	newSession, err := a.newACPSession(procCtx, rpc, workdir, a.EnvOverlay)
 	if err != nil {
@@ -264,6 +268,12 @@ func (a *MistralAcpAdapter) DiscoverModels(ctx context.Context, workdir string) 
 	}
 	defaultModel, models := acpModelConfig(newSession.ConfigOptions)
 	if len(models) == 0 {
+		// Reap the agent before reading its diagnostic: nothing orders the
+		// child's stderr write against the session/new reply this function
+		// just consumed, so reading the buffer while os/exec's copy goroutine
+		// is still draining the pipe can drop the very explanation this error
+		// exists to surface. cmd.Wait blocks until that copy has finished.
+		reap()
 		detail := strings.TrimSpace(stderr.String())
 		if detail != "" {
 			return modelDiscovery{}, fmt.Errorf("mistral-acp session advertised no model options: %s", detail)

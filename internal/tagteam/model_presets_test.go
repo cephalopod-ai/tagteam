@@ -23,6 +23,24 @@ func TestModelPresetConstantsExistInSharedCatalog(t *testing.T) {
 	}
 }
 
+// TestAgyGemini36FlashModelChoicesAreRosterBacked pins the tiers the TUI
+// picker offers. The choices now come from the roster's free-form "series"
+// field, so a renamed series would return an empty slice — and every TUI test
+// that ranges over these choices, including the one guarding Gemini out of the
+// worker slot, would pass vacuously instead of failing.
+func TestAgyGemini36FlashModelChoicesAreRosterBacked(t *testing.T) {
+	want := []string{agyGemini36FlashLow, agyGemini36FlashMedium, agyGemini36FlashHigh}
+	got := AgyGemini36FlashModelChoices()
+	if len(got) != len(want) {
+		t.Fatalf("AgyGemini36FlashModelChoices() = %#v, want %#v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("AgyGemini36FlashModelChoices() = %#v, want %#v", got, want)
+		}
+	}
+}
+
 // TestDefaultRoleTargetsAreRosterBacked checks the shipped role defaults
 // against the roster, including the adapter's permitted roles. The local
 // relay scout is deliberately exempt: it names a user-run Ollama model, not a

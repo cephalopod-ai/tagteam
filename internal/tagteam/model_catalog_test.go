@@ -141,4 +141,9 @@ func TestMistralAcpDiscoverModelsReportsMissingModelOption(t *testing.T) {
 	if !strings.Contains(err.Error(), "advertised no model options") {
 		t.Fatalf("error = %v", err)
 	}
+	// The agent's own diagnostic must survive into the operator-facing error;
+	// it is only complete once the agent has been reaped.
+	if !strings.Contains(err.Error(), "this build advertises no model options") {
+		t.Fatalf("error dropped the agent diagnostic: %v", err)
+	}
 }
