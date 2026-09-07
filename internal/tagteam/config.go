@@ -111,18 +111,20 @@ func DefaultConfig() Config {
 					Supervisor: LossPolicyReplaceThenBlock,
 				},
 				FallbacksByTarget: TargetFallbacks{
-					"claude:claude-opus-5":   []string{defaultSupervisorFallback},
-					"claude:claude-opus-4-8": []string{defaultSupervisorFallback},
-					"claude:claude-sonnet-5": []string{defaultAdversarialCoderTarget},
-					"claude:opus":            []string{defaultSupervisorFallback},
-					"claude:opus-5":          []string{defaultSupervisorFallback},
-					"claude:opus-4.8":        []string{defaultSupervisorFallback},
-					"claude:sonnet":          []string{defaultAdversarialCoderTarget},
-					"claude:sonnet-5":        []string{defaultAdversarialCoderTarget},
-					"claude:haiku":           []string{defaultAdversarialCoderTarget},
-					"claude:haiku-5":         []string{defaultAdversarialCoderTarget},
-					"claude:haiku-4.8":       []string{defaultAdversarialCoderTarget},
-					"claude:sonnet-4.5":      []string{defaultAdversarialCoderTarget},
+					"claude:" + claudeFable51: []string{defaultSupervisorFallback},
+					"claude:fable":            []string{defaultSupervisorFallback},
+					"claude:claude-opus-5":    []string{defaultSupervisorFallback},
+					"claude:claude-opus-4-8":  []string{defaultSupervisorFallback},
+					"claude:claude-sonnet-5":  []string{defaultAdversarialCoderTarget},
+					"claude:opus":             []string{defaultSupervisorFallback},
+					"claude:opus-5":           []string{defaultSupervisorFallback},
+					"claude:opus-4.8":         []string{defaultSupervisorFallback},
+					"claude:sonnet":           []string{defaultAdversarialCoderTarget},
+					"claude:sonnet-5":         []string{defaultAdversarialCoderTarget},
+					"claude:haiku":            []string{defaultAdversarialCoderTarget},
+					"claude:haiku-5":          []string{defaultAdversarialCoderTarget},
+					"claude:haiku-4.8":        []string{defaultAdversarialCoderTarget},
+					"claude:sonnet-4.5":       []string{defaultAdversarialCoderTarget},
 				},
 			},
 		},
@@ -141,7 +143,7 @@ func DefaultConfig() Config {
 				DefaultModel: "qwen3-coder",
 			},
 			Agy: AgyConfig{
-				DefaultModel: agyGemini36FlashMedium,
+				DefaultModel: agyGemini38FlashMedium,
 				ExtraArgs:    []string{},
 			},
 			Gosling: GoslingConfig{
@@ -149,7 +151,7 @@ func DefaultConfig() Config {
 				ExtraArgs:    []string{},
 			},
 			Grok: GrokConfig{
-				DefaultModel:    "grok-4.5",
+				DefaultModel:    grok46,
 				ReasoningEffort: "high",
 				ExtraArgs:       []string{},
 			},
@@ -785,14 +787,5 @@ func mergeStewardConfig(dst *StewardConfig, src StewardConfig) {
 	}
 	if src.MinIntervalSeconds != 0 {
 		dst.MinIntervalSeconds = src.MinIntervalSeconds
-	}
-}
-
-func mergeContextBudget(dstMax, dstReserved **int, srcMax, srcReserved *int) {
-	if srcMax != nil {
-		*dstMax = cloneIntPtr(srcMax)
-	}
-	if srcReserved != nil {
-		*dstReserved = cloneIntPtr(srcReserved)
 	}
 }

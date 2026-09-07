@@ -648,7 +648,7 @@ func TestResolveOptions_GoslingPassthrough(t *testing.T) {
 
 func TestDefaultConfig_Grok(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.Adapters.Grok.DefaultModel != "grok-4.5" || cfg.Adapters.Grok.ReasoningEffort != "high" {
+	if cfg.Adapters.Grok.DefaultModel != grok46 || cfg.Adapters.Grok.ReasoningEffort != "high" {
 		t.Fatalf("grok defaults = %#v", cfg.Adapters.Grok)
 	}
 }

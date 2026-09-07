@@ -12,6 +12,19 @@ package tagteam
 
 func defaultAgentRosterConfig() map[string]AgentCardConfig {
 	return map[string]AgentCardConfig{
+		"fable": {
+			Target:        "claude:" + claudeFable51,
+			Family:        "anthropic",
+			Roles:         []string{"reviewer"},
+			ContextTokens: 1000000,
+			Notes:         "read-only highest-capability review tier; slower and premium-priced",
+			Capabilities: map[string]string{
+				"coding": "max", "reasoning": "max", "research": "max",
+				"planning": "max", "audit": "max", "context": "max",
+				"tool_use": "high", "autonomy": "high", "speed": "low",
+				"reliability": "high", "cost": "low",
+			},
+		},
 		"opus": {
 			Target:        defaultSupervisorTarget,
 			Family:        "anthropic",
@@ -51,6 +64,19 @@ func defaultAgentRosterConfig() map[string]AgentCardConfig {
 				"reliability": "high", "cost": "medium",
 			},
 		},
+		"gpt-astra": {
+			Target:        "codex:" + openAIGPT6Astra,
+			Family:        "openai",
+			Roles:         []string{"editor", "reviewer"},
+			ContextTokens: 1050000,
+			Notes:         "frontier long-context coding and reasoning tier",
+			Capabilities: map[string]string{
+				"coding": "max", "reasoning": "max", "research": "max",
+				"planning": "max", "audit": "max", "context": "max",
+				"tool_use": "max", "autonomy": "high", "speed": "low",
+				"reliability": "high", "cost": "low",
+			},
+		},
 		"gpt-sol": {
 			Target:        defaultSupervisorFallback,
 			Family:        "openai",
@@ -65,7 +91,7 @@ func defaultAgentRosterConfig() map[string]AgentCardConfig {
 			},
 		},
 		"grok": {
-			Target:        "grok:grok-4.5",
+			Target:        "grok:" + grok46,
 			Family:        "xai",
 			Roles:         []string{"editor", "reviewer"},
 			ContextTokens: 256000,
@@ -78,7 +104,7 @@ func defaultAgentRosterConfig() map[string]AgentCardConfig {
 			},
 		},
 		"gemini-scout": {
-			Target:        "agy:" + agyGemini36FlashMedium,
+			Target:        "agy:" + agyGemini38FlashMedium,
 			Family:        "google",
 			Roles:         []string{"scout"},
 			ContextTokens: 1000000,

@@ -281,3 +281,18 @@ func TestReviewRejectsFailedDataLossCheckWithoutBlockingFinding(t *testing.T) {
 		t.Fatal("expected failed data-loss check without major finding to be rejected")
 	}
 }
+
+func TestReviewRejectsNeedsChangesWithoutFindings(t *testing.T) {
+	review := currentReviewForTest()
+	review.Verdict = "needs_changes"
+	review.Findings = []Finding{}
+	if err := review.ValidateCurrent(); err == nil || !strings.Contains(err.Error(), "requires at least one finding") {
+		t.Fatalf("ValidateCurrent() error = %v", err)
+	}
+}
+
+func TestReviewSchemaAvoidsProviderUnsupportedConditionals(t *testing.T) {
+	if strings.Contains(ReviewSchema, `"allOf"`) || strings.Contains(ReviewSchema, `"if"`) || strings.Contains(ReviewSchema, `"then"`) {
+		t.Fatal("review schema must leave cross-field validation to ValidateCurrent")
+	}
+}

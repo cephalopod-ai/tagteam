@@ -261,14 +261,37 @@ func runMistralAcpFakeAgent(mode string) {
 		case "initialize":
 			write(map[string]any{"id": req.ID, "result": map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}})
 		case "session/new":
-			write(map[string]any{"id": req.ID, "result": map[string]any{"sessionId": "fake-session-1"}})
+			write(map[string]any{"id": req.ID, "result": map[string]any{
+				"sessionId": "fake-session-1",
+				"configOptions": []map[string]any{{
+					"id":           "model",
+					"currentValue": "codestral-current",
+					"options": []map[string]any{
+						{"value": "codestral-current", "name": "Codestral Current"},
+						{"value": "mistral-large-latest", "name": "Mistral Large"},
+					},
+				}},
+			}})
 		case "session/set_mode":
 			if mode == "set_mode_error" {
 				write(map[string]any{"id": req.ID, "error": map[string]any{"code": -32001, "message": "set_mode not supported"}})
 				continue
 			}
 			write(map[string]any{"id": req.ID, "result": map[string]any{}})
-		case "session/set_model":
+		case "session/set_config_option":
+			if mode == "set_config_error" {
+				write(map[string]any{"id": req.ID, "error": map[string]any{"code": -32002, "message": "model unavailable"}})
+				continue
+			}
+			var params struct {
+				ConfigID string `json:"configId"`
+				Value    string `json:"value"`
+			}
+			_ = json.Unmarshal(req.Params, &params)
+			if params.ConfigID != "model" || params.Value != "mistral-large-latest" {
+				write(map[string]any{"id": req.ID, "error": map[string]any{"code": -32602, "message": "unexpected model config"}})
+				continue
+			}
 			write(map[string]any{"id": req.ID, "result": map[string]any{}})
 		case "session/prompt":
 			fakeAgentRespondToPrompt(mode, req.ID, scanner, write)
@@ -407,6 +430,54 @@ func TestMistralAcpRunDirectFailsWhenReadOnlyModeCannotBeSelected(t *testing.T) 
 	}
 	if !strings.Contains(err.Error(), "read-only session mode") {
 		t.Fatalf("error = %v, want a read-only-mode failure, not a silent fallback into an unknown mode", err)
+	}
+}
+
+func TestMistralAcpRunDirectSelectsConfiguredModel(t *testing.T) {
+	adapter := fakeMistralAcpAdapter(t, "review")
+	adapter.DefaultModel = "mistral-large-latest"
+	result, err := adapter.RunDirect(RoleAdversary, Request{
+		Context: context.Background(),
+		Prompt:  "review this change",
+		Workdir: t.TempDir(),
+		Timeout: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("RunDirect() error = %v", err)
+	}
+	if result.Review == nil || result.Review.Verdict != "pass" {
+		t.Fatalf("review = %#v", result.Review)
+	}
+}
+
+func TestMistralAcpRunDirectFailsWhenConfiguredModelCannotBeSelected(t *testing.T) {
+	adapter := fakeMistralAcpAdapter(t, "set_config_error")
+	adapter.DefaultModel = "mistral-large-latest"
+	_, err := adapter.RunDirect(RoleAdversary, Request{
+		Context: context.Background(),
+		Prompt:  "review this change",
+		Workdir: t.TempDir(),
+		Timeout: 10 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected an error when session/set_config_option fails")
+	}
+	if !strings.Contains(err.Error(), `could not select model "mistral-large-latest"`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestMistralAcpRunDirectRejectsUnadvertisedModel(t *testing.T) {
+	adapter := fakeMistralAcpAdapter(t, "review")
+	adapter.DefaultModel = "not-advertised"
+	_, err := adapter.RunDirect(RoleAdversary, Request{
+		Context: context.Background(),
+		Prompt:  "review this change",
+		Workdir: t.TempDir(),
+		Timeout: 10 * time.Second,
+	})
+	if err == nil || !strings.Contains(err.Error(), `model "not-advertised" is not advertised`) {
+		t.Fatalf("RunDirect() error = %v", err)
 	}
 }
 

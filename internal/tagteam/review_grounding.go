@@ -9,6 +9,12 @@ import (
 func validateReviewForDiff(review *Review, maxFindings int, diffPath string) error {
 	normalizeReview(review)
 	applyReviewCaps(review, maxFindings)
+	if review == nil {
+		return fmt.Errorf("review is missing")
+	}
+	if err := review.ValidateCurrent(); err != nil {
+		return err
+	}
 	return validateReviewFindingGrounding(review, diffPath)
 }
 

@@ -1,6 +1,12 @@
 package tagteam
 
 const (
+	openAIGPT6Astra        = "gpt-6-astra"
+	claudeFable51          = "claude-fable-5-1"
+	grok46                 = "grok-4.6"
+	agyGemini38FlashLow    = "gemini-3.8-flash-low"
+	agyGemini38FlashMedium = "gemini-3.8-flash-medium"
+	agyGemini38FlashHigh   = "gemini-3.8-flash-high"
 	agyGemini36FlashLow    = "gemini-3.6-flash-low"
 	agyGemini36FlashMedium = "gemini-3.6-flash-medium"
 	agyGemini36FlashHigh   = "gemini-3.6-flash-high"
@@ -17,6 +23,28 @@ const (
 	defaultAdversaryTarget        = defaultSupervisorTarget
 )
 
+// MaintainedModelTargets returns current first-party picker choices plus the
+// pinned compatibility models Tagteam ships by default. Provider model-list
+// commands remain the source of truth when live discovery is available.
+func MaintainedModelTargets() []string {
+	return []string{
+		"codex:" + openAIGPT6Astra,
+		"codex:gpt-5.6-sol",
+		"codex:gpt-5.6-terra",
+		"claude:" + claudeFable51,
+		"claude:claude-opus-5",
+		"claude:claude-sonnet-5",
+		"grok:" + grok46,
+		"grok:grok-4.5",
+		"agy:" + agyGemini38FlashHigh,
+		"agy:" + agyGemini38FlashMedium,
+		"agy:" + agyGemini38FlashLow,
+		"agy:" + agyGemini36FlashHigh,
+		"agy:" + agyGemini36FlashMedium,
+		"agy:" + agyGemini36FlashLow,
+	}
+}
+
 // AgyGemini36FlashModelChoices returns the Agy Gemini 3.6 Flash tiers that
 // Tagteam exposes in interactive model selection. Target parsing remains
 // open-ended so user-configured or newer Agy models continue to work.
@@ -32,6 +60,15 @@ type modeRoleTargets struct {
 	Editor   string
 	Reviewer string
 	Scout    string
+}
+
+func mergeContextBudget(dstMax, dstReserved **int, srcMax, srcReserved *int) {
+	if srcMax != nil {
+		*dstMax = cloneIntPtr(srcMax)
+	}
+	if srcReserved != nil {
+		*dstReserved = cloneIntPtr(srcReserved)
+	}
 }
 
 func configuredTargetsForMode(defaults DefaultsConfig, mode Mode) modeRoleTargets {
