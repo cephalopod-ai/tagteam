@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -261,16 +262,23 @@ func runMistralAcpFakeAgent(mode string) {
 		case "initialize":
 			write(map[string]any{"id": req.ID, "result": map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}})
 		case "session/new":
+			// "no_model_option" reproduces a build that advertises no model
+			// choices, which sends discovery down its stderr-diagnostic path.
+			configOptions := []map[string]any{{
+				"id":           "model",
+				"currentValue": "codestral-current",
+				"options": []map[string]any{
+					{"value": "codestral-current", "name": "Codestral Current"},
+					{"value": "mistral-large-latest", "name": "Mistral Large"},
+				},
+			}}
+			if mode == "no_model_option" {
+				configOptions = []map[string]any{}
+				fmt.Fprintln(os.Stderr, "vibe-acp: this build advertises no model options")
+			}
 			write(map[string]any{"id": req.ID, "result": map[string]any{
-				"sessionId": "fake-session-1",
-				"configOptions": []map[string]any{{
-					"id":           "model",
-					"currentValue": "codestral-current",
-					"options": []map[string]any{
-						{"value": "codestral-current", "name": "Codestral Current"},
-						{"value": "mistral-large-latest", "name": "Mistral Large"},
-					},
-				}},
+				"sessionId":     "fake-session-1",
+				"configOptions": configOptions,
 			}})
 		case "session/set_mode":
 			if mode == "set_mode_error" {
