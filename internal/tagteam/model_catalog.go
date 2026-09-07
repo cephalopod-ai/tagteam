@@ -202,6 +202,26 @@ func modelListError(adapter string, output []byte, err error) error {
 	return fmt.Errorf("%s model discovery failed: %w: %s", adapter, err, detail)
 }
 
+// lockedBuffer is a bytes.Buffer safe for one writer goroutine and a
+// concurrent reader. boundedBuffer is not: it is only ever read after the
+// process whose output it captured has been waited on.
+type lockedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(data)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
+}
+
 func (a *MistralAcpAdapter) DiscoverModels(ctx context.Context, workdir string) (modelDiscovery, error) {
 	procCtx, stopProc := context.WithCancel(ctx)
 	defer stopProc()
@@ -210,8 +230,11 @@ func (a *MistralAcpAdapter) DiscoverModels(ctx context.Context, workdir string) 
 	prepareProcessTree(cmd)
 	cmd.Dir = workdir
 	cmd.Env = mergeRestrictedCommandEnv(a.EnvOverlay, nil)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	// The diagnostic below is read while the child is still running (the
+	// process is only reaped in the deferred cleanup), so os/exec's copy
+	// goroutine and this function touch the buffer concurrently.
+	stderr := &lockedBuffer{}
+	cmd.Stderr = stderr
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

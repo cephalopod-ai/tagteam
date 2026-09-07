@@ -126,3 +126,19 @@ func TestMistralAcpDiscoverModelsFromSessionConfig(t *testing.T) {
 		t.Fatalf("models = %#v, want %#v", discovery.Models, want)
 	}
 }
+
+// TestMistralAcpDiscoverModelsReportsMissingModelOption exercises the path
+// that reads the agent's stderr while the process is still running. Under
+// -race it is also the regression test for that concurrent read.
+func TestMistralAcpDiscoverModelsReportsMissingModelOption(t *testing.T) {
+	adapter := fakeMistralAcpAdapter(t, "no_model_option")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := adapter.DiscoverModels(ctx, t.TempDir())
+	if err == nil {
+		t.Fatal("expected an error when the session advertises no model options")
+	}
+	if !strings.Contains(err.Error(), "advertised no model options") {
+		t.Fatalf("error = %v", err)
+	}
+}
