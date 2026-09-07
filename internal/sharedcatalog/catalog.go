@@ -57,8 +57,16 @@ type Adapter struct {
 }
 
 // Model is one maintained model ID and the adapters that can reach it.
+//
+// ID is the wire identifier — what a consumer passes to the provider CLI.
+// CanonicalID, when present, is the normalized identifier the fleet's
+// pricing/limits catalog files this model under; the two differ where a
+// provider's wire id uses a dashed version fragment that normalization
+// rewrites (claude-fable-5-1 is filed as claude-fable-5.1). Consumers driving
+// a CLI want ID; consumers looking up limits or cost want CanonicalID.
 type Model struct {
 	ID            string   `json:"id"`
+	CanonicalID   string   `json:"canonical_id,omitempty"`
 	Family        string   `json:"family"`
 	Adapters      []string `json:"adapters"`
 	Series        string   `json:"series,omitempty"`
@@ -182,6 +190,15 @@ func LookupModel(id string) (Model, bool) {
 		}
 	}
 	return Model{}, false
+}
+
+// CanonicalModelID returns the identifier the fleet's pricing/limits catalog
+// files a model under, which is the wire id unless the roster overrides it.
+func (m Model) CanonicalModelID() string {
+	if strings.TrimSpace(m.CanonicalID) != "" {
+		return m.CanonicalID
+	}
+	return m.ID
 }
 
 // MaintainedModelsFor returns the maintained model ids reachable through one
