@@ -1,0 +1,257 @@
+{
+  "schema_version": 1,
+  "contract_version": "0.5.0",
+  "updated": "2026-09-07",
+  "source_repo": "e3742526/control-hooks",
+  "source_path": "shared/model-catalog/model_catalog.json",
+  "notes": "Canonical, language-neutral roster of the coding-agent adapters and model IDs the fleet maintains. Consumers vendor this file byte-identically (see shared/README.md). Entries are maintained labels, not entitlement claims: a listed model is not proof the logged-in account can reach it, and live provider discovery wins wherever an adapter exposes one. context_window and max_output carry the provider contract limit and are kept equal to control_hooks.dispatch.catalog; they are NOT routing priors — a consumer that deliberately budgets a role below the contract limit (tagteam's agent roster, for one) keeps that number in its own config.",
+  "adapters": [
+    {
+      "id": "codex",
+      "display_name": "Codex CLI",
+      "kind": "cli",
+      "binary": "codex",
+      "family": "openai",
+      "roles": ["editor", "reviewer", "scout"],
+      "headless": "codex exec -s <sandbox> -m <model> -",
+      "prompt_transport": "stdin",
+      "discovery": null
+    },
+    {
+      "id": "codex-oss",
+      "display_name": "Codex CLI (open-weights)",
+      "kind": "cli",
+      "binary": "codex",
+      "family": "local",
+      "roles": ["editor", "reviewer", "scout"],
+      "headless": "codex exec --oss -s <sandbox> -m <model> -",
+      "prompt_transport": "stdin",
+      "discovery": null
+    },
+    {
+      "id": "claude",
+      "display_name": "Claude Code CLI",
+      "kind": "cli",
+      "binary": "claude",
+      "family": "anthropic",
+      "roles": ["reviewer"],
+      "headless": "claude -p --model <model> --output-format json",
+      "prompt_transport": "stdin",
+      "discovery": null
+    },
+    {
+      "id": "agy",
+      "display_name": "AGY CLI (Antigravity)",
+      "kind": "cli",
+      "binary": "agy",
+      "family": "google",
+      "roles": ["scout"],
+      "headless": "agy --print=<prompt> --model <model> --sandbox --mode plan",
+      "prompt_transport": "argv",
+      "discovery": {"kind": "cli", "argv": ["agy", "models"], "format": "tsv"}
+    },
+    {
+      "id": "gosling",
+      "display_name": "Gosling",
+      "kind": "cli",
+      "binary": "gosling",
+      "family": "local",
+      "roles": ["editor"],
+      "headless": "gosling --model <model>",
+      "prompt_transport": "stdin",
+      "discovery": null
+    },
+    {
+      "id": "grok",
+      "display_name": "Grok CLI",
+      "kind": "cli",
+      "binary": "grok",
+      "family": "xai",
+      "roles": ["editor", "reviewer", "scout"],
+      "headless": "grok --prompt-file /dev/stdin --cwd <dir> --model <model> --output-format json",
+      "prompt_transport": "prompt-file-stdin",
+      "prompt_transport_note": "Grok CLI 1.0.13 reads a prompt file in headless mode. Unix and macOS pass /dev/stdin so the prompt is never visible in the process argument list; Windows has no /dev/stdin and retains the bounded positional --single path.",
+      "discovery": {"kind": "cli", "argv": ["grok", "models"], "format": "grok-list"}
+    },
+    {
+      "id": "openai-compatible",
+      "display_name": "OpenAI-compatible endpoint",
+      "kind": "http",
+      "binary": null,
+      "family": "local",
+      "roles": ["reviewer", "scout"],
+      "headless": "POST <base_url>/chat/completions",
+      "prompt_transport": "http",
+      "discovery": null
+    },
+    {
+      "id": "mistral-acp",
+      "display_name": "Mistral Vibe (ACP)",
+      "kind": "acp",
+      "binary": "vibe-acp",
+      "family": "mistral",
+      "roles": ["reviewer", "scout"],
+      "headless": "vibe-acp (Agent Client Protocol over stdio)",
+      "prompt_transport": "acp",
+      "discovery": {"kind": "acp", "config_option": "model"},
+      "discovery_note": "Current Vibe builds advertise model choices as a session configuration option in the session/new result. Selection goes through session/set_config_option with configId \"model\"; the obsolete session/set_model method must not be used."
+    }
+  ],
+  "models": [
+    {
+      "id": "gpt-6-astra",
+      "family": "openai",
+      "adapters": ["codex"],
+      "series": "gpt-6",
+      "context_window": 1050000,
+      "max_output": 128000,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Frontier long-context coding and reasoning tier."
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "family": "openai",
+      "adapters": ["codex"],
+      "series": "gpt-5.6",
+      "context_window": 1000000,
+      "max_output": 128000,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Long-horizon planning and research tier; the maintained editor fallback."
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "family": "openai",
+      "adapters": ["codex"],
+      "series": "gpt-5.6",
+      "context_window": 1000000,
+      "max_output": 128000,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Default implementation tier."
+    },
+    {
+      "id": "claude-fable-5-1",
+      "canonical_id": "claude-fable-5.1",
+      "family": "anthropic",
+      "adapters": ["claude"],
+      "series": "claude-fable-5",
+      "context_window": 1000000,
+      "max_output": 128000,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Read-only highest-capability review tier; slower and premium-priced."
+    },
+    {
+      "id": "claude-opus-5",
+      "family": "anthropic",
+      "adapters": ["claude"],
+      "series": "claude-opus-5",
+      "context_window": 1000000,
+      "max_output": 128000,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Read-only supervisor/adversary; strongest review and arbitration tier."
+    },
+    {
+      "id": "claude-sonnet-5",
+      "family": "anthropic",
+      "adapters": ["claude"],
+      "series": "claude-sonnet-5",
+      "context_window": 1000000,
+      "max_output": 128000,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Read-only reviewer; cheaper review tier than Opus."
+    },
+    {
+      "id": "grok-4.6",
+      "family": "xai",
+      "adapters": ["grok"],
+      "series": "grok-4.6",
+      "context_window": 256000,
+      "max_output": 32768,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Fast scoped-patch tier. No implementation-reliability record has been established for unattended supervision."
+    },
+    {
+      "id": "grok-4.5",
+      "family": "xai",
+      "adapters": ["grok"],
+      "series": "grok-4.5",
+      "context_window": 500000,
+      "max_output": 32768,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Retained for compatibility. Historical worker/coder runs at low and medium reasoning effort were unreliable."
+    },
+    {
+      "id": "gemini-3.8-flash-high",
+      "family": "google",
+      "adapters": ["agy"],
+      "series": "gemini-3.8-flash",
+      "effort_tier": "high",
+      "context_window": 1000000,
+      "max_output": 65536,
+      "reasoning": true,
+      "maintained": true
+    },
+    {
+      "id": "gemini-3.8-flash-medium",
+      "family": "google",
+      "adapters": ["agy"],
+      "series": "gemini-3.8-flash",
+      "effort_tier": "medium",
+      "context_window": 1000000,
+      "max_output": 65536,
+      "reasoning": true,
+      "maintained": true
+    },
+    {
+      "id": "gemini-3.8-flash-low",
+      "family": "google",
+      "adapters": ["agy"],
+      "series": "gemini-3.8-flash",
+      "effort_tier": "low",
+      "context_window": 1000000,
+      "max_output": 65536,
+      "reasoning": true,
+      "maintained": true
+    },
+    {
+      "id": "gemini-3.6-flash-high",
+      "family": "google",
+      "adapters": ["agy"],
+      "series": "gemini-3.6-flash",
+      "effort_tier": "high",
+      "context_window": 1000000,
+      "max_output": 65536,
+      "reasoning": true,
+      "maintained": true
+    },
+    {
+      "id": "gemini-3.6-flash-medium",
+      "family": "google",
+      "adapters": ["agy"],
+      "series": "gemini-3.6-flash",
+      "effort_tier": "medium",
+      "context_window": 1000000,
+      "max_output": 65536,
+      "reasoning": true,
+      "maintained": true
+    },
+    {
+      "id": "gemini-3.6-flash-low",
+      "family": "google",
+      "adapters": ["agy"],
+      "series": "gemini-3.6-flash",
+      "effort_tier": "low",
+      "context_window": 1000000,
+      "max_output": 65536,
+      "reasoning": true,
+      "maintained": true
+    }
+  ]
+}

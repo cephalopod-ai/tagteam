@@ -342,6 +342,17 @@ Supported adapters in this repo today:
 ACP `session/new` model config. Codex, Claude, Agy, and Grok fall back to
 `maintained`; other adapters fall back to `config`, and errors stay visible.
 
+The `maintained` roster is not local to Tagteam. `internal/sharedcatalog`
+carries the fleet's canonical adapter/model roster, vendored byte-identically
+from `e3742526/control-hooks` (`shared/model-catalog`) and shared with
+`e3742526/tribunal`, so the three repositories cannot disagree about which
+providers and models exist. Do not edit the vendored files — change the
+canonical source, re-vendor with
+`python -m tools.sync_shared_catalog --vendor <repo-root>`, and refresh
+`SHA256SUMS`; a test fails the build when a vendored copy drifts. A roster
+entry is a maintained label, not proof that the logged-in account can reach
+the model, and live provider discovery wins wherever it is available.
+
 The Grok CLI integration is verified against Grok CLI 1.0.13. It invokes
 root-level headless `grok --prompt-file /dev/stdin --cwd <dir>` with optional `--model` and
 `--reasoning-effort`, `--output-format json`, and explicit role permissions:
@@ -748,7 +759,7 @@ Use Agy as a scout under the maintained operator roster:
 tagteam --relay --scout agy:gemini-3.6-flash-low --coder codex:gpt-5.6-terra --supervisor codex:gpt-5.6-sol "clean up the CLI help"
 ```
 
-The built-in `agy` default model is `gemini-3.6-flash-medium`. The Team builder and `/model` picker include `agy:gemini-3.6-flash-low`, `agy:gemini-3.6-flash-medium`, and `agy:gemini-3.6-flash-high`; the maintained operator roster confines these targets to the scout slot.
+The built-in `agy` default model is `gemini-3.8-flash-medium`. The Team builder and `/model` picker include the shared roster's Agy entries — the `gemini-3.8-flash-*` and `gemini-3.6-flash-*` low/medium/high tiers — and the maintained operator roster confines every Agy target to the scout slot.
 
 Set the default Agy tier for bare `agy` targets in configuration:
 

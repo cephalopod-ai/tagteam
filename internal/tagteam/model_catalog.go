@@ -202,6 +202,26 @@ func modelListError(adapter string, output []byte, err error) error {
 	return fmt.Errorf("%s model discovery failed: %w: %s", adapter, err, detail)
 }
 
+// lockedBuffer is a bytes.Buffer safe for one writer goroutine and a
+// concurrent reader. boundedBuffer is not: it is only ever read after the
+// process whose output it captured has been waited on.
+type lockedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(data)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
+}
+
 func (a *MistralAcpAdapter) DiscoverModels(ctx context.Context, workdir string) (modelDiscovery, error) {
 	procCtx, stopProc := context.WithCancel(ctx)
 	defer stopProc()
@@ -210,8 +230,11 @@ func (a *MistralAcpAdapter) DiscoverModels(ctx context.Context, workdir string) 
 	prepareProcessTree(cmd)
 	cmd.Dir = workdir
 	cmd.Env = mergeRestrictedCommandEnv(a.EnvOverlay, nil)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	// The diagnostic below is read while the child is still running (the
+	// process is only reaped in the deferred cleanup), so os/exec's copy
+	// goroutine and this function touch the buffer concurrently.
+	stderr := &lockedBuffer{}
+	cmd.Stderr = stderr
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -228,12 +251,16 @@ func (a *MistralAcpAdapter) DiscoverModels(ctx context.Context, workdir string) 
 	rpc := newACPRPC(stdin)
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- rpc.serve(stdout) }()
-	defer func() {
-		stopProc()
-		_ = stdin.Close()
-		<-serveDone
-		_ = cmd.Wait()
-	}()
+	var reapOnce sync.Once
+	reap := func() {
+		reapOnce.Do(func() {
+			stopProc()
+			_ = stdin.Close()
+			<-serveDone
+			_ = cmd.Wait()
+		})
+	}
+	defer reap()
 
 	newSession, err := a.newACPSession(procCtx, rpc, workdir, a.EnvOverlay)
 	if err != nil {
@@ -241,6 +268,12 @@ func (a *MistralAcpAdapter) DiscoverModels(ctx context.Context, workdir string) 
 	}
 	defaultModel, models := acpModelConfig(newSession.ConfigOptions)
 	if len(models) == 0 {
+		// Reap the agent before reading its diagnostic: nothing orders the
+		// child's stderr write against the session/new reply this function
+		// just consumed, so reading the buffer while os/exec's copy goroutine
+		// is still draining the pipe can drop the very explanation this error
+		// exists to surface. cmd.Wait blocks until that copy has finished.
+		reap()
 		detail := strings.TrimSpace(stderr.String())
 		if detail != "" {
 			return modelDiscovery{}, fmt.Errorf("mistral-acp session advertised no model options: %s", detail)

@@ -43,6 +43,7 @@ orchestration logic lives in `internal/tagteam`; the TUI lives in `internal/tui`
 | Bounded writer | `internal/tagteam/bounded_writer.go` | Capped output capture. |
 | Process control | `internal/tagteam/process_{unix,windows}.go` | Platform process-group handling. |
 | CLI exports | `internal/tagteam/cli_exports.go` | Symbols surfaced to the `internal/cli` layer. |
+| Shared model roster | `internal/sharedcatalog/catalog.go`, `internal/sharedcatalog/model_catalog.json` | Vendored fleet roster of adapters and maintained model IDs. Backs `MaintainedModelTargets`, the TUI `/model` picker, and the `models` command's fallback. Canonical source: e3742526/control-hooks `shared/model-catalog`. |
 | Interactive TUI | `internal/tui/render.go`, `internal/tui/state.go`, `internal/tui/tui.go` | Dashboard with recent runs, compose/settings, slash commands, and a scrollable detail pane. Reads `RunSnapshot`/`plan.json` for inspection and invokes `App.Run` for TUI-launched runs. |
 
 Grok 0.2.93 is invoked through the root command's positional headless mode:
@@ -115,6 +116,14 @@ as the TUI. See the README
 ## Dependency boundaries
 
 - `main` → `internal/cli` → `internal/tagteam`. No reverse dependency.
+- `internal/sharedcatalog` is a leaf: it imports nothing outside the standard
+  library and is imported by `internal/tagteam` only. Its two files are
+  vendored byte-identically from e3742526/control-hooks
+  (`shared/model-catalog`) and are the same copies Tribunal vendors, so the
+  three repositories share one roster of adapters and maintained model IDs.
+  Do not edit them here — change the canonical source, re-vendor with
+  `python -m tools.sync_shared_catalog --vendor <repo-root>`, and refresh
+  `SHA256SUMS`; a test fails the build when a vendored copy drifts.
 - External: cobra/pflag (CLI), BurntSushi/toml (config), google/shlex (arg
   parsing). No network client except the `openai-compatible` HTTP adapter.
 - Vendor CLIs (`codex`, `claude`, `agy`, `gosling`) are invoked as subprocesses;
