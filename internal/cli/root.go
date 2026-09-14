@@ -499,6 +499,7 @@ func renderRunSnapshot(cmd *cobra.Command, snapshot tagteam.RunSnapshot, asJSON 
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "run=%s verdict=%s status=%s exit=%d rounds=%d/%d\n", snapshot.RunID, snapshot.Verdict, snapshot.Status, snapshot.ExitCode, snapshot.RoundsCompleted, snapshot.RoundsRequested)
+	fmt.Fprintf(cmd.OutOrStdout(), "replay_status=%s guarantee=%s uncertain_effects=%d\n", snapshot.ReplayStatus, snapshot.ReplayGuarantee, snapshot.UncertainEffects)
 	if snapshot.Phase != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "phase=%s round=%d\n", snapshot.Phase, snapshot.CurrentRound)
 	}

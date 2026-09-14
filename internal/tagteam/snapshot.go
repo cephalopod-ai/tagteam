@@ -48,9 +48,12 @@ func BuildRunSnapshot(workdir, runDir string) (RunSnapshot, error) {
 	}
 	if data, readErr := os.ReadFile(filepath.Join(runDir, "execution-snapshot.json")); readErr == nil {
 		var frozen ExecutionSnapshot
-		if json.Unmarshal(data, &frozen) == nil && frozen.SchemaVersion == replayContractVersion && frozen.Digest != "" {
+		unmarshalErr := json.Unmarshal(data, &frozen)
+		if unmarshalErr == nil && validateExecutionSnapshot(frozen) == nil {
 			snapshot.ReplayStatus = "deterministic"
-			if files, filesErr := operationFiles(runDir); filesErr == nil {
+			if _, streamErr := validateOperationStream(runDir, frozen); streamErr != nil {
+				snapshot.ReplayStatus = "corrupt_blocked"
+			} else if files, filesErr := operationFiles(runDir); filesErr == nil {
 				for _, path := range files {
 					if op, opErr := readOperation(path); opErr != nil {
 						snapshot.ReplayStatus = "corrupt_blocked"
@@ -60,6 +63,8 @@ func BuildRunSnapshot(workdir, runDir string) (RunSnapshot, error) {
 					}
 				}
 			}
+		} else if unmarshalErr != nil || frozen.SchemaVersion == replayContractVersion {
+			snapshot.ReplayStatus = "corrupt_blocked"
 		}
 	}
 	if _, divergenceErr := os.Stat(filepath.Join(runDir, "divergence.json")); divergenceErr == nil {

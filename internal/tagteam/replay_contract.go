@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const replayContractVersion = 1
+const replayContractVersion = 2
 
 type ExecutionSnapshot struct {
 	SchemaVersion          int               `json:"schema_version"`
@@ -59,12 +59,24 @@ type CanonicalRequestEnvelope struct {
 }
 
 func canonicalJSON(value any) ([]byte, error) {
-	// encoding/json sorts map keys, uses UTF-8, and preserves null versus an
-	// omitted map member. Disable HTML escaping so the wire vector is explicit.
+	// Normalize structs and aliases through JSON first so their declaration
+	// order cannot affect the canonical bytes. UseNumber prevents a decode into
+	// float64 from losing integer precision. encoding/json then sorts every map
+	// level, emits UTF-8, and preserves null versus an omitted member.
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var normalized any
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.UseNumber()
+	if err := dec.Decode(&normalized); err != nil {
+		return nil, err
+	}
 	var b strings.Builder
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(value); err != nil {
+	if err := enc.Encode(normalized); err != nil {
 		return nil, err
 	}
 	return []byte(strings.TrimSuffix(b.String(), "\n")), nil
@@ -127,7 +139,7 @@ func freezeExecutionSnapshot(runDir, runID string, opts RunOptions) (ExecutionSn
 	path := filepath.Join(runDir, "execution-snapshot.json")
 	var have ExecutionSnapshot
 	if data, readErr := os.ReadFile(path); readErr == nil {
-		if json.Unmarshal(data, &have) != nil || have.SchemaVersion != replayContractVersion || have.Digest == "" {
+		if json.Unmarshal(data, &have) != nil || validateExecutionSnapshot(have) != nil || have.RunID != runID {
 			return ExecutionSnapshot{}, &DivergenceError{Reason: "missing_or_corrupt_snapshot"}
 		}
 		if want.Digest != have.Digest {
@@ -141,6 +153,24 @@ func freezeExecutionSnapshot(runDir, runID string, opts RunOptions) (ExecutionSn
 		return ExecutionSnapshot{}, fmt.Errorf("freeze execution snapshot: %w", err)
 	}
 	return want, nil
+}
+
+func validateExecutionSnapshot(snapshot ExecutionSnapshot) error {
+	if snapshot.SchemaVersion != replayContractVersion || snapshot.RunID == "" || snapshot.WorkflowRevision == "" || snapshot.Digest == "" {
+		return errors.New("incomplete execution snapshot")
+	}
+	revision, err := canonicalDigest(snapshot.Workflow)
+	if err != nil || revision != snapshot.WorkflowRevision {
+		return errors.New("workflow revision integrity mismatch")
+	}
+	want := snapshot.Digest
+	snapshot.Digest = ""
+	snapshot.FrozenAt = time.Time{}
+	got, err := canonicalDigest(snapshot)
+	if err != nil || got != want {
+		return errors.New("execution snapshot integrity mismatch")
+	}
+	return nil
 }
 
 type OperationState string
@@ -172,6 +202,7 @@ type OperationRecord struct {
 	FencingGeneration   uint64            `json:"fencing_generation"`
 	PreparedAt          time.Time         `json:"prepared_at"`
 	UpdatedAt           time.Time         `json:"updated_at"`
+	RecordDigest        string            `json:"record_digest"`
 }
 
 type DivergenceError struct{ Reason, Expected, Actual string }
@@ -208,13 +239,58 @@ func readOperation(path string) (OperationRecord, error) {
 		return r, err
 	}
 	err = json.Unmarshal(b, &r)
-	if err == nil && (r.SchemaVersion != replayContractVersion || r.Sequence == 0 || r.RequestHash == "") {
+	if err == nil && (r.SchemaVersion != replayContractVersion || r.Sequence == 0 || r.RequestHash == "" || r.RecordDigest == "") {
 		err = errors.New("corrupt operation record")
+	}
+	if err == nil {
+		want := r.RecordDigest
+		r.RecordDigest = ""
+		got, digestErr := canonicalDigest(r)
+		r.RecordDigest = want
+		if digestErr != nil || got != want {
+			err = errors.New("operation record integrity mismatch")
+		}
+	}
+	if err == nil && r.State == OperationCommitted && (r.Result == nil || r.ResultHash == "") {
+		err = errors.New("committed operation has no durable result")
+	}
+	if err == nil && r.Result != nil {
+		resultBytes, digestErr := canonicalJSON(r.Result)
+		if digestErr != nil || bytesDigest(resultBytes) != r.ResultHash {
+			err = errors.New("operation result integrity mismatch")
+		}
 	}
 	return r, err
 }
+
+func writeOperation(path string, r OperationRecord) error {
+	r.RecordDigest = ""
+	digest, err := canonicalDigest(r)
+	if err != nil {
+		return err
+	}
+	r.RecordDigest = digest
+	return writeJSONWithNewline(path, r)
+}
 func operationPath(runDir string, seq uint64) string {
 	return filepath.Join(runDir, "operations", fmt.Sprintf("%020d.json", seq))
+}
+
+func validateOperationStream(runDir string, snapshot ExecutionSnapshot) (OperationRecord, error) {
+	files, err := operationFiles(runDir)
+	if err != nil {
+		return OperationRecord{}, err
+	}
+	var tail OperationRecord
+	for i, path := range files {
+		record, readErr := readOperation(path)
+		sequence := uint64(i + 1)
+		if readErr != nil || record.Sequence != sequence || path != operationPath(runDir, sequence) || record.RunID != snapshot.RunID || record.WorkflowRevision != snapshot.WorkflowRevision {
+			return OperationRecord{}, errors.New("missing or corrupt operation stream")
+		}
+		tail = record
+	}
+	return tail, nil
 }
 
 // prepareOperation atomically allocates and persists the operation before the
@@ -227,23 +303,19 @@ func prepareOperation(runDir, opType string, envelope CanonicalRequestEnvelope, 
 		return OperationRecord{}, nil, &DivergenceError{Reason: "missing_or_corrupt_snapshot"}
 	}
 	var snap ExecutionSnapshot
-	if json.Unmarshal(snapData, &snap) != nil || snap.Digest == "" {
+	if json.Unmarshal(snapData, &snap) != nil || validateExecutionSnapshot(snap) != nil {
 		return OperationRecord{}, nil, &DivergenceError{Reason: "missing_or_corrupt_snapshot"}
+	}
+	if envelope.CanonicalVersion != replayContractVersion || envelope.OperationType != opType {
+		return OperationRecord{}, nil, &DivergenceError{Reason: "incompatible_request_envelope"}
 	}
 	hash, err := canonicalDigest(envelope)
 	if err != nil {
 		return OperationRecord{}, nil, err
 	}
-	files, err := operationFiles(runDir)
+	tail, err := validateOperationStream(runDir, snap)
 	if err != nil {
-		return OperationRecord{}, nil, err
-	}
-	var tail OperationRecord
-	if len(files) > 0 {
-		tail, err = readOperation(files[len(files)-1])
-		if err != nil {
-			return OperationRecord{}, nil, &DivergenceError{Reason: "missing_or_corrupt_operation"}
-		}
+		return OperationRecord{}, nil, &DivergenceError{Reason: "missing_or_corrupt_operation"}
 	}
 	if tail.State == OperationPrepared || tail.State == OperationInFlight || tail.State == OperationInDoubt {
 		if tail.WorkflowRevision != snap.WorkflowRevision || tail.OperationType != opType || tail.RequestHash != hash {
@@ -254,14 +326,14 @@ func prepareOperation(runDir, opType string, envelope CanonicalRequestEnvelope, 
 			tail.DuplicateEffectRisk = true
 			tail.Recovery = "crash_after_dispatch_before_durable_commit"
 			tail.UpdatedAt = time.Now().UTC()
-			if err = writeJSONWithNewline(operationPath(runDir, tail.Sequence), tail); err != nil {
+			if err = writeOperation(operationPath(runDir, tail.Sequence), tail); err != nil {
 				return tail, nil, err
 			}
 		}
 		tail.Attempt++
 		tail.DuplicateEffectRisk = tail.State == OperationInDoubt
 		tail.UpdatedAt = time.Now().UTC()
-		if err = writeJSONWithNewline(operationPath(runDir, tail.Sequence), tail); err != nil {
+		if err = writeOperation(operationPath(runDir, tail.Sequence), tail); err != nil {
 			return tail, nil, err
 		}
 		return tail, nil, nil
@@ -277,7 +349,7 @@ func prepareOperation(runDir, opType string, envelope CanonicalRequestEnvelope, 
 	if err = os.MkdirAll(filepath.Join(runDir, "operations"), 0700); err != nil {
 		return r, nil, err
 	}
-	if err = writeJSONWithNewline(operationPath(runDir, seq), r); err != nil {
+	if err = writeOperation(operationPath(runDir, seq), r); err != nil {
 		return r, nil, err
 	}
 	return r, nil, nil
@@ -301,17 +373,39 @@ func transitionOperation(runDir string, r OperationRecord, state OperationState,
 	if current.FencingGeneration != r.FencingGeneration {
 		return &DivergenceError{Reason: "stale_fence"}
 	}
+	if !validOperationTransition(current.State, state) {
+		return &DivergenceError{Reason: "invalid_operation_transition", Expected: string(current.State), Actual: string(state)}
+	}
 	current.State = state
 	current.Recovery = recovery
 	current.UpdatedAt = time.Now().UTC()
 	if result != nil {
-		b, _ := canonicalJSON(result)
-		current.ResultHash = bytesDigest(b)
 		copy := *result
 		copy.Raw = nil
 		current.Result = &copy
+		b, digestErr := canonicalJSON(current.Result)
+		if digestErr != nil {
+			return digestErr
+		}
+		current.ResultHash = bytesDigest(b)
 	}
-	return writeJSONWithNewline(operationPath(runDir, r.Sequence), current)
+	if state == OperationInDoubt {
+		current.DuplicateEffectRisk = true
+	}
+	return writeOperation(operationPath(runDir, r.Sequence), current)
+}
+
+func validOperationTransition(from, to OperationState) bool {
+	switch from {
+	case OperationPrepared:
+		return to == OperationInFlight || to == OperationFailed
+	case OperationInFlight:
+		return to == OperationCommitted || to == OperationFailed || to == OperationInDoubt
+	case OperationInDoubt:
+		return to == OperationCommitted || to == OperationInFlight || to == OperationFailed
+	default:
+		return false
+	}
 }
 
 // reconcileOperation gives provider-native lookup the first chance to resolve
