@@ -2,6 +2,8 @@
 
 Canonical entry point for `tagteam` documentation.
 
+- [Deterministic replay contract and operator guide](DETERMINISTIC_REPLAY.md)
+
 ## Start here
 
 - [README](../README.md) — install, quick start, all run modes, configuration,

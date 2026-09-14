@@ -3,6 +3,11 @@
 How `tagteam` is put together. This describes the *implemented* architecture;
 where a detail is intended-but-partial it is marked.
 
+The versioned replay authority, sequenced adapter boundary, uncertain-effect
+policy, migration, and separate panel ledgers are specified in
+[`DETERMINISTIC_REPLAY.md`](DETERMINISTIC_REPLAY.md). Legacy runs are explicitly
+reported as non-replayable.
+
 ## Summary
 
 `tagteam` is a single-binary Go CLI that orchestrates one or more headless

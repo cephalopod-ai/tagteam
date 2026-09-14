@@ -122,6 +122,12 @@ func (a *App) runSolo(ctx context.Context, opts RunOptions) (final FinalRun, err
 	final.RoleLosses = selectionState.RoleLosses
 	budget := &InvocationBudget{Max: opts.MaxRoleInvocations}
 	opts.InvocationBudget = budget
+	if _, snapshotErr := freezeExecutionSnapshot(runDir, runID, opts); snapshotErr != nil {
+		return final, mandatoryPersistenceError("immutable execution snapshot", snapshotErr)
+	}
+	if budgetErr := initializePanelBudget(runDir, max(1, opts.MaxRoleInvocations), 1); budgetErr != nil {
+		return final, mandatoryPersistenceError("budget ledgers", budgetErr)
+	}
 	defer func() {
 		if err == nil || final.RunID == "" || !final.FinishedAt.IsZero() {
 			return
