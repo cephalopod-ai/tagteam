@@ -15,6 +15,23 @@ import (
 	"time"
 )
 
+func sanitizeArtifactName(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	var b strings.Builder
+	for _, r := range raw {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('-')
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "call"
+	}
+	return out
+}
+
 func mergeCommandEnv(overlay map[string]string, extra []string) []string {
 	env := os.Environ()
 	if len(overlay) > 0 {

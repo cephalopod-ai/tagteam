@@ -588,6 +588,9 @@ type RunSnapshot struct {
 	InvocationID     string                `json:"invocation_id,omitempty"`
 	DiffHash         string                `json:"diff_hash,omitempty"`
 	RecoveryStatus   string                `json:"recovery_status,omitempty"`
+	ReplayStatus     string                `json:"replay_status"`
+	ReplayGuarantee  string                `json:"replay_guarantee"`
+	UncertainEffects int                   `json:"uncertain_effects"`
 	Verdict          string                `json:"verdict,omitempty"`
 	ExitCode         int                   `json:"exit_code"`
 	Degraded         bool                  `json:"degraded"`

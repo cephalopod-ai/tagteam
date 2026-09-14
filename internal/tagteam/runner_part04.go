@@ -162,6 +162,12 @@ func (a *App) runLoop(ctx context.Context, opts RunOptions, initialReview *Revie
 			err = errors.Join(err, persistErr)
 		}
 	}()
+	if _, snapshotErr := freezeExecutionSnapshot(runDir, runID, opts); snapshotErr != nil {
+		return final, mandatoryPersistenceError("immutable execution snapshot", snapshotErr)
+	}
+	if budgetErr := initializePanelBudget(runDir, max(1, opts.MaxRoleInvocations), 1); budgetErr != nil {
+		return final, mandatoryPersistenceError("budget ledgers", budgetErr)
+	}
 	if stateErr := writeRunState(runDir, RunState{RunID: runID, Mode: opts.Mode, Status: "running", Phase: "preflight"}); stateErr != nil {
 		return final, mandatoryPersistenceError("preflight run state", stateErr)
 	}

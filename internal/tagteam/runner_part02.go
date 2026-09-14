@@ -131,6 +131,12 @@ func (a *App) Review(ctx context.Context, opts RunOptions, prompt string) (final
 	}
 	setRoleStatus(&final, reviewerLabel, opts.Adversary, "running", "", "")
 	final.Phase = "review"
+	if _, snapshotErr := freezeExecutionSnapshot(runDir, runID, opts); snapshotErr != nil {
+		return final, mandatoryPersistenceError("immutable execution snapshot", snapshotErr)
+	}
+	if budgetErr := initializePanelBudget(runDir, max(1, opts.MaxRoleInvocations), 1); budgetErr != nil {
+		return final, mandatoryPersistenceError("budget ledgers", budgetErr)
+	}
 	if stateErr := writeRunState(runDir, RunState{
 		RunID:            runID,
 		Mode:             opts.Mode,

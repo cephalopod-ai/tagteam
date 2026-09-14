@@ -100,6 +100,9 @@ func (a *App) resumeExistingRun(ctx context.Context, opts RunOptions, runDir str
 	opts.Coder = final.Coder
 	opts.Adversary = final.Adversary
 	opts.Scout = final.Scout
+	if _, snapshotErr := freezeExecutionSnapshot(runDir, state.RunID, opts); snapshotErr != nil {
+		return final, &ExitError{Code: ExitPreflightFailed, Err: snapshotErr}
+	}
 	phase := normalizeRunPhase(state.Phase)
 	if final.BaselineTest == nil {
 		if phase != PhasePlanning {

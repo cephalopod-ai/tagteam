@@ -40,9 +40,30 @@ func BuildRunSnapshot(workdir, runDir string) (RunSnapshot, error) {
 	}
 
 	snapshot := RunSnapshot{
-		SchemaVersion: ArtifactSchemaVersion,
-		RunID:         filepath.Base(runDir),
-		RunDir:        runDir,
+		SchemaVersion:   ArtifactSchemaVersion,
+		RunID:           filepath.Base(runDir),
+		RunDir:          runDir,
+		ReplayStatus:    "legacy_non_replayable",
+		ReplayGuarantee: "at_least_once_at_uncertain_external_effect_boundaries",
+	}
+	if data, readErr := os.ReadFile(filepath.Join(runDir, "execution-snapshot.json")); readErr == nil {
+		var frozen ExecutionSnapshot
+		if json.Unmarshal(data, &frozen) == nil && frozen.SchemaVersion == replayContractVersion && frozen.Digest != "" {
+			snapshot.ReplayStatus = "deterministic"
+			if files, filesErr := operationFiles(runDir); filesErr == nil {
+				for _, path := range files {
+					if op, opErr := readOperation(path); opErr != nil {
+						snapshot.ReplayStatus = "corrupt_blocked"
+						break
+					} else if op.State == OperationInDoubt {
+						snapshot.UncertainEffects++
+					}
+				}
+			}
+		}
+	}
+	if _, divergenceErr := os.Stat(filepath.Join(runDir, "divergence.json")); divergenceErr == nil {
+		snapshot.ReplayStatus = "diverged_blocked"
 	}
 
 	if state, err := readRunState(runDir); err == nil {

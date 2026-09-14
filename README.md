@@ -1047,6 +1047,16 @@ Repo instructions are loaded from the selected workdir, then from the Git root w
 
 ## Run artifacts
 
+New runs also persist an immutable `execution-snapshot.json`, sequenced
+`operations/*.json`, and separate `panel-budget.json` cumulative-work/live-slot
+ledgers. `status --json` reports `replay_status`, `replay_guarantee`, and
+`uncertain_effects`. Runs created before this contract are
+`legacy_non_replayable`, never silently upgraded. A divergence is blocking; an
+uncertain external effect is `in_doubt` and may repeat on retry. Tagteam
+deterministically replays durable control history, but resume is at-least-once
+at uncertain external-effect boundaries—not exactly-once. See the
+[replay operator guide](docs/DETERMINISTIC_REPLAY.md).
+
 Each run writes artifacts under:
 
 ```text

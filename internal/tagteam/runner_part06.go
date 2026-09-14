@@ -13,23 +13,6 @@ import (
 	"time"
 )
 
-func sanitizeArtifactName(raw string) string {
-	raw = strings.ToLower(strings.TrimSpace(raw))
-	var b strings.Builder
-	for _, r := range raw {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
-			b.WriteRune(r)
-			continue
-		}
-		b.WriteByte('-')
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "call"
-	}
-	return out
-}
-
 func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Request, dryRun bool) (result Result, runErr error) {
 	if err := bindControlResumeRequest(ctx, &req); err != nil {
 		return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
@@ -40,11 +23,39 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 			return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
 		}
 	}
-	if err := req.Budget.Before(string(role), req.Phase); err != nil {
-		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: err}
-	}
 	if err := validateRequestArtifactPaths(req); err != nil {
 		return Result{}, &ExitError{Code: ExitInvalidArguments, Err: err}
+	}
+	var replayOperation OperationRecord
+	operationInFlight := false
+	_, snapshotErr := os.Stat(filepath.Join(req.RunDir, "execution-snapshot.json"))
+	if !dryRun && req.RunDir != "" && snapshotErr == nil {
+		prepared, replayed, err := prepareAdapterReplay(req, adapter, role)
+		if err != nil {
+			return Result{}, &ExitError{Code: ExitAdapterFailure, Err: err}
+		}
+		if replayed != nil {
+			return *replayed, nil
+		}
+		replayOperation = prepared
+		defer func() {
+			if !operationInFlight {
+				return
+			}
+			if runErr != nil {
+				if err := transitionOperation(req.RunDir, replayOperation, OperationFailed, nil, "invocation_returned_error"); err != nil {
+					runErr = errors.Join(runErr, fmt.Errorf("persist external operation failure: %w", err))
+				}
+				return
+			}
+			if err := transitionOperation(req.RunDir, replayOperation, OperationCommitted, &result, "durable_result_recorded"); err != nil {
+				result = Result{}
+				runErr = &ExitError{Code: ExitAdapterFailure, Err: fmt.Errorf("persist external operation commit: %w", err)}
+			}
+		}()
+	}
+	if err := req.Budget.Before(string(role), req.Phase); err != nil {
+		return Result{}, &ExitError{Code: ExitAdapterFailure, Err: err}
 	}
 	var before worktreeSnapshot
 	var hostBefore integritySnapshot
@@ -161,6 +172,12 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 		defer stopScopeGuard()
 		if err := rebindRequestControlResume(&req); err != nil {
 			return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+		}
+		if replayOperation.Sequence != 0 {
+			if err := transitionOperation(req.RunDir, replayOperation, OperationInFlight, nil, "dispatch_started"); err != nil {
+				return Result{}, err
+			}
+			operationInFlight = true
 		}
 		result, err := direct.RunDirect(role, req)
 		if scopeErr := stopScopeGuard(); scopeErr != nil {
@@ -391,6 +408,12 @@ func (a *App) runAdapter(ctx context.Context, adapter Adapter, role Role, req Re
 	defer stopScopeGuard()
 	if err := rebindRequestControlResume(&req); err != nil {
 		return Result{}, &ExitError{Code: ExitPreflightFailed, Err: err}
+	}
+	if replayOperation.Sequence != 0 {
+		if err := transitionOperation(req.RunDir, replayOperation, OperationInFlight, nil, "dispatch_started"); err != nil {
+			return Result{}, err
+		}
+		operationInFlight = true
 	}
 	if err := cmd.Run(); err != nil {
 		stopProgress()
