@@ -23,7 +23,7 @@ func replayFixture(t *testing.T) (string, RunOptions, ExecutionSnapshot) {
 }
 
 func baseEnvelope() CanonicalRequestEnvelope {
-	return CanonicalRequestEnvelope{CanonicalVersion: 1, OperationType: "provider_request.v1", Destination: "https://api", Provider: "p", Model: "m", Method: "POST", Path: "/v1", Arguments: map[string]any{"b": 2, "a": "é"}, BodySHA256: bytesDigest([]byte{0, 1, 2}), Parameters: map[string]any{"temperature": 0.0}, Headers: map[string]string{"content-type": "application/json"}, TimeoutNanos: 10, RetryPolicy: "r", SandboxPolicy: "s", PermissionPolicy: "p", NetworkPolicy: "n", InputArtifactHashes: map[string]string{"x": "h"}, IdempotencyKey: "i", SecretReferenceDigest: "d"}
+	return CanonicalRequestEnvelope{CanonicalVersion: replayContractVersion, OperationType: "provider_request.v1", Destination: "https://api", Provider: "p", Model: "m", Method: "POST", Path: "/v1", Arguments: map[string]any{"b": 2, "a": "é"}, BodySHA256: bytesDigest([]byte{0, 1, 2}), Parameters: map[string]any{"temperature": 0.0}, Headers: map[string]string{"content-type": "application/json"}, TimeoutNanos: 10, RetryPolicy: "r", SandboxPolicy: "s", PermissionPolicy: "p", NetworkPolicy: "n", InputArtifactHashes: map[string]string{"x": "h"}, IdempotencyKey: "i", SecretReferenceDigest: "d"}
 }
 
 func TestCanonicalRequestGoldenVectors(t *testing.T) {
@@ -35,7 +35,7 @@ func TestCanonicalRequestGoldenVectors(t *testing.T) {
 	if ha != hb {
 		t.Fatalf("reordered keys changed digest %s != %s", ha, hb)
 	}
-	const golden = "2cbbd5bf3589041e871fb06dcb00734764e5a43a7e55d892608f2c8a82c4d99e"
+	const golden = "c5f38a98def5b643a04879a72666e6a000c070e32ac4f1bda218684c79373ca8"
 	if ha != golden {
 		t.Fatalf("golden digest=%s; update only for intentional canonical version change", ha)
 	}
@@ -148,6 +148,60 @@ func TestUnresolvedMismatchAndCorruptionFailClosed(t *testing.T) {
 			t.Fatal("corrupt operation accepted")
 		}
 	})
+	t.Run("missing sequence", func(t *testing.T) {
+		dir, _, _ := replayFixture(t)
+		e := baseEnvelope()
+		r, _, err := prepareOperation(dir, e.OperationType, e, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(operationPath(dir, r.Sequence), operationPath(dir, r.Sequence+1)); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := prepareOperation(dir, e.OperationType, e, nil); err == nil {
+			t.Fatal("operation stream gap accepted")
+		}
+	})
+	t.Run("snapshot digest tampering", func(t *testing.T) {
+		dir, _, _ := replayFixture(t)
+		path := filepath.Join(dir, "execution-snapshot.json")
+		var snapshot ExecutionSnapshot
+		data, _ := os.ReadFile(path)
+		_ = json.Unmarshal(data, &snapshot)
+		snapshot.Arguments["prompt"] = "tampered"
+		_ = writeJSONWithNewline(path, snapshot)
+		e := baseEnvelope()
+		if _, _, err := prepareOperation(dir, e.OperationType, e, nil); err == nil {
+			t.Fatal("snapshot with stale digest accepted")
+		}
+	})
+}
+
+func TestCommittedOperationIntegrityAndLifecycleFailClosed(t *testing.T) {
+	dir, _, _ := replayFixture(t)
+	e := baseEnvelope()
+	r, _, err := prepareOperation(dir, e.OperationType, e, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := transitionOperation(dir, r, OperationCommitted, &Result{Text: "invented"}, "skip dispatch"); err == nil {
+		t.Fatal("prepared operation committed without entering in_flight")
+	}
+	if err := transitionOperation(dir, r, OperationInFlight, nil, "dispatch"); err != nil {
+		t.Fatal(err)
+	}
+	if err := transitionOperation(dir, r, OperationCommitted, &Result{Text: "recorded", Raw: []byte("not persisted")}, "commit"); err != nil {
+		t.Fatal(err)
+	}
+	path := operationPath(dir, r.Sequence)
+	var stored OperationRecord
+	data, _ := os.ReadFile(path)
+	_ = json.Unmarshal(data, &stored)
+	stored.Result.Text = "tampered"
+	_ = writeJSONWithNewline(path, stored)
+	if _, _, err := prepareOperation(dir, e.OperationType, e, nil); err == nil {
+		t.Fatal("tampered committed result accepted")
+	}
 }
 
 func TestOperationCrashPoliciesAndReconciliation(t *testing.T) {
