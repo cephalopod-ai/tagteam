@@ -24,6 +24,8 @@ type PanelBudgetLedger struct {
 	Reservations            map[string]PanelReservation `json:"reservations"`
 }
 
+// PanelReservation records an atomic allocation of work and concurrency for a
+// panel. Its generation fences stale writers after the ledger changes.
 type PanelReservation struct {
 	PanelID               string    `json:"panel_id"`
 	DefinitionDigest      string    `json:"definition_digest"`
@@ -37,6 +39,8 @@ type PanelReservation struct {
 	ReservedAt            time.Time `json:"reserved_at"`
 }
 
+// PanelAdmissionError reports which independently enforced budget prevented a
+// panel reservation or member start.
 type PanelAdmissionError struct{ Reason string }
 
 func (e *PanelAdmissionError) Error() string { return "panel admission blocked: " + e.Reason }

@@ -2,8 +2,6 @@
 
 Canonical entry point for `tagteam` documentation.
 
-- [Deterministic replay contract and operator guide](DETERMINISTIC_REPLAY.md)
-
 ## Start here
 
 - [README](../README.md) — install, quick start, all run modes, configuration,
@@ -17,6 +15,9 @@ Canonical entry point for `tagteam` documentation.
 
 - [Architecture](ARCHITECTURE.md) — components, run flow, data model, extension
   points, live status/TUI datapath, known risks.
+- [Deterministic replay contract and operator guide](DETERMINISTIC_REPLAY.md) —
+  immutable execution authority, sequenced adapter operations, uncertain-effect
+  recovery, panel budgets, migration, and current limitations.
 - [Control Plane Contract](CONTROL_PLANE_CONTRACT.md) — draft versioned producer
   contract, bounded read operations, authority boundary, and MCP lifecycle
   gates.
