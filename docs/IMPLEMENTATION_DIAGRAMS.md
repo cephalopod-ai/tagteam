@@ -102,6 +102,32 @@ flowchart LR
 (`classifyRoleFailure`, `reasonForExit`), `internal/tagteam/types.go`
 (`ReasonCode`, `Exit*`), `context_budget.go` (`errScoutContextTooSmall`).
 
+## Deterministic adapter-operation lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> prepared: persist request hash + idempotency key
+    prepared --> in_flight: dispatch begins
+    in_flight --> committed: persist result + integrity digest
+    in_flight --> failed: confirmed failure
+    in_flight --> in_doubt: restart finds uncertain effect
+    in_doubt --> committed: provider reconciliation finds result
+    in_doubt --> in_flight: explicit retry retains duplicate risk
+    committed --> [*]: exact result replay
+    failed --> [*]
+```
+
+Every transition atomically replaces the same sequenced operation record.
+Resume accepts only the exact unresolved tail or an exact committed tail;
+missing records, changed requests, stale workflow revisions, and illegal state
+transitions fail closed. `in_doubt` is not an exactly-once claim: reconciliation
+by idempotency key precedes any retry, and an unreconciled retry remains visibly
+at risk of a duplicate external effect.
+
+**Evidence:** `internal/tagteam/replay_contract.go`
+(`prepareOperation`, `transitionOperation`, `reconcileOperation`),
+`internal/tagteam/replay_contract_test.go`.
+
 ## Failed invocation recovery and transfer
 
 ```mermaid

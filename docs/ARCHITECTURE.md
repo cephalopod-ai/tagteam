@@ -102,6 +102,15 @@ without changing the authoritative result.
 as the TUI. See the README
 "Run Artifacts" section for the full field contract and reason-code vocabulary.
 
+Replay authority is layered onto this state model rather than replacing it.
+`execution-snapshot.json` freezes the run definition; `operations/*.json`
+journals the ordered adapter boundary; and `panel-budget.json` atomically
+accounts for cumulative work and live slots. These artifacts use contract
+version 2 integrity digests and fail closed on mutation, gaps, illegal lifecycle
+transitions, or a workflow-revision mismatch. They do not make host-side Git,
+filesystem, or test effects exactly-once. The operator semantics and migration
+rules are defined in [the replay contract](DETERMINISTIC_REPLAY.md).
+
 ## Live status / TUI flow
 
 1. The runner creates an external run directory and writes external `active.json`.
