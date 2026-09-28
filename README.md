@@ -36,6 +36,7 @@ The multi-agent part is implicit. You don't wire up a pipeline; you pick a mode 
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
 - [Run artifacts](#run-artifacts)
+- [Deterministic replay and recovery](#deterministic-replay-and-recovery)
 - [TUI](#tui)
 - [Development](#development)
 - [Scope](#scope)
@@ -1047,16 +1048,6 @@ Repo instructions are loaded from the selected workdir, then from the Git root w
 
 ## Run artifacts
 
-New runs also persist an immutable `execution-snapshot.json`, sequenced
-`operations/*.json`, and separate `panel-budget.json` cumulative-work/live-slot
-ledgers. `status --json` reports `replay_status`, `replay_guarantee`, and
-`uncertain_effects`. Runs created before this contract are
-`legacy_non_replayable`, never silently upgraded. A divergence is blocking; an
-uncertain external effect is `in_doubt` and may repeat on retry. Tagteam
-deterministically replays durable control history, but resume is at-least-once
-at uncertain external-effect boundaries—not exactly-once. See the
-[replay operator guide](docs/DETERMINISTIC_REPLAY.md).
-
 Each run writes artifacts under:
 
 ```text
@@ -1093,6 +1084,40 @@ Review findings remain open until the reviewer explicitly disposes of them.
 Resume retains the saved mode, but an explicit compatible role flag such as
 `--supervisor`, `--reviewer`, `--worker`, `--coder`, or `--scout` replaces that
 role for the recovery attempt.
+
+### Deterministic replay and recovery
+
+New runs persist an immutable `execution-snapshot.json`, sequenced
+`operations/*.json`, and a `panel-budget.json` ledger. These are authority
+artifacts, not diagnostic telemetry:
+
+| Artifact | Purpose | Safe operator response |
+|---|---|---|
+| `execution-snapshot.json` | Freezes normalized workflow, arguments, policies, and digests of configured secret values. | Start a new run when intended inputs change; do not edit the snapshot. |
+| `operations/<sequence>.json` | Journals each adapter request before dispatch and stores an integrity-checked committed result for exact replay. | Preserve the contiguous sequence; never delete a record to unblock resume. |
+| `panel-budget.json` | Accounts separately for cumulative work and renewable live concurrency. | Treat admission failures as budget decisions, not corrupt state. |
+| `divergence.json` | Records sanitized expected/actual hashes when frozen history and current input differ. | Compare the hashes and start a new run for an intentional change. |
+
+`tagteam status --json` reports `replay_status`, `replay_guarantee`, and
+`uncertain_effects`. The important states are:
+
+- `replayable`: the version 2 snapshot and operation stream passed integrity
+  checks;
+- `legacy_non_replayable`: the run predates the current contract and is never
+  silently upgraded;
+- `diverged_blocked`: current input does not match frozen history, so execution
+  stops rather than making a fresh call; and
+- `in_doubt`: an external call may have happened without a durable committed
+  result. Reconcile its idempotency key before retrying and assess duplicate
+  effect risk.
+
+Tagteam deterministically replays durable control history, but resume is
+at-least-once at uncertain external-effect boundaries—not exactly-once. The
+contract currently covers adapter calls; host Git/filesystem mutation, tests,
+and control callbacks remain outside deterministic result replay. See the
+[deterministic replay contract and operator guide](docs/DETERMINISTIC_REPLAY.md)
+for the lifecycle, migration policy, limitations, and implementation-to-test
+traceability.
 
 <details>
 <summary><strong>Typical contents</strong></summary>

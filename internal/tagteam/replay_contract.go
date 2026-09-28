@@ -23,6 +23,8 @@ import (
 
 const replayContractVersion = 2
 
+// ExecutionSnapshot is the immutable, integrity-checked authority for a run.
+// It deliberately stores digests rather than configured environment values.
 type ExecutionSnapshot struct {
 	SchemaVersion          int               `json:"schema_version"`
 	RunID                  string            `json:"run_id"`
@@ -36,6 +38,8 @@ type ExecutionSnapshot struct {
 	FrozenAt               time.Time         `json:"frozen_at"`
 }
 
+// CanonicalRequestEnvelope captures every input that can change the observable
+// result of an external operation before that operation is dispatched.
 type CanonicalRequestEnvelope struct {
 	CanonicalVersion      int               `json:"canonical_version"`
 	OperationType         string            `json:"operation_type"`
@@ -173,9 +177,11 @@ func validateExecutionSnapshot(snapshot ExecutionSnapshot) error {
 	return nil
 }
 
+// OperationState describes the durable lifecycle of one external operation.
 type OperationState string
 
 const (
+	// Operation lifecycle values are persisted in operations/<sequence>.json.
 	OperationPrepared  OperationState = "prepared"
 	OperationInFlight  OperationState = "in_flight"
 	OperationCommitted OperationState = "committed"
@@ -183,6 +189,8 @@ const (
 	OperationInDoubt   OperationState = "in_doubt"
 )
 
+// OperationRecord is the integrity-checked journal entry for one sequenced
+// external operation and, after commit, its replayable result.
 type OperationRecord struct {
 	SchemaVersion       int               `json:"schema_version"`
 	RunID               string            `json:"run_id"`
@@ -205,6 +213,8 @@ type OperationRecord struct {
 	RecordDigest        string            `json:"record_digest"`
 }
 
+// DivergenceError reports that current input cannot safely continue the frozen
+// execution history.
 type DivergenceError struct{ Reason, Expected, Actual string }
 
 func (e *DivergenceError) Error() string {

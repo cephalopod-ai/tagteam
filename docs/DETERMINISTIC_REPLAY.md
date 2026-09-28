@@ -7,11 +7,11 @@ Status: accepted; artifact contract version 2.
 New executions freeze `execution-snapshot.json` before entering `running`. The
 snapshot contains normalized workflow topology, arguments, resolved role
 targets, policies, budgets, routing selection, input references, and digests of
-secret reference names (never credential values). Canonical JSON first
+configured secret values (never the values themselves). Canonical JSON first
 normalizes structs into JSON values, then uses recursively sorted object keys,
-UTF-8, explicit defaults, lossless JSON numbers, and SHA-256. Running execution treats
-this artifact as immutable authority; changed workflow or arguments produce a
-typed divergence rather than adopting current configuration.
+UTF-8, explicit defaults, lossless JSON numbers, and SHA-256. Running execution
+treats this artifact as immutable authority; changed workflow or arguments
+produce a typed divergence rather than adopting current configuration.
 
 Provider/model and agent subprocess calls are the currently centralized
 external boundary. `runAdapter` prepares `operations/<sequence>.json` before
@@ -61,6 +61,18 @@ impact before any unreconciled retry.
 
 Status JSON exposes `replay_status`, `replay_guarantee`, and
 `uncertain_effects`; it intentionally never promises exactly-once.
+
+### Operator decision table
+
+| Reported condition | Meaning | Action |
+|---|---|---|
+| `replayable` | The version 2 snapshot and contiguous operation stream validate. | Resume normally. |
+| `legacy_non_replayable` | No valid version 2 snapshot exists. | Inspect the old run or start a new run; do not fabricate a backfill. |
+| `diverged_blocked` | Frozen authority and current input differ. | Compare sanitized hashes in `divergence.json`, then start a new run if the change was intentional. |
+| `in_doubt` | Dispatch may have produced an external effect without a durable result. | Reconcile by idempotency key; before retrying, assess and accept the recorded duplicate-effect risk. |
+
+The operation lifecycle and fail-closed resume path are illustrated in
+[Implementation Diagrams](IMPLEMENTATION_DIAGRAMS.md#deterministic-adapter-operation-lifecycle).
 
 ## Traceability
 
