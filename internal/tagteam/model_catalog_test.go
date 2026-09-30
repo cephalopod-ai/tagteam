@@ -4,6 +4,7 @@ import (
 	"context"
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,12 @@ func TestModelListCommandRestrictsEnvironment(t *testing.T) {
 
 func TestMaintainedModelTargetsIncludeRequestedFrontierModels(t *testing.T) {
 	targets := MaintainedModelTargets()
-	for _, want := range []string{"codex:gpt-6-astra", "claude:claude-fable-5-1", "grok:grok-4.6", "agy:gemini-3.8-flash-medium"} {
+	for _, want := range []string{
+		"codex:gpt-6-astra", "codex:gpt-6-sol", "codex:gpt-6.1-sol", "codex:gpt-5.6-sol",
+		"claude:claude-fable-5-1", "claude:claude-opus-5-5", "claude:claude-sonnet-5-5",
+		"claude:claude-opus-5", "claude:claude-sonnet-5",
+		"grok:grok-4.7", "grok:grok-4.6", "grok:grok-4.5", "agy:gemini-3.8-flash-medium",
+	} {
 		found := false
 		for _, target := range targets {
 			if target == want {
@@ -39,6 +45,7 @@ func TestDiscoverModelCatalogsPreservesFallbacks(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Adapters.MistralAcp.Binary = "missing-vibe-acp"
 	want := map[string]string{"codex": "maintained", "codex-oss": "config", "claude": "maintained", "agy": "maintained", "gosling": "config", "grok": "maintained", "openai-compatible": "config", "mistral-acp": "config"}
+	wantDefaults := map[string]string{"codex": "gpt-6-sol", "claude": "claude-sonnet-5-5", "grok": "grok-4.7"}
 	entries := DiscoverModelCatalogs(context.Background(), cfg, t.TempDir())
 	if len(entries) != len(want) {
 		t.Fatalf("catalog entries = %d, want %d", len(entries), len(want))
@@ -49,6 +56,9 @@ func TestDiscoverModelCatalogsPreservesFallbacks(t *testing.T) {
 		}
 		if (entry.Adapter == "agy" || entry.Adapter == "grok" || entry.Adapter == "mistral-acp") && entry.Error == "" {
 			t.Errorf("%s should retain a visible discovery warning", entry.Adapter)
+		}
+		if model, ok := wantDefaults[entry.Adapter]; ok && (entry.Default != model || !slices.Contains(entry.Models, model)) {
+			t.Errorf("%s fallback = default %q, models %#v; want default %q present", entry.Adapter, entry.Default, entry.Models, model)
 		}
 	}
 }
@@ -88,11 +98,11 @@ func TestParseAgyModelList(t *testing.T) {
 }
 
 func TestParseGrokModelList(t *testing.T) {
-	raw := []byte("Default model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5\n")
+	raw := []byte("Default model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  - grok-4.6\n  - grok-4.5\n")
 	models, defaultModel := parseGrokModelList(raw)
-	want := []string{"grok-4.6", "grok-4.5"}
-	if !reflect.DeepEqual(models, want) || defaultModel != "grok-4.6" {
-		t.Fatalf("parseGrokModelList() = %#v, %q; want %#v, grok-4.6", models, defaultModel, want)
+	want := []string{"grok-4.7", "grok-4.6", "grok-4.5"}
+	if !reflect.DeepEqual(models, want) || defaultModel != "grok-4.7" {
+		t.Fatalf("parseGrokModelList() = %#v, %q; want %#v, grok-4.7", models, defaultModel, want)
 	}
 }
 

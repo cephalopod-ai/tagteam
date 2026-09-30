@@ -73,10 +73,10 @@ Operational behavior
 tagteam run --job scoped_patch "fix the retry backoff"
 tagteam route --job audit
 tagteam run -m codex:gpt-5.6-terra "add OAuth login"
-tagteam --worker codex:gpt-5.6-terra --supervisor codex:gpt-5.6-sol "refactor billing flow"
+tagteam --worker codex:gpt-5.6-terra --supervisor codex:gpt-6-sol "refactor billing flow"
 tagteam --solo codex:gpt-5.6-terra "plan a migration and record the result"
-tagteam --relay --scout agy:gemini-3.6-flash-medium --worker codex:gpt-5.6-terra --supervisor codex:gpt-5.6-sol "add OAuth login"
-tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma codex:gpt-5.6-sol "audit the billing refactor"`,
+tagteam --relay --scout agy:gemini-3.6-flash-medium --worker codex:gpt-5.6-terra --supervisor codex:gpt-6-sol "add OAuth login"
+tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma codex:gpt-6-sol "audit the billing refactor"`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args: func(cmd *cobra.Command, args []string) error {

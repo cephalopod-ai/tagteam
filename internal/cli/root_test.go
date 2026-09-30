@@ -55,7 +55,7 @@ func TestNewRootCommandHelpIncludesModeModelAndFlags(t *testing.T) {
 		"tagteam --solo codex:gpt-5.6-terra",
 		"tagteam run -m codex:gpt-5.6-terra",
 		"tagteam --relay --scout agy:gemini-3.6-flash-medium",
-		"tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma codex:gpt-5.6-sol",
+		"tagteam --mode adversarial -mc codex:gpt-5.6-terra -ma codex:gpt-6-sol",
 	}
 	for _, want := range checks {
 		if !strings.Contains(help, want) {
