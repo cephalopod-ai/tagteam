@@ -9,8 +9,11 @@ import "github.com/cephalopod-ai/tagteam/internal/sharedcatalog"
 // TestModelPresetConstantsExistInSharedCatalog enforces that.
 const (
 	openAIGPT6Astra        = "gpt-6-astra"
+	openAIGPT6Sol          = "gpt-6-sol"
 	claudeFable51          = "claude-fable-5-1"
-	grok46                 = "grok-4.6"
+	claudeOpus55           = "claude-opus-5-5"
+	claudeSonnet55         = "claude-sonnet-5-5"
+	grok47                 = "grok-4.7"
 	agyGemini38FlashLow    = "gemini-3.8-flash-low"
 	agyGemini38FlashMedium = "gemini-3.8-flash-medium"
 	agyGemini38FlashHigh   = "gemini-3.8-flash-high"
@@ -18,12 +21,12 @@ const (
 	agyGemini36FlashMedium = "gemini-3.6-flash-medium"
 	agyGemini36FlashHigh   = "gemini-3.6-flash-high"
 
-	defaultSupervisorTarget   = "claude:claude-opus-5"
-	defaultSupervisorFallback = "codex:gpt-5.6-sol"
+	defaultSupervisorTarget   = "claude:" + claudeOpus55
+	defaultSupervisorFallback = "codex:" + openAIGPT6Sol
 	defaultWorkerTarget       = "codex:gpt-5.6-terra"
 	// Keep automatic implementation fallback on a model permitted to edit.
 	// Gemini is reserved for the scout role in the maintained operator roster.
-	defaultWorkerFallback         = "codex:gpt-5.6-sol"
+	defaultWorkerFallback         = "codex:" + openAIGPT6Sol
 	defaultRelayCoderTarget       = defaultWorkerTarget
 	defaultRelayScoutTarget       = "openai-compatible:gemma4:latest"
 	defaultAdversarialCoderTarget = "codex:gpt-5.6-terra"

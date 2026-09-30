@@ -13,7 +13,7 @@ import (
 // in the fleet recognizes.
 func TestModelPresetConstantsExistInSharedCatalog(t *testing.T) {
 	for _, model := range []string{
-		openAIGPT6Astra, claudeFable51, grok46,
+		openAIGPT6Astra, openAIGPT6Sol, claudeFable51, claudeOpus55, claudeSonnet55, grok47,
 		agyGemini38FlashLow, agyGemini38FlashMedium, agyGemini38FlashHigh,
 		agyGemini36FlashLow, agyGemini36FlashMedium, agyGemini36FlashHigh,
 	} {

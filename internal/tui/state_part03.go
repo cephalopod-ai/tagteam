@@ -646,7 +646,7 @@ func (m *model) detailLines() []string {
 			"",
 			"Useful commands:",
 			"  /profile relay",
-			"  /model claude:claude-sonnet-5",
+			"  /model supervisor claude:claude-sonnet-5-5",
 			"  /mode relay",
 			"  /runs",
 			"  /watch latest",

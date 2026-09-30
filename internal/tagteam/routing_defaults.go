@@ -39,7 +39,7 @@ func defaultAgentRosterConfig() map[string]AgentCardConfig {
 			},
 		},
 		"sonnet": {
-			Target:        "claude:claude-sonnet-5",
+			Target:        "claude:" + claudeSonnet55,
 			Family:        "anthropic",
 			Roles:         []string{"reviewer"},
 			ContextTokens: 200000,
@@ -91,7 +91,7 @@ func defaultAgentRosterConfig() map[string]AgentCardConfig {
 			},
 		},
 		"grok": {
-			Target:        "grok:" + grok46,
+			Target:        "grok:" + grok47,
 			Family:        "xai",
 			Roles:         []string{"editor", "reviewer"},
 			ContextTokens: 256000,

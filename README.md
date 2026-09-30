@@ -208,13 +208,13 @@ independently of its outcome:
       "role": "supervisor",
       "source": "router",
       "agent": "opus",
-      "selected": "claude:claude-opus-5",
+      "selected": "claude:claude-opus-5-5",
       "family": "anthropic",
       "reasons": [
         "audit=max meets required medium",
         "independent model family (anthropic, not openai)"
       ],
-      "fallbacks": ["claude:claude-sonnet-5", "grok:grok-4.5"],
+      "fallbacks": ["claude:claude-sonnet-5-5", "grok:grok-4.7"],
       "rejected": [
         {"agent": "gpt-terra", "reason": "job requires a reviewer outside the \"openai\" family"}
       ]
@@ -372,7 +372,7 @@ stdin sentinel there.
 > Grok worker/coder runs remain experimental. Historical `grok-4.5` runs at
 > `medium` or `low` reasoning effort were not reliable, and no equivalent
 > implementation-reliability claim has been established for the new
-> `grok-4.6` default. A live 4.5 supervisor trial also selected a read-only
+> `grok-4.7` default. A live 4.5 supervisor trial also selected a read-only
 > triage package for an implementation request. Prefer Codex for routine
 > implementation and unattended supervision.
 
@@ -385,11 +385,25 @@ profiles must follow the remaining roster constraints.
 
 | Model family | Allowed roles |
 |---|---|
-| GPT-6 Astra, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.5, GPT-5.4 (non-mini) | supervisor, worker/coder, adversary, scout |
+| GPT-6.1 Sol, GPT-6 Astra / Sol, GPT-5.6 Sol / Terra, GPT-5.5, GPT-5.4 (non-mini) | supervisor, worker/coder, adversary, scout |
 | GPT-5.6 Luna, GPT-5.3 Spark-Codex | worker/coder or scout |
 | Gemini (including `agy`) | scout only |
-| Grok 4.6 / 4.5 | monitored worker/coder or scout; never unattended supervisor |
-| Claude Fable 5.1, Opus 5, Sonnet 5 | read-only supervisor/adversary only; never worker/coder or scout |
+| Grok 4.7 / 4.6 / 4.5 | monitored worker/coder or scout; never unattended supervisor |
+| Claude Fable 5.1, Opus 5.5 / 5, Sonnet 5.5 / 5 | read-only supervisor/adversary only; never worker/coder or scout |
+
+The September 2026 refresh adds `codex:gpt-6-sol`,
+`claude:claude-opus-5-5`, `claude:claude-sonnet-5-5`, and `grok:grok-4.7`
+to the maintained picker and model catalog. The Codex adapter and built-in
+Sol fallbacks now select GPT-6 Sol; the Claude adapter selects Sonnet 5.5,
+the default supervisor selects Opus 5.5, and the Grok adapter selects 4.7.
+The newer [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+is also available as `codex:gpt-6.1-sol`; select it explicitly to use that tier.
+GPT-5.6 Terra remains the implementation default. Explicit older selections,
+configured overrides, role restrictions, and routing context budgets are
+preserved. The maintained IDs follow the official
+[GPT-6 Sol](https://developers.openai.com/api/docs/models/gpt-6-sol),
+[Claude Code](https://code.claude.com/docs/en/model-config), and
+[Grok 4.7](https://docs.x.ai/developers/grok-4-7) documentation.
 
 Probe the selected provider CLI before a live run. A parsed model name is not
 proof that the logged-in account has access to it. Rotate eligible roles across
@@ -398,7 +412,7 @@ supervisor slots and Grok out of unattended supervisor slots.
 
 Existing configurations that list `agy` under `defaults.fallbacks.worker` (or
 an equivalent worker/coder/supervisor fallback) must replace it with an
-eligible target such as `codex:gpt-5.6-sol`. Tagteam rejects that configuration
+eligible target such as `codex:gpt-6-sol`. Tagteam rejects that configuration
 at option resolution with an exit-code-4 error instead of waiting for fallback.
 
 ## Observed Model-Role Analysis
@@ -580,21 +594,22 @@ go run . --allow-dev-build "add OAuth login"
 
 ## Quick start
 
-Default run (supervisor mode, `codex:gpt-5.6-terra` worker and `claude:claude-opus-5` supervisor):
+Default run (supervisor mode, `codex:gpt-5.6-terra` worker and `claude:claude-opus-5-5` supervisor):
 
 ```bash
 tagteam "add OAuth login"
 # Equivalent explicit role spelling:
-tagteam run --worker codex:gpt-5.6-terra --supervisor claude:claude-opus-5 "add OAuth login"
+tagteam run --worker codex:gpt-5.6-terra --supervisor claude:claude-opus-5-5 "add OAuth login"
 ```
 
-> **Claude Code v2.1.219+ required for the default supervisor.** `claude-opus-5`
-> is passed straight through to `claude --model`, and older Claude Code builds do
-> not know that id — the run fails at the first supervisor turn rather than at
-> preflight, since `tagteam doctor` only checks that `claude` is runnable. Run
-> `claude update`, or point the supervisor at a model your CLI has:
-> `--supervisor claude:claude-opus-4-8` (or `claude:opus`, which resolves to
-> whatever your CLI treats as newest).
+> **Claude Code v2.1.280+ is required for Opus 5.5; v2.1.284+ for Sonnet 5.5.**
+> Tagteam passes the exact IDs `claude-opus-5-5` and `claude-sonnet-5-5` to
+> `claude --model`. Run `claude update` before using these models. Older builds
+> fail at the first Claude turn because `tagteam doctor` checks whether the
+> CLI is runnable, not whether it supports a particular model. An explicit
+> older target such as `--supervisor claude:claude-opus-5` remains available
+> when supported by your CLI and account. See the official
+> [Claude Code model configuration](https://code.claude.com/docs/en/model-config).
 
 That's the whole thing — no flags, no config. From your repo root you just describe the change:
 
@@ -603,7 +618,7 @@ cd my-project
 tagteam "add a --json flag to the export command and cover it with a test"
 ```
 
-With no other options, `tagteam` uses the default supervisor mode: Claude Opus 5 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `codex:gpt-5.6-sol`; the `claude-failover` profile maps Opus review failures to `codex:gpt-5.6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
+With no other options, `tagteam` uses the default supervisor mode: Claude Opus 5.5 writes a brief and reviews, while `codex:gpt-5.6-terra` implements. Findings loop back until the change passes review, tests fail, or the round limit is hit. If the Terra worker fails before changing the worktree, Tagteam retries with `codex:gpt-6-sol`; the `claude-failover` profile maps Opus review failures to `codex:gpt-6-sol`. Partial edits still require recovery arbitration or quarantine. Every brief, diff, review, and test run is written to the external state store, and the final verdict prints to the terminal. Run `tagteam status` during a run to see its phase, role, elapsed/idle time, diff summary, provider-lock queue context, and host-owned baseline-test activity. If a baseline command mutates the worktree, status attributes the failure to `tagteam-host` and lists the exact changed paths. Use `tagteam doctor` first if you're not sure your agent CLIs are set up.
 
 Supervisor mode slices work by default before the worker edits. The supervisor writes a bounded work plan, selects one package, and the worker implements only that package. Package estimates are capped at 80% of the per-invocation timeout; deferred packages do not block a normal one-package run, while `--auto-next-package` requires every planned package to fit that cap. If packages remain, `tagteam` stops after the selected package passes and reports the next packages unless `--auto-next-package` is set.
 
@@ -616,7 +631,7 @@ For a Claude-free supervisor run, choose explicit worker/supervisor adapters, ro
 ```bash
 tagteam \
   --worker codex:gpt-5.6-terra \
-  --supervisor codex:gpt-5.6-sol \
+  --supervisor codex:gpt-6-sol \
   -r 3 \
   -t "go test ./..." \
   "refactor billing flow"
@@ -660,7 +675,7 @@ The built-in relay profile uses a local Ollama Gemma scout through its OpenAI-co
 mode = "relay"
 scout = "openai-compatible:gemma4:latest"
 coder = "codex:gpt-5.6-terra"
-supervisor = "codex:gpt-5.6-sol"
+supervisor = "codex:gpt-6-sol"
 scout_mode = "recon"
 scout_retrieval = false
 scout_failure_policy = "continue"
@@ -677,7 +692,7 @@ tagteam \
   --scout-mode recon \
   --post-scout-mode polish \
   --coder codex:gpt-5.6-terra \
-  --supervisor codex:gpt-5.6-sol \
+  --supervisor codex:gpt-6-sol \
   "refactor billing flow"
 ```
 
@@ -690,7 +705,7 @@ TAGTEAM_OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:11434/v1 \
 tagteam --relay --no-scout-retrieval \
   --scout openai-compatible:gemma4:latest \
   --coder codex:gpt-5.6-terra \
-  --supervisor codex:gpt-5.6-sol \
+  --supervisor codex:gpt-6-sol \
   -t 'git diff --check' \
   "make a scoped documentation change"
 ```
@@ -728,10 +743,10 @@ For finer control, `loss_policy` can be configured per non-primary role: `block`
 The built-in `claude-failover` profile enables a small Claude-to-Codex fallback ladder for review/supervision failures:
 
 ```bash
-tagteam -P claude-failover --mode supervisor --worker codex:gpt-5.6-terra --supervisor claude:claude-opus-5 "fix the bug"
+tagteam -P claude-failover --mode supervisor --worker codex:gpt-5.6-terra --supervisor claude:claude-opus-5-5 "fix the bug"
 ```
 
-It maps the current Opus target to `codex:gpt-5.6-sol` and the current Sonnet target to `codex:gpt-5.6-terra`; compatibility aliases for older Claude CLI model names remain available. Target-specific fallbacks run before role-level fallback lists.
+It maps the current Opus target to `codex:gpt-6-sol` and the current Sonnet target to `codex:gpt-5.6-terra`; compatibility aliases for older Claude CLI model names remain available. Target-specific fallbacks run before role-level fallback lists.
 
 </details>
 
@@ -742,7 +757,7 @@ Adversarial mode keeps implementation and independent audit/review explicitly se
 ```bash
 tagteam --mode adversarial \
   -mc codex:gpt-5.6-terra \
-  -ma claude:claude-opus-5 \
+  -ma claude:claude-opus-5-5 \
   -r 3 \
   -t "go test ./..." \
   "refactor billing flow"
@@ -751,13 +766,13 @@ tagteam --mode adversarial \
 `--reviewer` is an adversarial-mode-flavored alias for `-ma`/`--supervisor`:
 
 ```bash
-tagteam --mode adversarial -mc codex:gpt-5.6-terra --reviewer claude:claude-opus-5 "audit the CLI cleanup"
+tagteam --mode adversarial -mc codex:gpt-5.6-terra --reviewer claude:claude-opus-5-5 "audit the CLI cleanup"
 ```
 
 Use Agy as a scout under the maintained operator roster:
 
 ```bash
-tagteam --relay --scout agy:gemini-3.6-flash-low --coder codex:gpt-5.6-terra --supervisor codex:gpt-5.6-sol "clean up the CLI help"
+tagteam --relay --scout agy:gemini-3.6-flash-low --coder codex:gpt-5.6-terra --supervisor codex:gpt-6-sol "clean up the CLI help"
 ```
 
 The built-in `agy` default model is `gemini-3.8-flash-medium`. The Team builder and `/model` picker include the shared roster's Agy entries — the `gemini-3.8-flash-*` and `gemini-3.6-flash-*` low/medium/high tiers — and the maintained operator roster confines every Agy target to the scout slot.
@@ -962,10 +977,10 @@ Profiles may override `mode`, `state_root`, `watchdog_timeout`, `scout`, `scout_
 [defaults]
 mode = "supervisor"
 worker = "codex:gpt-5.6-terra"
-supervisor = "claude:claude-opus-5"
+supervisor = "claude:claude-opus-5-5"
 coder = "codex:gpt-5.6-terra"
 relay_coder = "codex:gpt-5.6-terra"
-adversary = "claude:claude-opus-5"
+adversary = "claude:claude-opus-5-5"
 scout = "openai-compatible:gemma4:latest"
 scout_retrieval = false
 supervisor_slicing = true
@@ -980,20 +995,20 @@ supervisor = "block"
 
 [profiles.relay.fallbacks]
 scout = ["openai-compatible:gpt-oss-120b"]
-supervisor = ["claude:claude-opus-5"]
+supervisor = ["claude:claude-opus-5-5"]
 
 [profiles.claude-failover.loss_policy]
 reviewer = "replace_then_block"
 supervisor = "replace_then_block"
 
 [profiles.claude-failover.fallbacks_by_target]
-"claude:claude-opus-5" = ["codex:gpt-5.6-sol"]
-"claude:claude-sonnet-5" = ["codex:gpt-5.6-terra"]
+"claude:claude-opus-5-5" = ["codex:gpt-6-sol"]
+"claude:claude-sonnet-5-5" = ["codex:gpt-5.6-terra"]
 "claude:haiku" = ["codex:gpt-5.6-terra"]
 
 [profiles.fast]
 coder = "codex:gpt-5.6-terra"
-adversary = "codex:gpt-5.6-sol"
+adversary = "codex:gpt-6-sol"
 rounds = 1
 ```
 
@@ -1017,17 +1032,18 @@ reasoning_effort = "high"
 effort = "high"
 
 [adapters.grok]
-default_model = "grok-4.6"
+default_model = "grok-4.7"
 reasoning_effort = "high"
 ```
 
 The equivalent environment variables are `TAGTEAM_CODEX_REASONING_EFFORT`, `TAGTEAM_CLAUDE_EFFORT`, `TAGTEAM_GROK_MODEL`, and `TAGTEAM_GROK_REASONING_EFFORT`. Grok passthrough arguments can be supplied with `adapters.grok.extra_args`, `TAGTEAM_GROK_ARGS`, or `--grok-args`.
 
-Grok reasoning effort accepts `low`, `medium`, `high`, or `xhigh`; the
-maintained `grok-4.6` model supports the values advertised by the installed
-CLI, while `xhigh` is available only on Grok models that advertise it.
+Grok reasoning effort accepts `low`, `medium`, `high`, or `xhigh`.
+[Grok 4.7](https://docs.x.ai/developers/grok-4-7) supports all four levels;
+Tagteam keeps `high` as its default. Explicit older models must support the
+selected level through the installed CLI.
 Historical `grok-4.5` worker/coder runs at `low` and `medium` were unreliable;
-`grok-4.6` has not yet established a comparable implementation-reliability
+`grok-4.7` has not yet established a comparable implementation-reliability
 record, so Grok implementation in general remains experimental. Grok targets
 can be set as `grok:<model>` through `--worker`,
 `--coder`, `--supervisor`, `--reviewer`, or `--scout`; the same targets are
@@ -1240,8 +1256,8 @@ Core keyboard affordances:
 - `g` launches the composed run
 - `m` opens the Team builder, where each role states whether it writes code or acts read-only
 - `/` opens a mode-aware command palette; `/model ` first selects a role and then its model, while `/profile `, `/mode `, `/codex-effort `, and `/claude-effort ` show valid values
-- `/team` opens the same Team builder; direct role-first commands such as `/model supervisor codex:gpt-5.6-sol` are also accepted
-- direct commands remain available, including `/supervisor codex:gpt-5.6-sol`, `/scout agy:gemini-3.6-flash-low`, `/allow-path internal/,README.md`, `/timeout 15m`, `/watchdog-timeout 5m`, `/lint go vet ./...`, `/watch latest`, and `/scout-retrieval off`. The watchdog is a soft telemetry threshold: it marks a still-running invocation as awaiting telemetry rather than cancelling it. `--timeout` remains the per-invocation limit and runs have a 60-minute total wall-time cap by default.
+- `/team` opens the same Team builder; direct role-first commands such as `/model supervisor codex:gpt-6-sol` are also accepted
+- direct commands remain available, including `/supervisor codex:gpt-6-sol`, `/scout agy:gemini-3.6-flash-low`, `/allow-path internal/,README.md`, `/timeout 15m`, `/watchdog-timeout 5m`, `/lint go vet ./...`, `/watch latest`, and `/scout-retrieval off`. The watchdog is a soft telemetry threshold: it marks a still-running invocation as awaiting telemetry rather than cancelling it. `--timeout` remains the per-invocation limit and runs have a 60-minute total wall-time cap by default.
 - `s` opens execution Settings
 - `u` opens recent runs
 - `r` refreshes

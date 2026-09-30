@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "contract_version": "0.5.0",
-  "updated": "2026-09-07",
+  "updated": "2026-09-30",
   "source_repo": "e3742526/control-hooks",
   "source_path": "shared/model-catalog/model_catalog.json",
   "notes": "Canonical, language-neutral roster of the coding-agent adapters and model IDs the fleet maintains. Consumers vendor this file byte-identically (see shared/README.md). Entries are maintained labels, not entitlement claims: a listed model is not proof the logged-in account can reach it, and live provider discovery wins wherever an adapter exposes one. context_window and max_output carry the provider contract limit and are kept equal to control_hooks.dispatch.catalog; they are NOT routing priors — a consumer that deliberately budgets a role below the contract limit (tagteam's agent roster, for one) keeps that number in its own config.",
@@ -110,6 +110,28 @@
       "notes": "Frontier long-context coding and reasoning tier."
     },
     {
+      "id": "gpt-6-sol",
+      "family": "openai",
+      "adapters": ["codex"],
+      "series": "gpt-6",
+      "context_window": 1050000,
+      "max_output": 128000,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Coding and agentic workflow tier. Limits verified 2026-09-30: https://developers.openai.com/api/docs/models/gpt-6-sol"
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "family": "openai",
+      "adapters": ["codex"],
+      "series": "gpt-6.1",
+      "context_window": 1050000,
+      "max_output": 128000,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Newer Sol option for coding and agentic workflows. Limits verified 2026-09-30: https://developers.openai.com/api/docs/models/gpt-6.1-sol"
+    },
+    {
       "id": "gpt-5.6-sol",
       "family": "openai",
       "adapters": ["codex"],
@@ -144,6 +166,18 @@
       "notes": "Read-only highest-capability review tier; slower and premium-priced."
     },
     {
+      "id": "claude-opus-5-5",
+      "canonical_id": "claude-opus-5.5",
+      "family": "anthropic",
+      "adapters": ["claude"],
+      "series": "claude-opus-5.5",
+      "context_window": 1000000,
+      "max_output": 128000,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Read-only review tier. Requires Claude Code 2.1.280 or later. Limits verified 2026-09-30: https://platform.claude.com/docs/en/models/opus-5-5/overview"
+    },
+    {
       "id": "claude-opus-5",
       "family": "anthropic",
       "adapters": ["claude"],
@@ -155,6 +189,18 @@
       "notes": "Read-only supervisor/adversary; strongest review and arbitration tier."
     },
     {
+      "id": "claude-sonnet-5-5",
+      "canonical_id": "claude-sonnet-5.5",
+      "family": "anthropic",
+      "adapters": ["claude"],
+      "series": "claude-sonnet-5.5",
+      "context_window": 1000000,
+      "max_output": 128000,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Read-only review tier. Requires Claude Code 2.1.284 or later. Limits verified 2026-09-30: https://platform.claude.com/docs/en/models/sonnet-5-5/overview"
+    },
+    {
       "id": "claude-sonnet-5",
       "family": "anthropic",
       "adapters": ["claude"],
@@ -164,6 +210,17 @@
       "reasoning": true,
       "maintained": true,
       "notes": "Read-only reviewer; cheaper review tier than Opus."
+    },
+    {
+      "id": "grok-4.7",
+      "family": "xai",
+      "adapters": ["grok"],
+      "series": "grok-4.7",
+      "context_window": 500000,
+      "max_output": null,
+      "reasoning": true,
+      "maintained": true,
+      "notes": "Scoped coding tier; no implementation-reliability record for unattended supervision. xAI documents no separate text-output limit, so max_output is null; context and consumer budgets still apply. Verified 2026-09-30: https://docs.x.ai/developers/grok-4-7"
     },
     {
       "id": "grok-4.6",

@@ -72,7 +72,10 @@ func TestCatalogLoadsAndExposesMaintainedRoster(t *testing.T) {
 	if len(catalog.Adapters) == 0 || len(catalog.Models) == 0 {
 		t.Fatalf("shared catalog is empty: %d adapters, %d models", len(catalog.Adapters), len(catalog.Models))
 	}
-	for _, want := range []string{"gpt-6-astra", "claude-fable-5-1", "grok-4.6", "gemini-3.8-flash-medium"} {
+	for _, want := range []string{
+		"gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "claude-fable-5-1", "claude-sonnet-5-5",
+		"claude-opus-5-5", "grok-4.7", "grok-4.6", "gemini-3.8-flash-medium",
+	} {
 		if _, ok := LookupModel(want); !ok {
 			t.Errorf("shared catalog is missing model %q", want)
 		}
@@ -88,6 +91,42 @@ func TestCatalogLoadsAndExposesMaintainedRoster(t *testing.T) {
 	}
 	if !AdapterAllowsRole("agy", "scout") || AdapterAllowsRole("agy", "reviewer") {
 		t.Error("agy must stay scout-only in the shared roster")
+	}
+}
+
+func TestSeptemberRefreshPreservesWireIDsAndLimits(t *testing.T) {
+	for _, want := range []struct {
+		wire, canonical, adapter string
+		context, output          int
+	}{
+		{"gpt-6-sol", "gpt-6-sol", "codex", 1050000, 128000},
+		{"gpt-6.1-sol", "gpt-6.1-sol", "codex", 1050000, 128000},
+		{"claude-sonnet-5-5", "claude-sonnet-5.5", "claude", 1000000, 128000},
+		{"claude-opus-5-5", "claude-opus-5.5", "claude", 1000000, 128000},
+		// null decodes to zero: no declared fixed output cap, not zero tokens.
+		{"grok-4.7", "grok-4.7", "grok", 500000, 0},
+	} {
+		t.Run(want.wire, func(t *testing.T) {
+			model, ok := LookupModel(want.wire)
+			if !ok {
+				t.Fatalf("model %q is missing", want.wire)
+			}
+			if model.ID != want.wire || model.CanonicalModelID() != want.canonical {
+				t.Errorf("wire/canonical ids = %q/%q, want %q/%q", model.ID, model.CanonicalModelID(), want.wire, want.canonical)
+			}
+			if model.ContextWindow != want.context || model.MaxOutput != want.output {
+				t.Errorf("context/output = %d/%d, want %d/%d", model.ContextWindow, model.MaxOutput, want.context, want.output)
+			}
+			found := false
+			for _, maintained := range MaintainedModelsFor(want.adapter) {
+				if maintained == want.wire {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("model %q is missing from maintained %s targets", want.wire, want.adapter)
+			}
+		})
 	}
 }
 

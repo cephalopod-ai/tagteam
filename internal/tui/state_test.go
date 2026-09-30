@@ -141,7 +141,12 @@ func TestTargetChoicesIncludeAgyGemini36FlashTiers(t *testing.T) {
 
 func TestTargetChoicesIncludeCurrentFrontierModels(t *testing.T) {
 	choices := collectTargetChoices(tagteam.DefaultConfig())
-	for _, want := range []string{"codex:gpt-6-astra", "claude:claude-fable-5-1", "grok:grok-4.6", "agy:gemini-3.8-flash-medium"} {
+	for _, want := range []string{
+		"codex:gpt-6-astra", "codex:gpt-6-sol", "codex:gpt-6.1-sol", "claude:claude-fable-5-1",
+		"claude:claude-opus-5-5", "claude:claude-sonnet-5-5", "grok:grok-4.7",
+		"codex:gpt-5.6-sol", "claude:claude-opus-5", "claude:claude-sonnet-5",
+		"grok:grok-4.6", "agy:gemini-3.8-flash-medium",
+	} {
 		if !contains(choices, want) {
 			t.Fatalf("target choices do not include %q: %#v", want, choices)
 		}
@@ -487,7 +492,7 @@ func TestModeSwitchLoadsDefaultsAndRestoresEachModesTeam(t *testing.T) {
 	if err := m.setMode("adversarial"); err != nil {
 		t.Fatal(err)
 	}
-	if m.compose.EditorTarget != "codex:gpt-5.6-terra" || m.compose.ReviewerTarget != "claude:claude-opus-5" {
+	if m.compose.EditorTarget != "codex:gpt-5.6-terra" || m.compose.ReviewerTarget != "claude:claude-opus-5-5" {
 		t.Fatalf("adversarial defaults = coder:%q reviewer:%q", m.compose.EditorTarget, m.compose.ReviewerTarget)
 	}
 	m.compose.EditorTarget = "codex:custom-coder"
